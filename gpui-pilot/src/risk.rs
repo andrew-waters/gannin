@@ -209,6 +209,60 @@ impl Risk {
     }
 }
 
+impl Risk {
+    /// The merge risk as it goes in the posted review's body: the grade and
+    /// what to look at, each signal graded with why, the acceptance
+    /// criteria not met, the sensitive paths touched, and what would bring
+    /// it down. None when there's nothing graded to say.
+    pub fn markdown(&self) -> Option<String> {
+        let graded: Vec<&Signal> = self.signals.iter().filter(|s| s.verdict.as_deref().is_some_and(|v| v != "n/a")).collect();
+        if graded.is_empty() && self.criteria.is_empty() {
+            return None;
+        }
+        let mut out = vec![match self.level() {
+            Some(level) => format!("**Merge risk: {}.** {}", level.title(), self.next_step()),
+            None => "**Merge risk:** not enough to grade it.".to_string(),
+        }];
+        if !graded.is_empty() {
+            out.push(String::new());
+            for s in graded {
+                let mut line = format!("- {}: {}", s.title, s.verdict.clone().unwrap_or_default());
+                if let Some(reason) = &s.reason {
+                    line.push_str(&format!(". {}", reason.trim_end_matches('.')));
+                }
+                if let Some(raised) = &s.raised {
+                    line.push_str(&format!(" (raised: {})", raised.to_lowercase()));
+                }
+                line.push('.');
+                out.push(line);
+            }
+        }
+        let unmet: Vec<&Criterion> = self.criteria.iter().filter(|c| c.status == "missing" || c.status == "partial").collect();
+        if !unmet.is_empty() {
+            out.push(String::new());
+            out.push("Acceptance criteria not met:".into());
+            for c in unmet {
+                let issue = c.issue.as_ref().map(|i| format!(" ({i})")).unwrap_or_default();
+                let status = if c.status == "missing" { "missing" } else { "partly met" };
+                out.push(format!("- {}{issue}: {status}{}", c.criterion, c.evidence.as_ref().map(|e| format!(". {e}")).unwrap_or_default()));
+            }
+        }
+        if !self.sensitive.is_empty() {
+            out.push(String::new());
+            out.push("Touches paths the team marks sensitive:".into());
+            for (path, why) in &self.sensitive {
+                out.push(format!("- {path}{}", why.as_ref().map(|w| format!(": {w}")).unwrap_or_default()));
+            }
+        }
+        if !self.gaps.is_empty() {
+            out.push(String::new());
+            out.push("To bring it down:".into());
+            out.extend(self.gaps.iter().map(|g| format!("- {g}")));
+        }
+        Some(out.join("\n"))
+    }
+}
+
 // MARK: - Sensitive areas
 
 #[derive(Clone, Debug, PartialEq)]

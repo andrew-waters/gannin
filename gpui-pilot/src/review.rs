@@ -481,7 +481,9 @@ pub struct Draft {
     pub left_out: Vec<Finding>,
 }
 
-pub fn draft(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: &Snapshot) -> Draft {
+/// `risk` is the merge risk as the review panel assessed it (with the
+/// team's sensitive paths and the criteria floors), put after the summary.
+pub fn draft(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: &Snapshot, risk: Option<&crate::risk::Risk>) -> Draft {
     let mut general = Vec::new();
     let mut comments = Vec::new();
     let mut left_out = Vec::new();
@@ -505,7 +507,14 @@ pub fn draft(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: &Snap
             }),
         }
     }
+    // The summary first: an earlier review of ours is known by the body
+    // starting with it. Findings in the body are read back line by line
+    // ("- `path:line`: ..."), so the risk's lines never start that way.
     let mut body = result.summary.trim().to_string();
+    if let Some(risk) = risk.and_then(|r| r.markdown()) {
+        body.push_str("\n\n");
+        body.push_str(&risk);
+    }
     if !general.is_empty() {
         body.push_str("\n\n");
         body.push_str(&general.join("\n"));

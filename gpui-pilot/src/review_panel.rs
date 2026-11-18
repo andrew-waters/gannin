@@ -586,12 +586,27 @@ impl ReviewPanel {
         self.open_post(window, cx);
     }
 
+    /// Redraws the sheet as its body is edited, so the preview of what
+    /// GitHub will show keeps up. Ends with the editor.
+    fn watch_body(&mut self, cx: &mut Context<Self>) {
+        if let Some(Post::Ready { body, .. }) = &self.post {
+            cx.subscribe(body, |_, _, event: &editor::EditorEvent, cx| {
+                if matches!(event, editor::EditorEvent::BufferEdited) {
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
+    }
+
     /// Opens the sheet: the PR, its files and what's been said, fetched now.
     fn open_post(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(result) = self.kept() else { return };
         let none = HashSet::new();
+        let risk = self.risk();
         if let Source::Preview { snapshot, .. } = &self.source {
-            self.post = Some(Self::ready(&result, &none, snapshot.clone(), window, cx));
+            self.post = Some(Self::ready(&result, &none, snapshot.clone(), risk.as_ref(), window, cx));
+            self.watch_body(cx);
             cx.notify();
             return;
         }
@@ -608,9 +623,10 @@ impl ReviewPanel {
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.post = Some(match fetched {
-                    Ok(snapshot) => Self::ready(&result, &HashSet::new(), Arc::new(snapshot), window, cx),
+                    Ok(snapshot) => Self::ready(&result, &HashSet::new(), Arc::new(snapshot), risk.as_ref(), window, cx),
                     Err(error) => Post::Failed(error),
                 });
+                this.watch_body(cx);
                 cx.notify();
             })
             .ok();
@@ -619,8 +635,8 @@ impl ReviewPanel {
     }
     /// The sheet ready to post: the draft from the findings kept, and the
     /// event the verdict suggests.
-    pub fn ready(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: Arc<Snapshot>, window: &mut Window, cx: &mut gpui::App) -> Post {
-        let draft = review::draft(result, dismissed, &snapshot);
+    pub fn ready(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: Arc<Snapshot>, risk: Option<&crate::risk::Risk>, window: &mut Window, cx: &mut gpui::App) -> Post {
+        let draft = review::draft(result, dismissed, &snapshot, risk);
         let event = review::default_event(result, snapshot.is_own());
         let text = draft.body.clone();
         let body = cx.new(|cx| {
@@ -768,14 +784,15 @@ impl ReviewPanel {
         let (repo, number) = self.subject();
         let approve = crate::schedule::Schedule::load().settings.approve_by_itself;
         // An approval goes by itself only at low merge risk.
-        let level = self.risk().and_then(|r| r.level());
+        let risk = self.risk();
+        let level = risk.as_ref().and_then(|r| r.level());
         cx.spawn(async move |this, cx| {
             let posted = cx
                 .background_executor()
                 .spawn(async move {
                     let token = crate::auth::token().ok_or("Not signed in")?;
                     let snapshot = review::snapshot(&token, &repo, number).map_err(|e| e.to_string())?;
-                    let draft = review::draft(&result, &HashSet::new(), &snapshot);
+                    let draft = review::draft(&result, &HashSet::new(), &snapshot, risk.as_ref());
                     let mut event = review::default_event(&result, snapshot.is_own());
                     let mut held = None;
                     if event == "APPROVE" && !approve {
@@ -2049,8 +2066,9 @@ impl ReviewPanel {
 
     /// The draft being posted, in the detail column: the body to edit, the
     /// inline comments and the findings left out.
-    fn post_draft(&self, post: &Post, theme: &Theme) -> Option<impl IntoElement> {
+    fn post_draft(&self, post: &Post, theme: &Theme, cx: &gpui::App) -> Option<impl IntoElement> {
         let Post::Ready { snapshot, draft, body, .. } = post else { return None };
+        let text = body.read(cx).text(cx);
         let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
         let general = draft.body.lines().filter(|l| l.starts_with("- `")).count();
         Some(
@@ -2078,6 +2096,18 @@ impl ReviewPanel {
                         .gap_1()
                         .child(div().font_weight(FontWeight::SEMIBOLD).child("Body"))
                         .child(div().p_2().rounded_md().border_1().border_color(theme.border).bg(theme.bg).child(body.clone()))
+                        // What GitHub will show for the body above, as it's edited.
+                        .child(div().pt_2().font_weight(FontWeight::SEMIBOLD).child("On GitHub"))
+                        .child(
+                            div()
+                                .p_3()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.tile)
+                                .text_sm()
+                                .child(if text.trim().is_empty() { div().text_color(theme.secondary).child("(no body)").into_any_element() } else { crate::markdown::markdown("post-preview", &text, theme) }),
+                        )
                         .when(general > 0, |d| {
                             d.child(quiet(format!(
                                 "{} {} on a line the diff shows, so {} in the body.",
@@ -2102,7 +2132,7 @@ impl ReviewPanel {
                                 .rounded_md()
                                 .bg(theme.tile)
                                 .child(div().font_family(crate::zed::MONO).text_xs().text_color(theme.selected).child(format!("{path}:{line}")))
-                                .child(div().text_sm().child(body.clone()))
+                                .child(div().text_sm().child(crate::markdown::markdown(&format!("post-inline-{path}-{line}"), body, theme)))
                         })),
                 )
                 .when(!draft.left_out.is_empty(), |d| {
@@ -2124,7 +2154,7 @@ impl ReviewPanel {
 impl Render for ReviewPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
-        let draft = self.post.as_ref().and_then(|post| self.post_draft(post, &theme)).map(|d| d.into_any_element());
+        let draft = self.post.as_ref().and_then(|post| self.post_draft(post, &theme, cx)).map(|d| d.into_any_element());
         let detail = match self.selected.clone() {
             _ if draft.is_some() => draft.unwrap(),
             Selected::Overview => self.overview(&theme, cx).into_any_element(),

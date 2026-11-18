@@ -159,7 +159,7 @@ impl ReviewPreview {
         let working = state == State::Reviewing;
         let own = state == State::PostOwn;
         let post = match state {
-            State::PostReady | State::PostOwn => result.as_ref().map(|r| ReviewPanel::ready(r, &HashSet::new(), Arc::new(snapshot(own)), window, cx)),
+            State::PostReady | State::PostOwn => result.as_ref().map(|r| ReviewPanel::ready(r, &HashSet::new(), Arc::new(snapshot(own)), r.risk.as_ref(), window, cx)),
             State::Posting => Some(Post::Posting),
             State::Posted => Some(Post::Posted(format!("https://github.com/{REPO}/pull/{NUMBER}#pullrequestreview-0"))),
             State::PostFailed => Some(Post::Failed("GitHub refused the review (422): the commit it's for is no longer the head of the pull request.".into())),
