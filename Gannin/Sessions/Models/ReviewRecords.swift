@@ -107,6 +107,8 @@ struct ReviewRecord: Codable, Hashable, Identifiable {
     var verdict: String?
     /// How much work reviewing it by hand is, 1 to 5, as the reviewer judged.
     var effort: Int?
+    /// What the change could break if it's wrong: `low`, `medium` or `high`.
+    var risk: String?
     /// What was posted (`APPROVE`, `COMMENT`, `REQUEST_CHANGES`) and when.
     var event: String?
     var postedAt: Date?
@@ -173,6 +175,7 @@ struct ReviewRecord: Codable, Hashable, Identifiable {
         if let review {
             record.verdict = review.verdict ?? record.verdict
             record.effort = review.effort ?? record.effort
+            record.risk = review.risk ?? record.risk
             for finding in review.findings {
                 let decision = draft.decisions[finding.key]
                 let text: String

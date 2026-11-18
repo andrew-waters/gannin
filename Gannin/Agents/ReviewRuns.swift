@@ -166,6 +166,8 @@ enum ReviewRunMerge {
         result.applied = latest(\.applied)
         result.headline = latest(\.headline)
         result.effort = answered.flatMap { $0.results.compactMap(\.effort) }.max()
+        // The riskiest any step judged it, as with effort.
+        result.risk = answered.flatMap { $0.results.compactMap(\.riskLevel) }.max()?.rawValue
         result.walkthrough = latest(\.walkthrough)
         result.flow = latest(\.flow)
         result.checks = latest(\.checks)
