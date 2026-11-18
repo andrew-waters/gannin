@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import os
 import SwiftTerm
 import UserNotifications
 
@@ -266,6 +267,11 @@ enum SessionState: String {
 /// copy the brief in, then start or resume claude.
 @Observable
 final class SessionStore {
+    /// Switching tabs and finishing a session both have steps that can hang
+    /// (starting a shell, removing a worktree, a harness commit) with
+    /// nothing else to show for it; this traces them to Console.app.
+    static let log = Logger(subsystem: "dev.andon.gannin", category: "Sessions")
+
     /// Where Gannin clones a harness that isn't checked out on this Mac yet,
     /// as a path (`~` allowed).
     static let workspaceKey = "sessionsWorkspace"
@@ -385,7 +391,11 @@ final class SessionStore {
     /// The sessions window's tabs, in order, and the one showing.
     private(set) var tabs: [UUID] = []
     var selectedTab: UUID? {
-        didSet { if selectedTab != oldValue { looked() } }
+        didSet {
+            guard selectedTab != oldValue else { return }
+            Self.log.debug("selectedTab \(oldValue?.uuidString ?? "none", privacy: .public) -> \(self.selectedTab?.uuidString ?? "none", privacy: .public)")
+            looked()
+        }
     }
     /// Whether the sessions window is key, as it says, so the tab you're
     /// looking at isn't flagged.
@@ -662,6 +672,7 @@ final class SessionStore {
     func reveal(_ id: UUID) {
         guard sessions[id] != nil else { return }
         let tab = tabOwner(id)
+        Self.log.debug("reveal \(id.uuidString, privacy: .public) tab=\(tab.uuidString, privacy: .public)")
         if !tabs.contains(tab) {
             tabs.insert(tab, at: insertionIndex(for: tab, after: selectedTab.map(tabOwner)))
             saveTabs()
@@ -909,7 +920,10 @@ final class SessionStore {
         terminal.onOutput = { [weak self] in self?.screenChanged(session.id) }
         terminals[session.id] = terminal
         // Not while one is on its way (a sandbox's stop or secrets first).
-        if !terminal.isRunning, !launching.contains(session.id) { launch(session, in: terminal) }
+        if !terminal.isRunning, !launching.contains(session.id) {
+            Self.log.debug("open \(session.id.uuidString, privacy: .public): not running, launching")
+            launch(session, in: terminal)
+        }
         return terminal.container
     }
 
@@ -1011,6 +1025,8 @@ final class SessionStore {
     }
 
     func launch(_ session: CodeSession, in terminal: SessionTerminal) {
+        let launchCalledAt = Date.now
+        Self.log.info("launch \(session.id.uuidString, privacy: .public) called")
         let directory = Self.directory(for: session.id)
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1102,12 +1118,18 @@ final class SessionStore {
             // Files already on disk raise no event, and the poll may be asleep.
             self?.refreshLocal(id)
             self?.startPolling(wake: session.isRemote || session.isSandboxed)
+            Self.log.info("launch \(id.uuidString, privacy: .public) shell started, \(Date.now.timeIntervalSince(launchCalledAt), format: .fixed(precision: 2), privacy: .public)s after launch() was called")
         }
         // A stop of its sandbox still on its way would land after the start
         // script found it running: wait for it, so the script starts afresh.
         let stopping = session.sandbox.flatMap { stoppingSandboxes[$0] }
         guard remoteSecrets != nil || remoteAttachments != nil || stopping != nil else { return start() }
         launching.insert(id)
+        var waitingOn: [String] = []
+        if stopping != nil { waitingOn.append("sandbox stop") }
+        if remoteSecrets != nil { waitingOn.append("remote secrets") }
+        if remoteAttachments != nil { waitingOn.append("remote attachments") }
+        Self.log.debug("launch \(id.uuidString, privacy: .public) waiting on \(waitingOn.joined(separator: ", "), privacy: .public) before starting")
         Task {
             await stopping?.value
             if let remoteSecrets {
@@ -1116,7 +1138,8 @@ final class SessionStore {
                 // if they didn't arrive.
                 let script = SandboxLaunch.remoteSecretsScript(directory: remoteSecrets.directory, writing: remoteSecrets.text != nil)
                 let input = remoteSecrets.text.map { Data($0.utf8) }
-                _ = await Task.detached { Shell.run(script, remoteSecrets.runner, input: input) }.value
+                let result = await Task.detached { Shell.run(script, remoteSecrets.runner, input: input) }.value
+                Self.log.debug("launch \(id.uuidString, privacy: .public) sent remote secrets, ok=\(result.ok, privacy: .public)")
             }
             if let remoteAttachments {
                 // Those not there yet, one file a call, on standard input.
@@ -1129,7 +1152,9 @@ final class SessionStore {
                     let script = Self.remoteAttachmentScript(directory: remoteAttachments.directory, name: file.lastPathComponent)
                     _ = await Task.detached { Shell.run(script, remoteAttachments.runner, input: data) }.value
                 }
+                Self.log.debug("launch \(id.uuidString, privacy: .public) sent \(remoteAttachments.files.count, privacy: .public) remote attachments")
             }
+            Self.log.debug("launch \(id.uuidString, privacy: .public) done waiting, \(Date.now.timeIntervalSince(launchCalledAt), format: .fixed(precision: 2), privacy: .public)s after launch() was called")
             start()
         }
     }

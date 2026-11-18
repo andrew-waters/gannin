@@ -26,6 +26,7 @@ Which workflow a PR gets is set by routing rules (by repo, author, labels or cha
 The review opens on its Overview:
 
 - **The headline**, and whether the PR can merge, in one sentence (also in the tab's header). It weighs conflicts, draft state, the review decision, checks, open threads and findings you haven't dismissed.
+- **Effort and Risk**, beside the headline sentence. Effort is how much work reading the PR by hand is, 1 to 5. Risk is Low, Medium or High: what the change could break if it's wrong, not how big it is. A review with more than one step shows the highest either gave.
 - **Needs attention**, in tiers: Blocking the merge, Fix before merging, Waiting on and Not blocking. Empty tiers are hidden. Each item opens its file, its checks or its thread.
 - The walkthrough, the description, and a rail of the PR's own comments and reviews. Ask the reviewer there pastes your question to it and opens the conversation.
 

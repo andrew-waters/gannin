@@ -101,6 +101,8 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         var headline: String? = nil
         /// How much work reviewing it by hand is, 1 (a glance) to 5.
         var effort: Int? = nil
+        /// What the change could break if it's wrong, `low`, `medium` or `high`.
+        var risk: String? = nil
         /// The change in areas, in the order to read them.
         var walkthrough: [WalkthroughArea]? = nil
         /// What happens, step by step, when the changed code runs.
@@ -454,7 +456,19 @@ nonisolated struct TranscriptReader: TranscriptParsing {
     }
 }
 
+/// What a PR could break if it's wrong, as a reviewer rates it: not how big it is.
+nonisolated enum ReviewRisk: String, Sendable, Comparable, CaseIterable {
+    case low, medium, high
+
+    static func < (a: Self, b: Self) -> Bool {
+        allCases.firstIndex(of: a)! < allCases.firstIndex(of: b)!
+    }
+}
+
 nonisolated extension SessionTranscript.ReviewResult {
+    /// The risk as a level, nil when the reviewer gave none.
+    var riskLevel: ReviewRisk? { risk.flatMap { ReviewRisk(rawValue: $0) } }
+
     /// As synthesised, except that learnings Gannin can't read are
     /// left out rather than losing the review.
     init(from decoder: any Decoder) throws {
@@ -467,6 +481,10 @@ nonisolated extension SessionTranscript.ReviewResult {
         applied = (try? container.decodeIfPresent([SessionTranscript.AppliedLearning].self, forKey: .applied)) ?? nil
         headline = (try? container.decodeIfPresent(String.self, forKey: .headline)) ?? nil
         effort = ((try? container.decodeIfPresent(Int.self, forKey: .effort)) ?? nil).map { min(5, max(1, $0)) }
+        // Anything but the three levels is dropped, not kept as a label to show.
+        risk = ((try? container.decodeIfPresent(String.self, forKey: .risk)) ?? nil)
+            .map { $0.lowercased() }
+            .flatMap { ReviewRisk(rawValue: $0) }?.rawValue
         walkthrough = (try? container.decodeIfPresent([SessionTranscript.WalkthroughArea].self, forKey: .walkthrough)) ?? nil
         flow = (try? container.decodeIfPresent([String].self, forKey: .flow)) ?? nil
         checks = (try? container.decodeIfPresent([SessionTranscript.CheckResult].self, forKey: .checks)) ?? nil

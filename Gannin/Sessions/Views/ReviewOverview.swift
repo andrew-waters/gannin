@@ -274,6 +274,9 @@ struct ReviewOverview: View {
                 if let effort = review?.effort {
                     EffortMeter(effort: effort)
                 }
+                if let risk = review?.riskLevel {
+                    RiskBadge(risk: risk)
+                }
             }
             if let review {
                 MarkdownText(source: review.summary)
@@ -557,6 +560,30 @@ struct EffortMeter: View {
         .help("Review effort \(effort) of 5, as the reviewer judged how much work reading it by hand is")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Review effort \(effort) of 5")
+    }
+}
+
+/// What the change could break if it's wrong, as the reviewer rated it.
+struct RiskBadge: View {
+    let risk: ReviewRisk
+
+    private var color: Color {
+        switch risk {
+        case .low: .green
+        case .medium: .orange
+        case .high: .red
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("Risk").foregroundStyle(.secondary)
+            Text(risk.rawValue.capitalized).foregroundStyle(color).fontWeight(.medium)
+        }
+        .font(.callout)
+        .help("Merge risk \(risk.rawValue): what the change could break if it's wrong, as the reviewer judged, not how big it is")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Merge risk \(risk.rawValue)")
     }
 }
 

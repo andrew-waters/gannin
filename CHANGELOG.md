@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- PR reviews rate their merge risk (Low, Medium or High), shown on the Overview beside Effort and kept in the review record
 - ⇧⌘F finishes a PR review, asking first as the Finish button does
 
 ### Changed

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SwiftUI
 
 /// The `- [ ]` items of a plan or requirement, read and ticked by their
@@ -469,12 +470,14 @@ struct WrapUpSessionSheet: View {
 
     private func finish(_ session: CodeSession) {
         finishing = true
+        SessionStore.log.info("Finish and Clean Up clicked for \(session.id.uuidString, privacy: .public)")
         Task {
             do {
                 try await sessions.finish(session.id)
                 sessions.wrappingUp = nil
             } catch {
                 self.error = error.localizedDescription
+                SessionStore.log.error("Finish and Clean Up failed for \(session.id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
             finishing = false
         }

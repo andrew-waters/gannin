@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import os
 
 /// A one-click answer to what claude is asking: the keys it takes in the
 /// terminal.
@@ -640,10 +641,18 @@ extension SessionStore {
     /// unset. Throws when the worktrees couldn't be removed.
     func finish(_ id: UUID) async throws {
         guard let session = sessions[id] else { return }
+        let finishStartedAt = Date.now
+        Self.log.info("finish \(id.uuidString, privacy: .public) starting")
         for helper in helpers(of: id) { end(helper.id) }
         end(id)
-        try await removeWorktrees(session)
+        do {
+            try await removeWorktrees(session)
+        } catch {
+            Self.log.error("finish \(id.uuidString, privacy: .public) failed, \(Date.now.timeIntervalSince(finishStartedAt), format: .fixed(precision: 2), privacy: .public)s in: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
         remove(id)
+        Self.log.info("finish \(id.uuidString, privacy: .public) removed worktrees, \(Date.now.timeIntervalSince(finishStartedAt), format: .fixed(precision: 2), privacy: .public)s in")
         Task { await recordFinished(session) }
     }
 
@@ -748,7 +757,10 @@ extension SessionStore {
         }
         // Nothing a sandbox wrote in its repos' .git runs here.
         let guardedScript = dangling + SessionChanges.guarded(session) + script
+        let removeStartedAt = Date.now
+        Self.log.debug("removeWorktrees \(session.id.uuidString, privacy: .public) running git worktree remove")
         let result = await Task.detached { Shell.run(guardedScript, runner) }.value
+        Self.log.debug("removeWorktrees \(session.id.uuidString, privacy: .public) finished, \(Date.now.timeIntervalSince(removeStartedAt), format: .fixed(precision: 2), privacy: .public)s, ok=\(result.ok, privacy: .public)")
         guard result.ok else { throw SessionError.message(result.error.isEmpty ? "Couldn't remove the worktrees." : result.error) }
     }
 
@@ -761,11 +773,18 @@ extension SessionStore {
         // file. That's safe: `commit` reads the file at the head it builds on
         // (retrying once if the head moves), and `finishedAt == nil` makes a
         // repeat a no-op.
-        _ = try? await harnessStore.commit(org: session.org, setup: setup, refreshing: false) { head in
-            let text = try await self.harnessStore.files(setup: setup, at: head, paths: [path])[path] ?? nil
-            guard let text, var record = try? SessionRecord.decoder.decode(SessionRecord.self, from: Data(text.utf8)), record.finishedAt == nil else { return nil }
-            record.finishedAt = .now
-            return HarnessChange(message: "Gannin: \(session.longReference) is finished", files: [path: record.json])
+        let recordStartedAt = Date.now
+        Self.log.debug("recordFinished \(session.id.uuidString, privacy: .public) committing to harness")
+        do {
+            _ = try await harnessStore.commit(org: session.org, setup: setup, refreshing: false) { head in
+                let text = try await self.harnessStore.files(setup: setup, at: head, paths: [path])[path] ?? nil
+                guard let text, var record = try? SessionRecord.decoder.decode(SessionRecord.self, from: Data(text.utf8)), record.finishedAt == nil else { return nil }
+                record.finishedAt = .now
+                return HarnessChange(message: "Gannin: \(session.longReference) is finished", files: [path: record.json])
+            }
+            Self.log.debug("recordFinished \(session.id.uuidString, privacy: .public) committed, \(Date.now.timeIntervalSince(recordStartedAt), format: .fixed(precision: 2), privacy: .public)s")
+        } catch {
+            Self.log.error("recordFinished \(session.id.uuidString, privacy: .public) failed, \(Date.now.timeIntervalSince(recordStartedAt), format: .fixed(precision: 2), privacy: .public)s: \(error.localizedDescription, privacy: .public)")
         }
     }
 
