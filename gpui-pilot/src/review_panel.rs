@@ -783,7 +783,8 @@ impl ReviewPanel {
         let _ = std::fs::write(dir.join("auto-posted"), "");
         let (repo, number) = self.subject();
         let approve = crate::schedule::Schedule::load().settings.approve_by_itself;
-        // An approval goes by itself only at low merge risk.
+        // An approval goes by itself only at low merge risk, with no
+        // acceptance criterion missing.
         let risk = self.risk();
         let level = risk.as_ref().and_then(|r| r.level());
         cx.spawn(async move |this, cx| {
@@ -803,6 +804,11 @@ impl ReviewPanel {
                             Some(level) => format!("Posted as a comment, not an approval: merge risk is {}.", level.title()),
                             None => "Posted as a comment, not an approval: the merge risk wasn't graded.".to_string(),
                         });
+                    } else if event == "APPROVE" && risk.as_ref().is_some_and(|r| r.criteria_missing()) {
+                        // Low risk says merging is safe, not that the work
+                        // is done: an unmet criterion is a person's call.
+                        event = "COMMENT";
+                        held = Some("Posted as a comment, not an approval: an acceptance criterion isn't met.".to_string());
                     }
                     let url = review::post(&token, &repo, number, event, &draft, &snapshot).map_err(|e| e.to_string())?;
                     let resolved = review::resolve_threads(&token, &snapshot, &result.resolved);
@@ -1506,7 +1512,7 @@ impl ReviewPanel {
         use crate::risk::Level;
         let level = risk.level();
         let tint = level.map(|l| risk_tint(l, theme)).unwrap_or(theme.secondary);
-        let rows = risk.signals.iter().map(|signal| {
+        let signal_row = |signal: &crate::risk::Signal| {
             let (mark, mark_tint) = match signal.score() {
                 Some(1) => ("✓", theme.good()),
                 Some(2) => ("~", theme.orange()),
@@ -1529,7 +1535,25 @@ impl ReviewPanel {
                         .when_some(signal.raised.clone(), |d, r| d.child(div().text_sm().text_color(theme.orange()).child(format!("Raised: {r}")))),
                 )
                 .child(div().flex_none().text_sm().text_color(theme.secondary).child(signal.verdict.clone().unwrap_or_else(|| "unknown".into())))
-        });
+                .into_any_element()
+        };
+        // Exposure (what it touches) above confidence (whether we can tell
+        // it works), each with its own grade.
+        let rows: Vec<gpui::AnyElement> = [crate::risk::Group::Exposure, crate::risk::Group::Confidence]
+            .into_iter()
+            .flat_map(|group| {
+                let grade = risk.group_score(group).map(|s| group.word(s)).unwrap_or("unknown");
+                let heading = div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .text_xs()
+                    .child(div().text_color(theme.tertiary).child(group.title().to_uppercase()))
+                    .child(div().text_color(theme.secondary).child(grade))
+                    .into_any_element();
+                std::iter::once(heading).chain(risk.signals.iter().filter(move |s| s.group() == group).map(signal_row)).collect::<Vec<_>>()
+            })
+            .collect();
         let overall = div()
             .flex_none()
             .w(px(220.))
@@ -1610,7 +1634,7 @@ impl ReviewPanel {
             .border_1()
             .border_color(theme.border)
             .child(div().flex().flex_row().gap_6().child(div().flex_1().min_w_0().flex().flex_col().gap_3().children(rows)).child(overall))
-            .when(!gaps.is_empty(), |d| d.child(list("What would lower it", gaps)))
+            .when(!gaps.is_empty(), |d| d.child(list("What would raise confidence", gaps)))
             .when(!sensitive.is_empty(), |d| d.child(list("Sensitive paths it touches", sensitive)))
             .when(!criteria.is_empty(), |d| d.child(list("Acceptance criteria", criteria)))
     }

@@ -1,9 +1,13 @@
-//! Merge risk: how dangerous merging a PR is, apart from how much is wrong
-//! with it. Claude grades five signals in the review JSON (`risk`) and
-//! checks the linked issues' acceptance criteria (`criteria`); the overall
-//! grade is worked out here, with fixed weights, so it's stable and can be
-//! explained. Two floors claude can't argue past: a change touching a path
-//! the team marks sensitive is at least medium impact, and a missing
+//! Merge risk: how bad it'd be if merging went wrong, never how good the
+//! code is (the findings say that). Claude grades five signals in the
+//! review JSON (`risk`) and checks the linked issues' acceptance criteria
+//! (`criteria`). The signals fall in two groups: exposure (impact, rollback
+//! cost, error detection: what the change touches, which better code or
+//! more tests can't lower) and confidence (verification, alignment: whether
+//! we can tell it works). The grade is exposure, moved by confidence only
+//! at the edges: worked out here with fixed weights so it's stable and can
+//! be explained. Two floors claude can't argue past: a change touching a
+//! path the team marks sensitive is at least medium impact, and a missing
 //! acceptance criterion makes verification poor.
 //!
 //! The team marks sensitive paths in `.gannin/review.json`: a `sensitive`
@@ -54,14 +58,44 @@ impl Level {
     }
 }
 
-/// The five signals, in the order they're shown: key, title, weight, and
-/// the verdicts from good to bad.
-pub const SIGNALS: [(&str, &str, f32, [&str; 3]); 5] = [
-    ("alignment", "Alignment", 1.0, ["good", "decent", "poor"]),
-    ("impact", "Impact", 2.0, ["small", "medium", "large"]),
-    ("verification", "Verification", 2.0, ["good", "decent", "poor"]),
-    ("rollback", "Rollback cost", 1.5, ["low", "medium", "high"]),
-    ("detection", "Error detection", 1.0, ["good", "decent", "poor"]),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    /// What the change touches: how bad a failure would be.
+    Exposure,
+    /// Whether we can tell it works.
+    Confidence,
+}
+
+impl Group {
+    pub fn title(self) -> &'static str {
+        match self {
+            Group::Exposure => "Exposure",
+            Group::Confidence => "Confidence",
+        }
+    }
+
+    /// The group's grade as a word: exposure low to high, confidence good
+    /// to poor.
+    pub fn word(self, score: u8) -> &'static str {
+        match (self, score) {
+            (Group::Exposure, 1) => "low",
+            (Group::Exposure, 2) => "medium",
+            (Group::Exposure, _) => "high",
+            (Group::Confidence, 1) => "good",
+            (Group::Confidence, 2) => "decent",
+            (Group::Confidence, _) => "poor",
+        }
+    }
+}
+
+/// The five signals, in the order they're shown: key, title, group,
+/// weight within the group, and the verdicts from good to bad.
+pub const SIGNALS: [(&str, &str, Group, f32, [&str; 3]); 5] = [
+    ("impact", "Impact", Group::Exposure, 2.0, ["small", "medium", "large"]),
+    ("rollback", "Rollback cost", Group::Exposure, 1.5, ["low", "medium", "high"]),
+    ("detection", "Error detection", Group::Exposure, 1.0, ["good", "decent", "poor"]),
+    ("verification", "Verification", Group::Confidence, 2.0, ["good", "decent", "poor"]),
+    ("alignment", "Alignment", Group::Confidence, 1.0, ["good", "decent", "poor"]),
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,17 +112,21 @@ pub struct Signal {
 impl Signal {
     /// 1 good, 2 middle, 3 bad; None when unknown or not applicable.
     pub fn score(&self) -> Option<u8> {
-        let verdicts = SIGNALS.iter().find(|s| s.0 == self.key)?.3;
+        let verdicts = SIGNALS.iter().find(|s| s.0 == self.key)?.4;
         verdicts.iter().position(|v| Some(*v) == self.verdict.as_deref()).map(|i| i as u8 + 1)
     }
 
     fn weight(&self) -> f32 {
-        SIGNALS.iter().find(|s| s.0 == self.key).map(|s| s.2).unwrap_or(1.0)
+        SIGNALS.iter().find(|s| s.0 == self.key).map(|s| s.3).unwrap_or(1.0)
+    }
+
+    pub fn group(&self) -> Group {
+        SIGNALS.iter().find(|s| s.0 == self.key).map(|s| s.2).unwrap_or(Group::Confidence)
     }
 
     /// Raises the verdict to at least `floor` (1 to 3), saying why.
     fn floor(&mut self, floor: u8, why: String) {
-        let verdicts = SIGNALS.iter().find(|s| s.0 == self.key).map(|s| s.3).unwrap_or(["", "", ""]);
+        let verdicts = SIGNALS.iter().find(|s| s.0 == self.key).map(|s| s.4).unwrap_or(["", "", ""]);
         if self.score().is_none_or(|s| s < floor) {
             self.verdict = Some(verdicts[floor as usize - 1].to_string());
             self.raised = Some(why);
@@ -142,7 +180,7 @@ pub fn parse(value: &Value) -> Option<Risk> {
     }
     let signals = SIGNALS
         .iter()
-        .map(|(key, title, _, _)| {
+        .map(|(key, title, _, _, _)| {
             let entry = &risk[*key];
             // A bare string is the verdict alone.
             let verdict = text(&entry["verdict"]).or_else(|| text(entry)).map(|v| v.to_lowercase());
@@ -180,50 +218,77 @@ impl Risk {
         self
     }
 
-    /// Weighted mean of the known signals: low under 1.5, high from 2.25.
-    /// None until at least verification and impact are known.
-    pub fn level(&self) -> Option<Level> {
-        let known: Vec<(f32, f32)> = self.signals.iter().filter_map(|s| s.score().map(|score| (score as f32, s.weight()))).collect();
-        let has = |key: &str| self.signals.iter().any(|s| s.key == key && s.score().is_some());
-        if !has("impact") || !has("verification") {
+    /// A group's grade, 1 to 3: the weighted mean of its known signals,
+    /// 1 under 1.5, 3 from 2.25. None until its main signal (impact,
+    /// verification) is known.
+    pub fn group_score(&self, group: Group) -> Option<u8> {
+        let main = if group == Group::Exposure { "impact" } else { "verification" };
+        if !self.signals.iter().any(|s| s.key == main && s.score().is_some()) {
             return None;
         }
+        let known: Vec<(f32, f32)> = self.signals.iter().filter(|s| s.group() == group).filter_map(|s| s.score().map(|score| (score as f32, s.weight()))).collect();
         let total: f32 = known.iter().map(|(_, w)| w).sum();
         let mean = known.iter().map(|(s, w)| s * w).sum::<f32>() / total;
         Some(if mean < 1.5 {
-            Level::Low
+            1
         } else if mean < 2.25 {
-            Level::Medium
+            2
         } else {
-            Level::High
+            3
         })
     }
 
-    /// The one thing to look at before merging: the signal adding most to
-    /// the risk.
+    /// Exposure sets the grade; confidence moves it a step only at the
+    /// edges. High exposure is never low, however well tested ("some
+    /// things are just risky"), and is high unless confidence is good;
+    /// medium is medium, or high when confidence is poor; low exposure is
+    /// low, or medium when confidence is poor. None until both are known.
+    pub fn level(&self) -> Option<Level> {
+        let (exposure, confidence) = (self.group_score(Group::Exposure)?, self.group_score(Group::Confidence)?);
+        Some(match (exposure, confidence) {
+            (1, 3) => Level::Medium,
+            (1, _) => Level::Low,
+            (2, 3) => Level::High,
+            (2, _) => Level::Medium,
+            (_, 1) => Level::Medium,
+            _ => Level::High,
+        })
+    }
+
+    /// The one thing to look at before merging: the worst signal in the
+    /// group that set the grade (confidence when it raised it, else
+    /// exposure).
     pub fn next_step(&self) -> String {
-        match self.level() {
-            None => "Not enough to grade it.".into(),
-            Some(Level::Low) => "Safe to merge once the findings are dealt with.".into(),
-            Some(_) => {
-                let worst = self.signals.iter().filter(|s| s.score().is_some_and(|s| s > 1)).max_by(|a, b| {
-                    let weigh = |s: &Signal| s.score().unwrap_or(0) as f32 * s.weight();
-                    weigh(a).partial_cmp(&weigh(b)).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                match worst {
-                    Some(s) => format!("Look at {} before merging.", s.title.to_lowercase()),
-                    None => "Look it over before merging.".into(),
-                }
-            }
+        let Some(level) = self.level() else { return "Not enough to grade it.".into() };
+        if level == Level::Low {
+            return "Safe to merge once the findings are dealt with.".into();
         }
+        let confidence = self.group_score(Group::Confidence).unwrap_or(1);
+        let exposure = self.group_score(Group::Exposure).unwrap_or(1);
+        let group = if confidence == 3 || (exposure == 3 && confidence == 2) { Group::Confidence } else { Group::Exposure };
+        let worst = self.signals.iter().filter(|s| s.group() == group && s.score().is_some_and(|s| s > 1)).max_by(|a, b| {
+            let weigh = |s: &Signal| s.score().unwrap_or(0) as f32 * s.weight();
+            weigh(a).partial_cmp(&weigh(b)).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        match (group, worst) {
+            (Group::Confidence, Some(s)) => format!("Look at {} before merging.", s.title.to_lowercase()),
+            (Group::Exposure, Some(s)) => format!("{} keeps it {}: a person should look before merging.", s.title, level.title()),
+            (_, None) => "Look it over before merging.".into(),
+        }
+    }
+
+    /// Whether an acceptance criterion this PR is for isn't done: an
+    /// approval never goes by itself then, whatever the grade.
+    pub fn criteria_missing(&self) -> bool {
+        self.criteria.iter().any(|c| c.status == "missing")
     }
 }
 
 impl Risk {
     /// The merge risk as it goes in the posted review's body: the grade and
-    /// what to look at, each signal graded with why, the acceptance
-    /// criteria not met, the sensitive paths touched, and what would bring
-    /// it down. None when there's nothing graded to say.
+    /// what to look at, exposure and confidence with each signal graded
+    /// and why, the acceptance criteria not met and the sensitive paths
+    /// touched. None when there's nothing graded to say.
     pub fn markdown(&self) -> Option<String> {
         let graded: Vec<&Signal> = self.signals.iter().filter(|s| s.verdict.as_deref().is_some_and(|v| v != "n/a")).collect();
         if graded.is_empty() && self.criteria.is_empty() {
@@ -233,9 +298,17 @@ impl Risk {
             Some(level) => format!("{} **Merge risk: {}.** {}", level.emoji(), level.title(), self.next_step()),
             None => "**Merge risk:** not enough to grade it.".to_string(),
         }];
-        if !graded.is_empty() {
+        for group in [Group::Exposure, Group::Confidence] {
+            let signals: Vec<&&Signal> = graded.iter().filter(|s| s.group() == group).collect();
+            if signals.is_empty() {
+                continue;
+            }
             out.push(String::new());
-            for s in graded {
+            out.push(match self.group_score(group) {
+                Some(score) => format!("**{}: {}**", group.title(), group.word(score)),
+                None => format!("**{}**", group.title()),
+            });
+            for s in signals {
                 // Never "- `": the body's findings are read back by that.
                 let mut line = format!("- {}: {}", s.title, s.verdict.clone().unwrap_or_default());
                 if let Some(reason) = &s.reason {
@@ -265,11 +338,9 @@ impl Risk {
                 out.push(format!("- {path}{}", why.as_ref().map(|w| format!(": {w}")).unwrap_or_default()));
             }
         }
-        if !self.gaps.is_empty() {
-            out.push(String::new());
-            out.push("**To bring it down**".into());
-            out.extend(self.gaps.iter().map(|g| format!("- {g}")));
-        }
+        // The gaps stay out of the body: a list there can't be resolved
+        // point by point. Those claude can place in the code come as
+        // findings, so inline threads; the rest show only in the panel.
         // A GitHub alert, so it's marked off from the review beneath: its
         // colour follows the grade.
         let kind = match self.level() {
@@ -423,10 +494,45 @@ mod tests {
             "verification": { "verdict": "poor" }, "rollback": { "verdict": "low" }, "detection": "decent"
         }});
         let risk = parse(&value).unwrap();
-        // (1 + 2 + 6 + 1.5 + 2) / 7.5 = 1.67
+        // Exposure (2 + 1.5 + 2) / 4.5 = 1.22, low; confidence (6 + 1) / 3
+        // = 2.33, poor: an untested change is a step up even when small.
+        assert_eq!(risk.group_score(Group::Exposure), Some(1));
+        assert_eq!(risk.group_score(Group::Confidence), Some(3));
         assert_eq!(risk.level(), Some(Level::Medium));
         let raised = risk.assessed(&["db/migrations/1.sql".into()], &[Sensitive { path: "db/migrations/".into(), why: None }]);
-        assert_eq!(raised.signals[1].verdict.as_deref(), Some("medium"));
+        let impact = raised.signals.iter().find(|s| s.key == "impact").unwrap();
+        assert_eq!(impact.verdict.as_deref(), Some("medium"));
+        // Medium exposure with poor confidence.
+        assert_eq!(raised.level(), Some(Level::High));
+    }
+
+    #[test]
+    fn exposure_sets_the_grade() {
+        let grade = |impact: &str, rollback: &str, verification: &str| {
+            parse(&serde_json::json!({ "risk": {
+                "alignment": "good", "impact": impact, "verification": verification, "rollback": rollback, "detection": "decent"
+            }}))
+            .unwrap()
+            .level()
+        };
+        // Some things are just risky: well tested, still never low.
+        assert_eq!(grade("large", "high", "good"), Some(Level::Medium));
+        assert_eq!(grade("large", "high", "decent"), Some(Level::High));
+        // A small, revertable change isn't raised by tests a little thin.
+        assert_eq!(grade("small", "low", "decent"), Some(Level::Low));
+        // Nor is a medium one lowered by good tests.
+        assert_eq!(grade("medium", "medium", "good"), Some(Level::Medium));
+    }
+
+    #[test]
+    fn gaps_stay_out_of_the_body() {
+        let risk = parse(&serde_json::json!({ "risk": {
+            "impact": "small", "verification": "good", "gaps": ["A screenshot of the empty state"]
+        }}))
+        .unwrap();
+        let body = risk.markdown().unwrap();
+        assert!(body.contains("**Exposure: low**") && body.contains("**Confidence: good**"));
+        assert!(!body.contains("screenshot"));
     }
 
     #[test]

@@ -32,6 +32,7 @@ const FINDINGS: &str = r#"I read the diff and the surrounding code.
   "findings": [
     {"path": "src/api/payments.rs", "line": 88, "severity": "blocker", "category": "correctness", "comment": "The lookup at line 88 and the insert at line 131 run in separate transactions, so two concurrent retries can both miss the key and both charge. Take the lock (or insert first with ON CONFLICT DO NOTHING) inside one transaction.", "suggestion": "let mut tx = store.begin().await?;"},
     {"path": "src/store/keys.rs", "line": 24, "severity": "major", "category": "stability", "comment": "Keys are never deleted. Add an expiry (24 hours is common) and a sweep, or the table grows forever."},
+    {"path": "src/api/payments.rs", "line": 95, "severity": "minor", "category": "stability", "comment": "A 409 here is logged nowhere, so a client stuck retrying with a reused key goes unseen. Count 409s from this handler, or log them with the key's account."},
     {"path": "src/api/errors.rs", "line": 57, "severity": "minor", "category": "maintainability", "comment": "The 409 body is just \"conflict\". Say that the key was used for a different request, so a client can tell this from other conflicts."},
     {"path": "src/api/payments.rs", "line": 140, "severity": "nit", "category": "maintainability", "comment": "Leftover debug log.", "suggestion": ""},
     {"path": "README.md", "line": 12, "severity": "minor", "category": "maintainability", "comment": "The README's API section doesn't mention the new header."}
@@ -42,7 +43,7 @@ const FINDINGS: &str = r#"I read the diff and the surrounding code.
     "verification": {"verdict": "decent", "reason": "Retries are tested; concurrent retries aren't."},
     "rollback": {"verdict": "medium", "reason": "Reverting leaves the new table behind, which is harmless."},
     "detection": {"verdict": "poor", "reason": "A double charge would only show up when a customer reports it."},
-    "gaps": ["A test with two concurrent retries of one key (`tests/payments_idempotency.rs`)", "A metric or alert on 409s from the payments handler (`src/api/payments.rs:95`)"]
+    "gaps": ["A note in the PR of how often clients retried on staging"]
   },
   "criteria": [
     {"criterion": "A retried request with the same key never charges twice", "issue": "acme/api#311", "status": "partial", "evidence": "Sequential retries are tested; concurrent ones can still both charge."},
@@ -79,6 +80,7 @@ const AGAIN: &str = r#"```json
   ],
   "flow": [],
   "findings": [
+    {"path": "src/api/payments.rs", "line": 95, "severity": "minor", "category": "stability", "comment": "A 409 here is logged nowhere, so a client stuck retrying with a reused key goes unseen. Count 409s from this handler, or log them with the key's account."},
     {"path": "src/api/errors.rs", "line": 57, "severity": "minor", "category": "maintainability", "comment": "The 409 body is still just \"conflict\"; say the key was used for a different request."}
   ],
   "resolved": ["PRRT_kwDOAbc123", "PRRT_kwDOAbc124"],
