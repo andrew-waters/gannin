@@ -81,7 +81,80 @@ use gpui::{
 };
 use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, ToggleTabsOnLeft, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenFolder, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
 
-actions!(pilot, [Quit]);
+actions!(pilot, [Quit, CloseWindow, Minimize, Zoom, ToggleFullScreen, Hide, HideOthers, ShowAll]);
+
+/// The standard window and app shortcuts. Minimise and Hide are bound on a
+/// Mac only: elsewhere the system has its own, and Control-M and Control-H
+/// are Return and Backspace in a terminal.
+fn window_key_bindings() -> Vec<KeyBinding> {
+    let mut bindings = vec![
+        KeyBinding::new(zed::keys("secondary-q"), Quit, None),
+        KeyBinding::new(zed::keys("secondary-shift-w"), CloseWindow, None),
+    ];
+    if cfg!(target_os = "macos") {
+        bindings.extend([
+            KeyBinding::new("cmd-m", Minimize, None),
+            KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
+            KeyBinding::new("cmd-h", Hide, None),
+            KeyBinding::new("alt-cmd-h", HideOthers, None),
+        ]);
+    } else {
+        bindings.push(KeyBinding::new("f11", ToggleFullScreen, None));
+    }
+    bindings
+}
+
+/// The window actions, on whichever window is active (a Gannin window or
+/// Marra's). Close Window asks first in a Gannin window with sessions
+/// running, as its close button does.
+fn handle_window_actions(cx: &mut App) {
+    fn on_active(cx: &mut App, f: impl FnOnce(&mut gpui::Window, &mut App)) {
+        if let Some(handle) = cx.active_window() {
+            let _ = handle.update(cx, |_, window, cx| f(window, cx));
+        }
+    }
+    cx.on_action(|_: &CloseWindow, cx| {
+        let Some(handle) = cx.active_window() else { return };
+        match handle.downcast::<Workspace>() {
+            Some(workspace) => {
+                let _ = workspace.update(cx, |workspace, window, cx| workspace.close_window(window, cx));
+            }
+            None => {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            }
+        }
+    });
+    cx.on_action(|_: &Minimize, cx| on_active(cx, |window, _| window.minimize_window()));
+    cx.on_action(|_: &Zoom, cx| on_active(cx, |window, _| window.zoom_window()));
+    cx.on_action(|_: &ToggleFullScreen, cx| on_active(cx, |window, _| window.toggle_fullscreen()));
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+}
+
+/// The app menu's items: Hide and friends on a Mac, then Quit.
+fn app_menu_items() -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    if cfg!(target_os = "macos") {
+        items.extend([MenuItem::action("Hide Gannin", Hide), MenuItem::action("Hide Others", HideOthers), MenuItem::action("Show All", ShowAll), MenuItem::separator()]);
+    }
+    items.push(MenuItem::action("Quit", Quit));
+    items
+}
+
+fn window_menu() -> Menu {
+    Menu {
+        name: "Window".into(),
+        items: vec![
+            MenuItem::action("Minimize", Minimize),
+            MenuItem::action("Zoom", Zoom),
+            MenuItem::action("Toggle Full Screen", ToggleFullScreen),
+            MenuItem::separator(),
+            MenuItem::action("Close Window", CloseWindow),
+        ],
+        disabled: false,
+    }
+}
 
 fn main() {
     let mut org = None;
@@ -94,9 +167,10 @@ fn main() {
             "--assistant-preview" => {
                 gpui_platform::application().with_assets(assets::Assets).run(|cx: &mut App| {
                     zed::init(cx);
-                    cx.bind_keys([KeyBinding::new(crate::zed::keys("secondary-q"), Quit, None)]);
+                    cx.bind_keys(window_key_bindings());
                     cx.on_action(|_: &Quit, cx| cx.quit());
-                    cx.set_menus(vec![Menu { name: "Marra".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false }]);
+                    handle_window_actions(cx);
+                    cx.set_menus(vec![Menu { name: "Marra".into(), items: app_menu_items(), disabled: false }, window_menu()]);
                     let options = gpui::WindowOptions {
                         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(460.), gpui::px(860.)), cx))),
                         titlebar: Some(gpui::TitlebarOptions { title: Some("Marra".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(gpui::px(14.), gpui::px(13.))) }),
@@ -320,15 +394,16 @@ fn main() {
     paths::migrate();
     gpui_platform::application().with_assets(assets::Assets).run(move |cx: &mut App| {
         zed::init(cx);
-        cx.bind_keys([KeyBinding::new(crate::zed::keys("secondary-q"), Quit, None)]);
+        cx.bind_keys(window_key_bindings());
         cx.bind_keys(shell::key_bindings());
+        handle_window_actions(cx);
         // Marra: ⌘J while Gannin is active brings it forward.
         cx.bind_keys([KeyBinding::new(crate::zed::keys("secondary-j"), marra_view::ToggleMarra, None)]);
         // Deferred: the action arrives inside the active window's update, and
         // that window (Marra's own, or the one it docks in) is lent out until then.
         cx.on_action(|_: &marra_view::ToggleMarra, cx| cx.defer(marra_view::toggle));
         cx.set_menus(vec![
-            Menu { name: "Gannin".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false },
+            Menu { name: "Gannin".into(), items: app_menu_items(), disabled: false },
             Menu {
                 name: "File".into(),
                 items: vec![
@@ -361,6 +436,7 @@ fn main() {
                 ],
                 disabled: false,
             },
+            window_menu(),
         ]);
 
         let workspace = cx.open_window(

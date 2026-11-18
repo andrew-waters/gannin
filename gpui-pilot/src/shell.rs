@@ -652,25 +652,7 @@ impl Workspace {
         window.on_window_should_close(cx, move |window, cx| {
             let Some(this) = this.upgrade() else { return true };
             let running = this.read(cx).running(cx);
-            if running.is_empty() {
-                remove_slot(slot);
-                return true;
-            }
-            let message = match running.len() {
-                1 => "Close this window and end the session that's running in it?".to_string(),
-                n => format!("Close this window and end the {n} sessions running in it?"),
-            };
-            let detail = Self::ending_detail(&running, cx);
-            let answer = window.prompt(gpui::PromptLevel::Warning, &message, Some(&detail), &["Close Window", "Cancel"], cx);
-            window
-                .spawn(cx, async move |cx| {
-                    if answer.await == Ok(0) {
-                        remove_slot(slot);
-                        cx.update(|window, _| window.remove_window()).ok();
-                    }
-                })
-                .detach();
-            false
+            Self::confirm_close(running, slot, window, cx)
         });
         let views = Self::saved_views(&saved);
         let sessions = saved.sessions.clone();
@@ -3331,6 +3313,38 @@ impl Workspace {
     }
 
     /// Quitting with sessions running asks first, as Gannin's quit guard does.
+    /// Whether the window can close now: at once when nothing's running in
+    /// it, else after asking, closing it if the person says so.
+    fn confirm_close(running: Vec<Entity<SessionPage>>, slot: usize, window: &mut Window, cx: &mut App) -> bool {
+        if running.is_empty() {
+            remove_slot(slot);
+            return true;
+        }
+        let message = match running.len() {
+            1 => "Close this window and end the session that's running in it?".to_string(),
+            n => format!("Close this window and end the {n} sessions running in it?"),
+        };
+        let detail = Self::ending_detail(&running, cx);
+        let answer = window.prompt(gpui::PromptLevel::Warning, &message, Some(&detail), &["Close Window", "Cancel"], cx);
+        window
+            .spawn(cx, async move |cx| {
+                if answer.await == Ok(0) {
+                    remove_slot(slot);
+                    cx.update(|window, _| window.remove_window()).ok();
+                }
+            })
+            .detach();
+        false
+    }
+
+    /// Close Window: as the window's close button, asking first while
+    /// sessions run in it.
+    pub fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if Self::confirm_close(self.running(cx), self.slot, window, cx) {
+            window.remove_window();
+        }
+    }
+
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Every window's sessions end with the app.
         let mut running = self.running(cx);
