@@ -44,6 +44,10 @@ pub struct Saved {
     /// Whether Marra floats above other apps or docks into a Gannin window.
     #[serde(default)]
     pub docked: bool,
+    /// Its own window as an ordinary one, not kept above other apps and
+    /// on every Space.
+    #[serde(default)]
+    pub not_on_top: bool,
     /// Focus: everything but blocked items is held.
     #[serde(default)]
     pub focus: bool,

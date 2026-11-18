@@ -117,7 +117,7 @@ impl MarraView {
             cx.notify();
         });
         window.focus(&composer.focus_handle(cx), cx);
-        if !docked {
+        if !docked && !marra.read(cx).saved.not_on_top {
             keep_up(window);
         }
         let skills: Vec<String> = crate::marra_mcp::skills().lines().filter_map(|l| l.trim_start().strip_prefix("- ")).map(|l| l.split(':').next().unwrap_or(l).trim().to_string()).collect();
@@ -751,13 +751,25 @@ pub fn show_thread(thread: Option<String>, cx: &mut App) {
     }
 }
 
+/// Closes Marra's own window and opens it again, as Keep on Top changes.
+fn reopen_floating(cx: &mut App) {
+    let marra = Marra::get(cx);
+    if let Some(handle) = marra.read(cx).floating {
+        let _ = handle.update(cx, |_, window, _| window.remove_window());
+    }
+    marra.update(cx, |m, _| m.floating = None);
+    open_floating(cx);
+}
+
 fn open_floating(cx: &mut App) {
+    let on_top = !Marra::get(cx).read(cx).saved.not_on_top;
     let options = gpui::WindowOptions {
         // Wide enough for the thread list beside a thread.
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(980.), px(780.)), cx))),
         window_min_size: Some(gpui::size(px(760.), px(520.))),
         titlebar: Some(gpui::TitlebarOptions { title: Some("Marra".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(px(14.), px(13.))) }),
-        kind: gpui::WindowKind::Floating,
+        // Kept above other apps unless Keep on Top is off.
+        kind: if on_top { gpui::WindowKind::Floating } else { gpui::WindowKind::Normal },
         ..Default::default()
     };
     if let Ok(handle) = cx.open_window(options, |window, cx| cx.new(|cx| MarraView::new(false, window, cx))) {
@@ -1167,6 +1179,24 @@ impl MarraView {
         }
         if let Some(other) = model.filter(|m| !MODELS.iter().any(|(_, v)| *v == Some(m.as_str()))) {
             rows.push(div().px_2().py_1().text_sm().text_color(theme.fg).child(format!("✓ {other}")).into_any_element());
+        }
+        // Its own window kept above other apps, or an ordinary one.
+        if !self.docked {
+            let on_top = !self.marra.read(cx).saved.not_on_top;
+            rows.push(div().mx_2().my_1().h(px(1.)).bg(theme.border).into_any_element());
+            rows.push(
+                Self::menu_row("keep-on-top", format!("{}Keep on Top", if on_top { "✓ " } else { "   " }), false, theme)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.marra.update(cx, |m, _| {
+                            m.saved.not_on_top = on_top;
+                            m.saved.save();
+                        });
+                        this.more_menu = false;
+                        // The window's kind is set as it opens: open it again.
+                        cx.defer(reopen_floating);
+                    }))
+                    .into_any_element(),
+            );
         }
         // Summaries of what a session did: off, or the model that writes them.
         let (summaries_off, summary_model) = {
