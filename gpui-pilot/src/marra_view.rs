@@ -248,6 +248,15 @@ impl MarraView {
             }
             Act::OpenThread(id) => self.open_thread(id, cx),
             Act::Url(url) => cx.open_url(&url),
+            Act::MarkRead(thread) => self.marra.update(cx, |m, cx| {
+                m.mark_read(&thread, true);
+                cx.notify();
+            }),
+            Act::OpenSubject(key) => {
+                // After this window's update, as for a session.
+                let marra = self.marra.clone();
+                cx.defer(move |cx| marra.update(cx, |m, cx| m.open_subject(&key, cx)));
+            }
             Act::StartReview(subject) => {
                 let marra = self.marra.clone();
                 cx.defer(move |cx| marra.update(cx, |m, cx| m.start_review(subject, cx)));
@@ -1379,7 +1388,23 @@ impl MarraView {
                     .child(div().text_sm().text_color(theme.fg).child(format!("What it is: {what}")))
                     .child(div().text_sm().text_color(theme.fg).child(format!("Now: {state}")))
                     .child(div().text_sm().text_color(theme.fg).child(if since.is_empty() { "Since you looked: nothing new".to_string() } else { format!("Since you looked: {}", since.iter().map(|(at, what)| format!("{what} at {}", at.format("%H:%M"))).collect::<Vec<_>>().join(", ")) }))
-                    .when_some(need, |d, n| d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {}", n.task)))),
+                    .when_some(need, |d, n| d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {}", n.task))))
+                    .child({
+                        let mut links = div().flex().flex_row().flex_wrap().gap_1p5().pt_2();
+                        let open_key = key.to_string();
+                        links = links.child(button("left-off-session", "Open session", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(open_key.clone()), window, cx))));
+                        if let Some(subject) = &s.subject_link {
+                            let (in_app, url) = (key.to_string(), subject.url.clone());
+                            // A PR has no drawer to open by itself yet: the session
+                            // is where its change shows.
+                            if !subject.url.contains("/pull/") {
+                                links = links.child(button("left-off-app", "Open issue in Gannin", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSubject(in_app.clone()), window, cx))));
+                            }
+                            links = links
+                                .child(button("left-off-github", "Open on GitHub", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
+                        }
+                        links
+                    }),
             );
         }
         if lines.is_empty() {

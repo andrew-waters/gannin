@@ -1584,6 +1584,17 @@ impl Workspace {
         self.review_subject(subject, None, window, cx);
     }
 
+    /// From Marra: a session's issue in its drawer, when this window's org
+    /// has it. False when it hasn't (a PR, or another org's issue), so the
+    /// caller opens it on GitHub instead.
+    pub fn open_subject_for_marra(&mut self, subject: &crate::launch::Subject, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let found = self.issues.read(cx).issue(&subject.id).or_else(|| self.issues.read(cx).issue_by_number(&subject.repo, subject.number));
+        let Some(issue) = found else { return false };
+        self.navigate(Nav::Issues, false, window, cx);
+        self.push_drawer(issue, cx);
+        true
+    }
+
     fn review_subject(&mut self, pr: crate::launch::Subject, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
         use crate::launch::{self, Flow, Subject};
         let repo_name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string();

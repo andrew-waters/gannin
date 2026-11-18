@@ -274,6 +274,8 @@ pub struct SessionInfo {
     pub folder: PathBuf,
     pub server: Option<String>,
     pub subject: Option<String>,
+    /// The issue or PR it's about, to open in Gannin or on GitHub.
+    pub subject_link: Option<crate::launch::Subject>,
     pub claude_id: Option<String>,
     /// A review with a result not yet posted: findings kept and the verdict.
     pub review_ready: Option<(usize, Option<String>)>,
@@ -322,6 +324,7 @@ fn live_sessions(cx: &App) -> Vec<SessionInfo> {
                 folder: p.folder(cx),
                 server: p.server_name(),
                 subject: launch.and_then(|l| l.subject.as_ref()).map(|s| format!("{}#{}", s.repo, s.number)),
+                subject_link: launch.and_then(|l| l.subject.clone()),
                 claude_id: launch.map(|l| l.claude_id()),
                 review_ready: p.review_ready(cx),
             });
@@ -359,6 +362,10 @@ pub enum Act {
     OpenSession(String),
     OpenThread(String),
     Url(String),
+    /// A session's issue or PR in Gannin (its drawer), else on GitHub.
+    OpenSubject(String),
+    /// Seen: a thread marked read, which clears its "your turn".
+    MarkRead(String),
     Allow(Who, String, bool),
     Deny(Who, String),
     Confirm(u64, bool),
@@ -968,6 +975,26 @@ impl Marra {
             .is_ok()
     }
 
+    /// A session's issue in a drawer in the session's window; a PR, or an
+    /// issue that window doesn't have, on GitHub.
+    pub fn open_subject(&mut self, key: &str, cx: &mut App) {
+        let Some(s) = self.sessions.clone().into_iter().find(|s| s.key == key) else { return };
+        let Some(subject) = s.subject_link else { return };
+        let shown = s
+            .window
+            .update(cx, |workspace, window, cx| {
+                let shown = workspace.open_subject_for_marra(&subject, window, cx);
+                if shown {
+                    window.activate_window();
+                }
+                shown
+            })
+            .unwrap_or(false);
+        if !shown {
+            cx.open_url(&subject.url);
+        }
+    }
+
     // MARK: Needs you
 
     /// What needs the user, in order; `org` narrows it.
@@ -1043,7 +1070,10 @@ impl Marra {
             }
             match s.state {
                 State::NeedsYou => out.push(base(0, "Waiting for you", format!("{} has a question or a permission on screen", s.title))),
-                State::YourTurn if s.kind != "terminal" => out.push(base(1, "Finished; your turn", s.title.clone())),
+                // Only until you've looked: opening it, its thread, or Done.
+                State::YourTurn if s.kind != "terminal" && !self.looked_since(&thread, s.since) => {
+                    out.push(Need { actions: vec![("Done".into(), Act::MarkRead(thread.clone()))], ..base(1, "Finished; your turn", s.title.clone()) })
+                }
                 _ => {}
             }
         }
@@ -1273,6 +1303,11 @@ impl Marra {
             Some(read) => activity > read,
             None => true,
         }
+    }
+
+    /// Whether the user has opened or dismissed this thread since `at`.
+    fn looked_since(&self, thread: &str, at: DateTime<Local>) -> bool {
+        self.saved.read.get(thread).and_then(|r| DateTime::parse_from_rfc3339(r).ok()).is_some_and(|read| read >= at)
     }
 
     pub fn mark_read(&mut self, thread: &str, read: bool) {
