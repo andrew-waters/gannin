@@ -1010,13 +1010,7 @@ impl Marra {
         // The window whose org and harness suit the PR, one on a server
         // first: Marra's own window is usually the active one, and the first
         // window may be a local folder, which would run it on this Mac.
-        let fits = cx
-            .windows()
-            .into_iter()
-            .filter_map(|w| w.downcast::<Workspace>())
-            .filter_map(|w| w.read(cx).ok().and_then(|ws| ws.review_fit(&subject.repo)).map(|fit| (w, fit)))
-            .max_by_key(|(_, (listed, on_server))| (*listed, *on_server))
-            .map(|(w, _)| w);
+        let fits = Workspace::review_window_for(&subject.repo, cx);
         let target = fits.or_else(|| cx.active_window().and_then(|w| w.downcast::<Workspace>())).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));
         if let Some(window) = target {
             let _ = window.update(cx, |workspace, window, cx| {

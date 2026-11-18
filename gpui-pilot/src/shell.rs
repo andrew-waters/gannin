@@ -1388,7 +1388,11 @@ impl Workspace {
             self.activate(index, window, cx);
             return true;
         }
-        if let Some(launch) = Self::saved_launch(subject_id, flow) {
+        // An earlier run, only where this window runs sessions: one that ran
+        // on this Mac isn't reopened from a server's window, or the reverse.
+        let server = self.folder.as_ref().and_then(|f| f.location.server.clone());
+        let earlier = crate::launch::saved().into_iter().find(|l| l.flow == flow && l.server == server && l.subject.as_ref().is_some_and(|s| s.id == subject_id));
+        if let Some(launch) = earlier {
             self.drawers.clear();
             let folder = launch.harness_path.clone();
             self.open_session(Kind::Claude, folder, Some(launch), window, cx);
@@ -1600,6 +1604,19 @@ impl Workspace {
     /// Review with Claude, from Marra's Needs you: a review request.
     pub fn review_for_marra(&mut self, subject: crate::launch::Subject, window: &mut Window, cx: &mut Context<Self>) {
         self.review_subject(subject, None, window, cx);
+    }
+
+    /// The window to review a PR in `repo` from: one whose harness lists
+    /// the repo, one on a server first (where sessions are meant to run),
+    /// as Marra and the review window choose. A window being updated can't
+    /// be read, so call it from outside any (deferred).
+    pub fn review_window_for(repo: &str, cx: &App) -> Option<gpui::WindowHandle<Workspace>> {
+        cx.windows()
+            .into_iter()
+            .filter_map(|w| w.downcast::<Workspace>())
+            .filter_map(|w| w.read(cx).ok().and_then(|ws| ws.review_fit(repo)).map(|fit| (w, fit)))
+            .max_by_key(|(_, (listed, on_server))| (*listed, *on_server))
+            .map(|(w, _)| w)
     }
 
     /// From Marra: a session's issue in its drawer, when this window's org
@@ -1961,14 +1978,25 @@ impl Workspace {
     fn fill_review_window(&mut self, at_once: usize, gap: u32, window: &mut Window, cx: &mut Context<Self>) {
         let Some(org) = self.org.clone() else { return };
         let Some(me) = self.viewer.as_ref().map(|v| v.login.clone()) else { return };
-        let running = self
-            .sessions
-            .iter()
-            .filter(|s| {
-                let s = s.read(cx);
-                s.state != State::Ended && s.launch.as_ref().is_some_and(|l| l.flow == crate::launch::Flow::Review && l.unattended.is_some())
-            })
-            .count();
+        // Running in any window: a review it starts may go to another.
+        let counts = |sessions: &[Entity<SessionPage>], cx: &App| {
+            sessions
+                .iter()
+                .filter(|s| {
+                    let s = s.read(cx);
+                    s.state != State::Ended && s.launch.as_ref().is_some_and(|l| l.flow == crate::launch::Flow::Review && l.unattended.is_some())
+                })
+                .count()
+        };
+        let own = window.window_handle();
+        let others: usize = cx
+            .windows()
+            .into_iter()
+            .filter(|h| *h != own)
+            .filter_map(|h| h.downcast::<Workspace>())
+            .filter_map(|h| h.read(cx).ok().map(|ws| counts(&ws.sessions, cx)))
+            .sum();
+        let running = counts(&self.sessions, cx) + others;
         if running >= at_once {
             return;
         }
@@ -1977,8 +2005,15 @@ impl Workspace {
         let next = prs.into_iter().find(|p| {
             p.state == PrState::Open && !p.draft && !reviewed.contains(&p.id) && p.reviewers.iter().any(|r| r.requested && r.login.eq_ignore_ascii_case(&me))
         });
+        // In the window that suits it (a server's, where its harness is
+        // there), not this one's folder, which may be on this Mac.
         if let Some(pr) = next {
-            self.review_pr_with(pr, Some(gap), window, cx);
+            let subject = crate::launch::Subject { id: pr.id, repo: pr.repo, number: pr.number, title: pr.title, url: pr.url };
+            let here = self.window_handle.and_then(|h| h.downcast::<Workspace>());
+            cx.defer(move |cx| {
+                let Some(target) = Self::review_window_for(&subject.repo, cx).or(here) else { return };
+                let _ = target.update(cx, |workspace, window, cx| workspace.review_subject(subject, Some(gap), window, cx));
+            });
         }
     }
 
