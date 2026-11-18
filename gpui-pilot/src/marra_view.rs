@@ -81,7 +81,10 @@ impl MarraView {
     pub fn new(docked: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let marra = Marra::get(cx);
         let composer = cx.new(|cx| {
-            let mut editor = editor::Editor::auto_height(2, 10, window, cx);
+            // One line to start, growing as the text wraps or takes new
+            // lines, up to ten, then scrolling.
+            let mut editor = editor::Editor::auto_height(1, 10, window, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text("Message Marra", window, cx);
             editor
         });
@@ -176,12 +179,9 @@ impl MarraView {
         threads
     }
 
+    /// The scopes: the orgs you have a harness in, not every org with a PR.
     fn orgs(&self, cx: &App) -> Vec<String> {
-        let mut orgs: Vec<String> = marra_model::sessions(cx).into_iter().filter_map(|s| s.org).collect();
-        orgs.extend(marra_model::work(cx).reviews.iter().chain(&marra_model::work(cx).mine).filter_map(|p| p.repo.split('/').next().map(str::to_string)));
-        orgs.sort();
-        orgs.dedup();
-        orgs
+        self.marra.read(cx).harness_orgs.clone()
     }
 
     // MARK: Doing
@@ -909,6 +909,7 @@ impl MarraView {
             ("compact", "Compact now".into()),
             ("new", "New conversation".into()),
             ("stop", if busy { "Stop Marra".into() } else { String::new() }),
+            ("restart", "Restart Marra".into()),
             ("notes", "Edit notes".into()),
             ("read", "Mark all read".into()),
             ("focus", if focus { "Focus off".into() } else { "Focus on".into() }),
@@ -929,6 +930,10 @@ impl MarraView {
                                 this.open_thread("main".into(), cx);
                             }
                             "stop" => this.marra.update(cx, |m, _| m.main.engine.interrupt()),
+                            "restart" => this.marra.update(cx, |m, cx| {
+                                m.main.restart();
+                                cx.notify();
+                            }),
                             "notes" => edit_notes(cx),
                             "read" => this.marra.update(cx, |m, cx| {
                                 for t in m.threads() {
@@ -1604,7 +1609,37 @@ impl MarraView {
             body = body.child(div().max_w(px(380.)).px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.fg).child(markdown(&format!("stream-{thread}"), &shown, theme)));
         } else if busy {
             let line = status.map(|s| if s == "compacting" { "Compacting".to_string() } else { s }).or(doing).unwrap_or_else(|| "Thinking".into());
-            body = body.child(div().flex().flex_col().items_start().child(div().flex().flex_row().items_center().gap_2().px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.secondary).child(spinner(SharedString::from(format!("doing-{thread}")), 14., theme)).child(div().max_w(px(300.)).truncate().child(line))));
+            // Stop asks claude to end the turn, as Esc does; Restart ends its
+            // process, for when it doesn't.
+            let (stop_who, restart_who) = (who.clone(), who.clone());
+            let controls = div()
+                .flex()
+                .flex_row()
+                .gap_1()
+                .child(button(format!("stop-{thread}"), "Stop", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.marra.update(cx, |m, _| {
+                        if let Some(c) = m.convo_mut(&stop_who) {
+                            c.engine.interrupt();
+                        }
+                    });
+                })))
+                .child(button(format!("restart-{thread}"), "Restart", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.marra.update(cx, |m, cx| {
+                        if let Some(c) = m.convo_mut(&restart_who) {
+                            c.restart();
+                        }
+                        cx.notify();
+                    });
+                })));
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_1()
+                    .child(div().flex().flex_row().items_center().gap_2().px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.secondary).child(spinner(SharedString::from(format!("doing-{thread}")), 14., theme)).child(div().max_w(px(300.)).truncate().child(line)))
+                    .child(controls),
+            );
         }
         body.into_any_element()
     }

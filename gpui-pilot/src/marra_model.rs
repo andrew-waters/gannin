@@ -163,6 +163,13 @@ impl Convo {
         ended
     }
 
+    /// Ends claude's process, as when it's stuck: what was open goes with
+    /// it, and the conversation resumes with the next message.
+    pub fn restart(&mut self) {
+        self.engine.stop();
+        self.apply(vec![Event::Exited("restarted.".into())], &[]);
+    }
+
     /// Answers a permission card.
     pub fn decide(&mut self, request: &str, allow: bool, always: bool) -> Option<String> {
         let (tool, input) = self.asks.remove(request)?;
@@ -459,6 +466,11 @@ pub struct Marra {
     /// Sessions and Your Work as last read from the windows (in `tick`).
     pub sessions: Vec<SessionInfo>,
     pub work: crate::work::Work,
+    /// The orgs you have a harness in (and those sessions run in): the
+    /// scopes offered, and the only orgs whose needs show. A PR in an org
+    /// you've no harness for isn't Marra's to chase.
+    pub harness_orgs: Vec<String>,
+    harness_checked: Option<Instant>,
     /// The phone API, while it's on.
     pub api: Option<crate::marra_api::Api>,
     pub api_error: Option<String>,
@@ -540,6 +552,8 @@ impl Marra {
             api_error,
             sessions: Vec::new(),
             work: Default::default(),
+            harness_orgs: Vec::new(),
+            harness_checked: None,
             _poll: poll,
         }
     }
@@ -596,6 +610,17 @@ impl Marra {
         if self.last_check.elapsed() >= Duration::from_secs(1) {
             self.last_check = Instant::now();
             self.work = live_work(cx);
+            if self.harness_checked.is_none_or(|at| at.elapsed() >= Duration::from_secs(30)) {
+                self.harness_checked = Some(Instant::now());
+                let mut orgs: Vec<String> = crate::projects::orgs_with_settings().into_iter().filter(|org| !crate::projects::harness_repos(org).is_empty()).collect();
+                orgs.extend(self.sessions.iter().filter_map(|s| s.org.clone()));
+                orgs.sort_by_key(|o| o.to_lowercase());
+                orgs.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+                if orgs != self.harness_orgs {
+                    self.harness_orgs = orgs;
+                    changed = true;
+                }
+            }
             // A send card whose tool call has given up waiting goes too.
             self.confirms.retain(|c| (Local::now() - c.at).num_minutes() < 15);
             self.note_changes();
@@ -1147,6 +1172,10 @@ impl Marra {
         out.retain(|n| !self.saved.snoozed.contains_key(&n.key));
         for n in &mut out {
             n.returned = self.returned.contains(&n.key);
+        }
+        // Only orgs with a harness (once known, so nothing's hidden before).
+        if !self.harness_orgs.is_empty() {
+            out.retain(|n| n.org.as_deref().is_none_or(|o| self.harness_orgs.iter().any(|h| h.eq_ignore_ascii_case(o))));
         }
         if let Some(org) = org {
             out.retain(|n| n.org.as_deref().is_none_or(|o| o == org));

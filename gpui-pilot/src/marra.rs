@@ -181,8 +181,8 @@ pub struct Engine {
     /// The process this reader belongs to, so a stale reader's events are dropped.
     generation: Arc<Mutex<u64>>,
     pub busy: bool,
-    /// Messages sent whose turns haven't ended: a second message sent while
-    /// busy keeps it busy after the first turn's result.
+    /// Whether a turn is under way (0 or 1): set by a send or claude's
+    /// output, cleared by a result.
     turns: u32,
     pub profile: Profile,
     /// The MCP server's address and token, given to each process started.
@@ -223,10 +223,15 @@ impl Engine {
     /// Takes what the reader has queued.
     pub fn drain(&mut self) -> Vec<Event> {
         let out: Vec<Event> = self.events.lock().map(|mut q| q.drain(..).collect()).unwrap_or_default();
+        // A result ends the turn whatever was sent during it: claude folds a
+        // message sent mid-turn into that turn and gives one result, so
+        // counting sends against results left it "Thinking" for ever. A
+        // queued message claude takes as a turn of its own shows by its
+        // output, which makes it busy again.
         for event in &out {
             match event {
-                Event::Done { .. } => self.turns = self.turns.saturating_sub(1),
-                Event::Exited(_) => self.turns = 0,
+                Event::Done { .. } | Event::Exited(_) => self.turns = 0,
+                Event::Delta(_) | Event::Text(_) | Event::Tool { .. } | Event::Ask { .. } | Event::Status(Some(_)) => self.turns = self.turns.max(1),
                 _ => {}
             }
         }
@@ -363,7 +368,7 @@ impl Engine {
     pub fn send(&mut self, text: &str) -> Result<(), String> {
         let value = json!({ "type": "user", "message": { "role": "user", "content": text } });
         self.write(&value)?;
-        self.turns += 1;
+        self.turns = 1;
         self.busy = true;
         Ok(())
     }
