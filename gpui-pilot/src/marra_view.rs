@@ -120,8 +120,8 @@ impl MarraView {
         if !docked {
             keep_up(window);
         }
-        let skills = crate::marra_mcp::skills().lines().filter_map(|l| l.trim_start().strip_prefix("- ")).map(|l| l.split(':').next().unwrap_or(l).trim().to_string()).collect();
-        Self {
+        let skills: Vec<String> = crate::marra_mcp::skills().lines().filter_map(|l| l.trim_start().strip_prefix("- ")).map(|l| l.split(':').next().unwrap_or(l).trim().to_string()).collect();
+        let mut this = Self {
             marra,
             docked,
             focus: cx.focus_handle(),
@@ -155,7 +155,19 @@ impl MarraView {
             _tail_task: None,
             theme: Theme::for_window(window),
             _subscriptions: vec![edits, observe],
+        };
+        // In its own window the list and a thread show side by side, so
+        // one's always open: the main conversation to start.
+        if this.split() {
+            this.open_thread("main".into(), cx);
         }
+        this
+    }
+
+    /// Threads on the left and the open one on the right: in Marra's own
+    /// window. Docked in a Gannin window it's one column, too narrow for two.
+    fn split(&self) -> bool {
+        !self.docked
     }
 
     pub fn focus_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -740,7 +752,9 @@ pub fn show_thread(thread: Option<String>, cx: &mut App) {
 
 fn open_floating(cx: &mut App) {
     let options = gpui::WindowOptions {
-        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(460.), px(800.)), cx))),
+        // Wide enough for the thread list beside a thread.
+        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(980.), px(780.)), cx))),
+        window_min_size: Some(gpui::size(px(760.), px(520.))),
         titlebar: Some(gpui::TitlebarOptions { title: Some("Marra".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(px(14.), px(13.))) }),
         kind: gpui::WindowKind::Floating,
         ..Default::default()
@@ -818,6 +832,30 @@ fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, primary: 
         .when(primary, |d| d.bg(theme.selected).border_color(theme.selected).text_color(theme.on_selected))
         .when(!primary, |d| d.border_color(theme.border).text_color(theme.fg).hover(|s| s.bg(theme.row_selected)))
         .child(label.into())
+}
+
+/// A square icon button with its words as a tooltip, for the session card
+/// and the thread's bar, where labels took the room.
+fn icon_button(id: impl Into<SharedString>, icon: &'static str, tip: impl Into<String>, primary: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let tip = tip.into();
+    div()
+        .id(id.into())
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(26.))
+        .rounded_md()
+        .cursor_pointer()
+        .border_1()
+        .when(primary, |d| d.bg(theme.selected).border_color(theme.selected))
+        .when(!primary, |d| d.border_color(theme.border).hover(|s| s.bg(theme.row_selected)))
+        .child(gpui::svg().path(icon).size(px(14.)).text_color(if primary { theme.on_selected } else { theme.fg }))
+        .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+}
+
+/// A line led by an icon in place of a heading.
+fn icon_line(icon: &'static str, theme: &Theme) -> gpui::Div {
+    div().flex().flex_row().items_start().gap_2().child(div().flex_none().pt(px(3.)).child(gpui::svg().path(icon).size(px(12.)).text_color(theme.secondary)))
 }
 
 fn section(label: impl Into<SharedString>, theme: &Theme) -> gpui::Div {
@@ -1392,6 +1430,7 @@ impl MarraView {
             .pl_1()
             .cursor_pointer()
             .when(self.row_menu.as_ref().is_some_and(|(m, _)| *m == thread.id), |d| d.bg(theme.tile))
+            .when(self.split() && self.open.as_deref() == Some(thread.id.as_str()), |d| d.bg(theme.selected.opacity(0.18)))
             .hover(|s| s.bg(theme.tile))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(id.clone(), cx)))
             .on_mouse_down(
@@ -1428,7 +1467,7 @@ impl MarraView {
                                     d.child(div().flex_none().text_xs().text_color(theme.secondary).child(thread.activity.map(ago).unwrap_or_default()))
                                 }
                             })
-                            .child(div().text_sm().text_color(theme.tertiary).child("›")),
+                            .when(!self.split(), |d| d.child(div().text_sm().text_color(theme.tertiary).child("›"))),
                     )
                     .child(div().truncate().text_xs().text_color(if muted { theme.tertiary } else { theme.secondary }).child(if thread.last.is_empty() { " ".to_string() } else { thread.last.clone() })),
             )
@@ -1522,7 +1561,13 @@ impl MarraView {
             .border_b_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(div().id("back").flex_none().w(px(80.)).text_sm().text_color(theme.selected).cursor_pointer().child("‹ Threads").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx))))
+            .map(|d| {
+                if self.split() {
+                    d.child(div().flex_none().w(px(80.)))
+                } else {
+                    d.child(div().id("back").flex_none().w(px(80.)).text_sm().text_color(theme.selected).cursor_pointer().child("‹ Threads").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx))))
+                }
+            })
             // The avatar and title on one line, the title cut short to fit.
             .child(
                 div()
@@ -1546,7 +1591,13 @@ impl MarraView {
                     .gap_2()
                     .child({
                         let id = id.to_string();
-                        div().id("pin").cursor_pointer().text_xs().text_color(theme.selected).child(if pinned { "Unpin" } else { "Pin" }).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        div()
+                            .id("pin")
+                            .px_1()
+                            .cursor_pointer()
+                            .child(gpui::svg().path(if pinned { "icons/unpin.svg" } else { "icons/pin.svg" }).size(px(14.)).text_color(theme.selected))
+                            .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(if pinned { "Unpin".into() } else { "Pin".into() })).into())
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             let id = id.clone();
                             this.marra.update(cx, |m, cx| {
                                 Marra::toggle(&mut m.saved.pinned, &id);
@@ -1591,21 +1642,29 @@ impl MarraView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_0p5()
+                    .gap_1()
                     .w_full()
-                    .p_3()
-                    .rounded(px(14.))
+                    .px_3()
+                    .py_2()
+                    .rounded(px(12.))
                     .bg(theme.sidebar)
-                    .child(div().text_xs().text_color(theme.secondary).child("Where you left off"))
-                    .child(div().text_sm().text_color(theme.fg).child(format!("What it is: {what}")))
-                    .child(div().text_sm().text_color(theme.fg).child(format!("Now: {state}")))
-                    .child(div().pt_2().text_xs().text_color(theme.secondary).child(match read_at {
-                        Some(at) => format!("Since you looked at {}", at.format("%H:%M")),
-                        None => "Since it started".to_string(),
-                    }))
-                    .children(since_lines(&since, digest.as_ref(), s.state.label() == "Working", theme))
+                    // What it is and where it's up to, a line each, no headings.
+                    .child(div().text_sm().text_color(theme.fg).child(what))
+                    .child(icon_line("icons/clock.svg", theme).child(div().text_xs().text_color(theme.secondary).child(state)))
+                    .child(
+                        icon_line("icons/history_rerun.svg", theme)
+                            .id("since-line")
+                            .tooltip({
+                                let tip = match read_at {
+                                    Some(at) => format!("Since you looked at {}", at.format("%H:%M")),
+                                    None => "Since it started".to_string(),
+                                };
+                                move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into()
+                            })
+                            .child(div().flex_1().min_w_0().flex().flex_col().children(since_lines(&since, digest.as_ref(), s.state.label() == "Working", theme))),
+                    )
                     .when_some(digest.as_ref().and_then(|d| d.as_ref()).and_then(|d| d.waiting.clone()), |d, waiting| {
-                        d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Waiting on you: {waiting}")))
+                        d.child(icon_line("icons/warning.svg", theme).child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(waiting)))
                     })
                     .when(summarising, |d| d.child(div().flex().flex_row().items_center().gap_2().pt_1().text_sm().text_color(theme.secondary).child(spinner(SharedString::from(format!("summary-{key}")), 12., theme)).child("Haiku is reading it")))
                     .when_some(summary, |d, summary| {
@@ -1618,7 +1677,7 @@ impl MarraView {
                                 .flex()
                                 .flex_col()
                                 .gap_0p5()
-                                .child(div().text_xs().text_color(theme.secondary).child("Summary, by Haiku"))
+                                .child(icon_line("icons/sparkle.svg", theme).child(div().text_xs().text_color(theme.secondary).child("Haiku")))
                                 .child(div().text_sm().text_color(theme.fg).child(markdown(&format!("summary-{key}"), &text, theme)))
                                 .into_any_element(),
                             Err(error) => div().text_sm().text_color(theme.orange()).child(error).into_any_element(),
@@ -1626,27 +1685,27 @@ impl MarraView {
                     })
                     .when_some(need, |d, n| d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {}", n.task))))
                     .child({
-                        let mut links = div().flex().flex_row().flex_wrap().gap_1p5().pt_2();
+                        let mut links = div().flex().flex_row().flex_wrap().gap_1p5().pt_1();
                         let open_key = key.to_string();
-                        links = links.child(button("left-off-session", "Open session", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(open_key.clone()), window, cx))));
+                        links = links.child(icon_button("left-off-session", "icons/terminal.svg", "Open session", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(open_key.clone()), window, cx))));
                         // Only where there's a conversation to read, and something in it.
                         if summaries_on && digest.as_ref().and_then(|d| d.as_ref()).is_some_and(|d| !d.is_empty()) && !summarising {
                             let summary_key = key.to_string();
-                            links = links.child(button("left-off-summary", "Summarise", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.summarise_session(summary_key.clone(), cx))));
+                            links = links.child(icon_button("left-off-summary", "icons/sparkle.svg", "Summarise with Haiku", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.summarise_session(summary_key.clone(), cx))));
                         }
                         for (n, url) in digest.as_ref().and_then(|d| d.as_ref()).map(|d| d.prs.clone()).unwrap_or_default().into_iter().enumerate() {
                             let label = url.rsplit('/').next().map(|n| format!("Open PR #{n}")).unwrap_or_else(|| "Open PR".into());
-                            links = links.child(button(format!("left-off-pr-{n}"), label, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
+                            links = links.child(icon_button(format!("left-off-pr-{n}"), "icons/pull_request.svg", label, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
                         }
                         if let Some(subject) = &s.subject_link {
                             let (in_app, url) = (key.to_string(), subject.url.clone());
                             // A PR has no drawer to open by itself yet: the session
                             // is where its change shows.
                             if !subject.url.contains("/pull/") {
-                                links = links.child(button("left-off-app", "Open issue in Gannin", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSubject(in_app.clone()), window, cx))));
+                                links = links.child(icon_button("left-off-app", "icons/file_text_outlined.svg", "Open issue in Gannin", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSubject(in_app.clone()), window, cx))));
                             }
                             links = links
-                                .child(button("left-off-github", "Open on GitHub", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
+                                .child(icon_button("left-off-github", "icons/github.svg", "Open on GitHub", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
                         }
                         links
                     }),
@@ -2136,18 +2195,39 @@ impl Render for MarraView {
         self.theme = theme;
         let menus = self.menus(&theme, cx);
         let row_menu = self.row_menu_view(&theme, cx);
-        let panel = div()
-            .relative()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .bg(theme.bg)
-            .map(|d| match self.open.clone() {
-                Some(id) => d.child(self.thread_view(&id, &theme, cx)),
-                None => d.child(self.needs_view(&theme, cx)).child(self.threads_view(&theme, cx)),
-            })
-            .child(self.composer_view(&theme, cx));
+        let panel = if self.split() {
+            // The list on the left; the thread clicked, and the composer
+            // that writes to it, on the right.
+            let list = div().flex_none().w(px(340.)).h_full().min_h_0().flex().flex_col().border_r_1().border_color(theme.border).bg(theme.bg).child(self.needs_view(&theme, cx)).child(self.threads_view(&theme, cx));
+            let detail = div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .bg(theme.bg)
+                .map(|d| match self.open.clone() {
+                    Some(id) => d.child(self.thread_view(&id, &theme, cx)),
+                    None => d.child(div().flex_1().flex().items_center().justify_center().text_sm().text_color(theme.secondary).child("Choose a thread")),
+                })
+                .child(self.composer_view(&theme, cx));
+            div().relative().flex_1().min_h_0().flex().flex_row().child(list).child(detail)
+        } else {
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .bg(theme.bg)
+                .map(|d| match self.open.clone() {
+                    Some(id) => d.child(self.thread_view(&id, &theme, cx)),
+                    None => d.child(self.needs_view(&theme, cx)).child(self.threads_view(&theme, cx)),
+                })
+                .child(self.composer_view(&theme, cx))
+        };
         div()
             .id("marra")
             .track_focus(&self.focus)
