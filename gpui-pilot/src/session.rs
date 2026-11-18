@@ -122,8 +122,25 @@ fn plain_claude(claude_id: Option<&str>) -> String {
         "s=$(sed -n 's/.*\"session_id\" *: *\"\\([^\"]*\\)\".*/\\1/p' | head -n 1); [ -n \"$s\" ] && mkdir -p \"$HOME/.gannin/plain\" && printf %s \"$s\" > {file}; exit 0"
     );
     use base64::Engine;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(hook);
-    let settings = format!("{{\"hooks\":{{\"SessionStart\":[{{\"hooks\":[{{\"type\":\"command\",\"command\":\"sh -c \\\"$(echo {encoded} | base64 -d)\\\"\"}}]}}]}}}}");
+    let command = |script: &str| {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(script);
+        serde_json::json!({ "type": "command", "command": format!("sh -c \"$(echo {encoded} | base64 -d)\"") })
+    };
+    // Its state, as a launch's hooks write theirs: the screen alone can't
+    // tell, as Claude Code redraws it now and then while it waits.
+    let state = |value: &str| command(&format!("mkdir -p \"$HOME/.gannin/plain\" && printf {value} > \"$HOME/.gannin/plain/{id}.state\"; exit 0"));
+    let settings = serde_json::json!({
+        "hooks": {
+            "SessionStart": [{ "hooks": [command(&hook), state("idle")] }],
+            "UserPromptSubmit": [{ "hooks": [state("working")] }],
+            "PreToolUse": [{ "matcher": "*", "hooks": [state("working")] }, { "matcher": "AskUserQuestion", "hooks": [state("needs-you")] }],
+            "PostToolUse": [{ "matcher": "*", "hooks": [state("working")] }],
+            "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [state("needs-you")] }],
+            "Stop": [{ "hooks": [state("idle")] }],
+            "SessionEnd": [{ "hooks": [state("exited")] }],
+        }
+    })
+    .to_string();
     format!(
         "cur=$(cat {file} 2>/dev/null); case \"$cur\" in ''|*[!0-9a-f-]*) cur={id};; esac; \
          if [ -n \"$(find \"$HOME/.claude/projects\" -maxdepth 2 -name \"$cur.jsonl\" 2>/dev/null | head -n 1)\" ]; then exec claude --resume \"$cur\" --settings '{settings}'; \
@@ -302,7 +319,7 @@ impl SessionPage {
         subscriptions.push(cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {
                 this.last_output = Instant::now();
-                if this.launch.is_none() && this.state != State::Working && this.state != State::Ended {
+                if this.launch.is_none() && this.plain_state().is_none() && this.state != State::Working && this.state != State::Ended {
                     this.set_state(State::Working, cx);
                 }
             }
@@ -362,6 +379,19 @@ impl SessionPage {
                 _ => State::Working,
             };
             self.set_state(state, cx);
+            return;
+        }
+        // A plain tab started with its hooks says the same way.
+        if let Some(state) = self.plain_state() {
+            let state = match state.as_str() {
+                "needs-you" => State::NeedsYou,
+                "idle" => State::YourTurn,
+                "exited" => State::Ended,
+                _ => State::Working,
+            };
+            if self.state != State::Ended {
+                self.set_state(state, cx);
+            }
             return;
         }
         if self.state != State::Working || self.last_output.elapsed() < QUIET {
@@ -426,6 +456,18 @@ impl SessionPage {
     }
 
     /// The server it runs on, by name; None on this Mac.
+    /// A plain Claude Code tab's state as its hooks wrote it, on this Mac
+    /// (a server's file is there); None for a tab started before it had
+    /// them, which goes by its screen.
+    fn plain_state(&self) -> Option<String> {
+        if self.kind != Kind::Claude || self.server.is_some() {
+            return None;
+        }
+        let id = self.claude_id.as_deref()?;
+        let path = crate::paths::app_dir().join("plain").join(format!("{id}.state"));
+        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
+
     /// The server it runs on, if any.
     pub fn server(&self) -> Option<crate::servers::Server> {
         self.server.clone().or(self.launch.as_ref().and_then(|l| l.server.clone()))
