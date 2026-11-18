@@ -1738,9 +1738,6 @@ impl MarraView {
                                 cx.notify();
                             });
                         }))
-                    })
-                    .when_some(session.clone(), |d, key| {
-                        d.child(div().id("thread-expand").px_1().cursor_pointer().child(gpui::svg().path("icons/maximize.svg").size(px(14.)).text_color(theme.selected)).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(key.clone()), window, cx))))
                     }),
             );
         let body = match &session {
@@ -1750,7 +1747,8 @@ impl MarraView {
                 self.convo_body(id, &who, theme, cx)
             }
         };
-        div().flex_1().min_h_0().flex().flex_col().child(nav).child(body).into_any_element()
+        let actions = session.as_deref().and_then(|key| self.session_actions(key, theme, cx));
+        div().flex_1().min_h_0().flex().flex_col().child(nav).child(body).children(actions).into_any_element()
     }
 
     /// The checklist: to do first, oldest first, then what's done, newest
@@ -1858,6 +1856,56 @@ impl MarraView {
         div().flex_1().min_h_0().flex().flex_col().child(nav).child(list).into_any_element()
     }
 
+    /// A session thread's actions, in a bar kept at the bottom above the
+    /// composer, so they stay put while its conversation scrolls.
+    fn session_actions(&self, key: &str, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let s = marra_model::sessions(cx).into_iter().find(|s| s.key == key)?;
+        let digest = self.digest.clone().filter(|(k, _)| k == key).map(|(_, d)| d);
+        let summarising = self.summarising.as_deref() == Some(key);
+        let summaries_on = !self.marra.read(cx).saved.summaries_off;
+        let mut links = div().flex_none().flex().flex_row().flex_wrap().gap_1p5().px_4().py_2().border_t_1().border_color(theme.border).bg(theme.sidebar);
+                        // A review's own buttons, on when they are in its panel.
+                        if let Some(review) = s.page.read(cx).review() {
+                            let r = review.read(cx);
+                            let (can_post, can_again, checking) = (r.can_post(), r.can_again(), r.is_checking());
+                            for (n, label, which, on, primary) in [
+                                (0, "Post Review", marra_model::ReviewButton::Post, can_post, true),
+                                (1, "Review Again", marra_model::ReviewButton::Again, can_again, false),
+                                (2, if checking { "Checking" } else { "Check for Changes" }, marra_model::ReviewButton::Check, !checking, false),
+                            ] {
+                                let key = key.to_string();
+                                let b = button(format!("left-off-review-{n}"), label, primary && on, theme);
+                                links = links.child(if on {
+                                    b.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Review(key.clone(), which), window, cx)))
+                                } else {
+                                    b.opacity(0.45).cursor_default()
+                                });
+                            }
+                        }
+                        let open_key = key.to_string();
+                        links = links.child(icon_button("left-off-session", "icons/arrow_up_right.svg", "Open session", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(open_key.clone()), window, cx))));
+                        // Only where there's a conversation to read, and something in it.
+                        if summaries_on && digest.as_ref().and_then(|d| d.as_ref()).is_some_and(|d| !d.is_empty()) && !summarising {
+                            let summary_key = key.to_string();
+                            links = links.child(icon_button("left-off-summary", "icons/sparkle.svg", "Summarise with Haiku", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.summarise_session(summary_key.clone(), cx))));
+                        }
+                        for (n, url) in digest.as_ref().and_then(|d| d.as_ref()).map(|d| d.prs.clone()).unwrap_or_default().into_iter().enumerate() {
+                            let label = url.rsplit('/').next().map(|n| format!("Open PR #{n}")).unwrap_or_else(|| "Open PR".into());
+                            links = links.child(icon_button(format!("left-off-pr-{n}"), "icons/pull_request.svg", label, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
+                        }
+                        if let Some(subject) = &s.subject_link {
+                            let (in_app, url) = (key.to_string(), subject.url.clone());
+                            // A PR has no drawer to open by itself yet: the session
+                            // is where its change shows.
+                            if !subject.url.contains("/pull/") {
+                                links = links.child(icon_button("left-off-app", "icons/file_text_outlined.svg", "Open issue in Gannin", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSubject(in_app.clone()), window, cx))));
+                            }
+                            links = links
+                                .child(icon_button("left-off-github", "icons/github.svg", "Open on GitHub", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
+                        }
+        Some(links.into_any_element())
+    }
+
     /// A session's thread: where you left off, from Gannin's own state, then
     /// its conversation from the transcript.
     fn session_body(&self, key: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -1870,7 +1918,6 @@ impl MarraView {
         let digest = self.digest.clone().filter(|(k, _)| k == key).map(|(_, d)| d);
         let summary = self.summary.clone().filter(|(k, _)| k == key).map(|(_, r)| r);
         let summarising = self.summarising.as_deref() == Some(key);
-        let summaries_on = !self.marra.read(cx).saved.summaries_off;
         let audit = self.audit.clone().filter(|(k, _)| k == key).map(|(_, c)| c).unwrap_or_default();
         let mut body = div().id(SharedString::from(format!("session-body-{key}"))).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_2().px_3().py_3();
         if let Some(s) = &info {
@@ -1922,49 +1969,6 @@ impl MarraView {
                         })
                     })
                     .when_some(need, |d, n| d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {}", n.task))))
-                    .child({
-                        let mut links = div().flex().flex_row().flex_wrap().gap_1p5().pt_1();
-                        // A review's own buttons, on when they are in its panel.
-                        if let Some(review) = s.page.read(cx).review() {
-                            let r = review.read(cx);
-                            let (can_post, can_again, checking) = (r.can_post(), r.can_again(), r.is_checking());
-                            for (n, label, which, on, primary) in [
-                                (0, "Post Review", marra_model::ReviewButton::Post, can_post, true),
-                                (1, "Review Again", marra_model::ReviewButton::Again, can_again, false),
-                                (2, if checking { "Checking" } else { "Check for Changes" }, marra_model::ReviewButton::Check, !checking, false),
-                            ] {
-                                let key = key.to_string();
-                                let b = button(format!("left-off-review-{n}"), label, primary && on, theme);
-                                links = links.child(if on {
-                                    b.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Review(key.clone(), which), window, cx)))
-                                } else {
-                                    b.opacity(0.45).cursor_default()
-                                });
-                            }
-                        }
-                        let open_key = key.to_string();
-                        links = links.child(icon_button("left-off-session", "icons/terminal.svg", "Open session", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(open_key.clone()), window, cx))));
-                        // Only where there's a conversation to read, and something in it.
-                        if summaries_on && digest.as_ref().and_then(|d| d.as_ref()).is_some_and(|d| !d.is_empty()) && !summarising {
-                            let summary_key = key.to_string();
-                            links = links.child(icon_button("left-off-summary", "icons/sparkle.svg", "Summarise with Haiku", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.summarise_session(summary_key.clone(), cx))));
-                        }
-                        for (n, url) in digest.as_ref().and_then(|d| d.as_ref()).map(|d| d.prs.clone()).unwrap_or_default().into_iter().enumerate() {
-                            let label = url.rsplit('/').next().map(|n| format!("Open PR #{n}")).unwrap_or_else(|| "Open PR".into());
-                            links = links.child(icon_button(format!("left-off-pr-{n}"), "icons/pull_request.svg", label, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
-                        }
-                        if let Some(subject) = &s.subject_link {
-                            let (in_app, url) = (key.to_string(), subject.url.clone());
-                            // A PR has no drawer to open by itself yet: the session
-                            // is where its change shows.
-                            if !subject.url.contains("/pull/") {
-                                links = links.child(icon_button("left-off-app", "icons/file_text_outlined.svg", "Open issue in Gannin", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSubject(in_app.clone()), window, cx))));
-                            }
-                            links = links
-                                .child(icon_button("left-off-github", "icons/github.svg", "Open on GitHub", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
-                        }
-                        links
-                    }),
             );
         }
         if !audit.is_empty() {
