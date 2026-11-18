@@ -106,20 +106,30 @@ impl gpui::EventEmitter<crate::review_panel::ExplainPr> for SessionPage {}
 impl gpui::EventEmitter<crate::work_panel::WorkEvent> for SessionPage {}
 impl gpui::EventEmitter<crate::harness::OpenDoc> for SessionPage {}
 
-/// Starts the process in a pty; the page is made once it's running.
-/// `server`: a plain session (no launch) on a server, run there over ssh
-/// in `folder`, a path on the server.
-/// The command a plain Claude Code session runs: with its ID, claude
-/// resumes that conversation when one was started (on whichever machine it
-/// runs on), else starts it under that ID. A session that's never been
-/// typed into has no transcript, and `--resume` would refuse it.
+/// The command a plain Claude Code tab runs. `claude_id` is the tab's own
+/// key: the conversation running in it can change (`/resume`, `/clear`), so
+/// a SessionStart hook writes whichever one is running to
+/// `~/.gannin/plain/<key>` on the machine it runs on, and the next start
+/// resumes that one. It resumes only a conversation with a transcript (a
+/// session never typed into has none, and `--resume` would refuse it), else
+/// starts one under the key.
 fn plain_claude(claude_id: Option<&str>) -> String {
-    match claude_id {
-        Some(id) => format!(
-            "if [ -n \"$(find \"$HOME/.claude/projects\" -maxdepth 2 -name '{id}.jsonl' 2>/dev/null | head -n 1)\" ]; then exec claude --resume {id}; else exec claude --session-id {id}; fi"
-        ),
-        None => "claude".into(),
-    }
+    let Some(id) = claude_id else { return "claude".into() };
+    let file = format!("\"$HOME/.gannin/plain/{id}\"");
+    // Run with the hook's JSON on stdin; base64 keeps it clear of the
+    // quoting in --settings and, on a server, ssh's.
+    let hook = format!(
+        "s=$(sed -n 's/.*\"session_id\" *: *\"\\([^\"]*\\)\".*/\\1/p' | head -n 1); [ -n \"$s\" ] && mkdir -p \"$HOME/.gannin/plain\" && printf %s \"$s\" > {file}; exit 0"
+    );
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(hook);
+    let settings = format!("{{\"hooks\":{{\"SessionStart\":[{{\"hooks\":[{{\"type\":\"command\",\"command\":\"sh -c \\\"$(echo {encoded} | base64 -d)\\\"\"}}]}}]}}");
+    format!(
+        "cur=$(cat {file} 2>/dev/null); case \"$cur\" in ''|*[!0-9a-f-]*) cur={id};; esac; \
+         if [ -n \"$(find \"$HOME/.claude/projects\" -maxdepth 2 -name \"$cur.jsonl\" 2>/dev/null | head -n 1)\" ]; then exec claude --resume \"$cur\" --settings '{settings}'; \
+         elif [ -n \"$(find \"$HOME/.claude/projects\" -maxdepth 2 -name '{id}.jsonl' 2>/dev/null | head -n 1)\" ]; then exec claude --resume {id} --settings '{settings}'; \
+         else exec claude --session-id {id} --settings '{settings}'; fi"
+    )
 }
 
 pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, server: Option<&crate::servers::Server>, claude_id: Option<&str>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
