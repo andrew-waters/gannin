@@ -310,7 +310,7 @@ pub const GIT_ENV: &str = "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https:
 pub fn start_command(server: &Server, launch: &crate::launch::Launch) -> String {
     let local = launch.dir();
     let remote = crate::launch::quote_path(&local);
-    let keep = ["state", "started", "changed", "pr", "tool.json", "transcript.jsonl", "risk.json", "auto-posted", "posted.json", "decisions.json"];
+    let keep = ["state", "started", "changed", "pr", "tool.json", "transcript.jsonl", "risk.json", "auto-posted", "posted.json", "decisions.json", "gate"];
     let excludes: String = keep.iter().map(|f| format!(" --exclude {}", crate::launch::quote(&format!("./{f}")))).collect();
     let unpack = format!("mkdir -p {remote} && tar -C {remote} -xf - && printf starting > {remote}/state");
     // git's own helper there is the macOS keychain, which ssh can't unlock
@@ -368,7 +368,7 @@ fn pull(job: &Watched) -> Result<(), String> {
     let have = std::fs::metadata(&transcript).map(|m| m.len()).unwrap_or(0);
     let probe = format!(
         r#"cd {remote} 2>/dev/null || exit 0
-for f in state tool.json pr changed started; do [ -f "$f" ] && printf '%s %s\n' "$f" "$(base64 < "$f" | tr -d '\n')"; done
+for f in state tool.json pr changed started gate/request; do [ -f "$f" ] && printf '%s %s\n' "$f" "$(base64 < "$f" | tr -d '\n')"; done
 t=$(ls "$HOME"/.claude/projects/*/{id}.jsonl 2>/dev/null | head -1)
 if [ -n "$t" ]; then printf 'size %s\n' "$(wc -c < "$t" | tr -d ' ')"; printf 'transcript %s\n' "$(tail -c +{from} "$t" | base64 | tr -d '\n')"; fi
 "#,
@@ -395,9 +395,13 @@ if [ -n "$t" ]; then printf 'size %s\n' "$(wc -c < "$t" | tr -d ' ')"; printf 't
                     file.write_all(&bytes).map_err(|e| e.to_string())?;
                 }
             }
-            "state" | "tool.json" | "pr" | "changed" | "started" => {
+            "state" | "tool.json" | "pr" | "changed" | "started" | "gate/request" => {
                 let Some(bytes) = decode(value) else { continue };
                 let path = job.local.join(name);
+                // A workflow's held push asks for its round in gate/.
+                if let Some(folder) = path.parent() {
+                    let _ = std::fs::create_dir_all(folder);
+                }
                 if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
                     let _ = std::fs::write(&path, bytes);
                 }

@@ -27,6 +27,12 @@ const READ_ONLY: &str = "Read,Grep,Glob,Bash(git diff:*),Bash(git diff *),Bash(g
 
 /// One headless claude turn: its final reply, or why not.
 pub(crate) fn ask_claude(dir: &Path, prompt: &str, model: Option<&str>, timeout: Duration) -> Result<String, String> {
+    ask_claude_on(None, dir, prompt, model, timeout)
+}
+
+/// `ask_claude` where `dir` is: on this Mac, or on a server over ssh (claude
+/// there, in a login shell for its PATH, the prompt carried in the script).
+pub(crate) fn ask_claude_on(server: Option<&crate::servers::Server>, dir: &Path, prompt: &str, model: Option<&str>, timeout: Duration) -> Result<String, String> {
     let shell = crate::paths::shell();
     let mut args = vec!["-p".to_string(), "--output-format".into(), "json".into(), "--allowedTools".into(), READ_ONLY.into(), "--disallowedTools".into(), "Edit,MultiEdit,Write,NotebookEdit".into()];
     if let Some(model) = model.filter(|m| !m.is_empty() && *m != "Each person's") {
@@ -34,17 +40,36 @@ pub(crate) fn ask_claude(dir: &Path, prompt: &str, model: Option<&str>, timeout:
         args.push(model.into());
     }
     let quoted: Vec<String> = args.iter().map(|a| format!("'{}'", a.replace('\'', "'\\''"))).collect();
-    let mut command = Command::new(shell);
-    command.args(["-l", "-c", &format!("claude {}", quoted.join(" "))]).current_dir(dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    for (key, _) in std::env::vars() {
-        if key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_") {
-            command.env_remove(key);
+    let (mut command, input) = match server {
+        Some(server) => {
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(prompt);
+            let script = format!(
+                "cd {} || exit 1\ncommand -v claude >/dev/null 2>&1 || {{ echo 'Claude Code is not installed on {}.' >&2; exit 127; }}\nprintf %s '{encoded}' | base64 -d | claude {}\n",
+                crate::launch::quote_path(dir),
+                server.name(),
+                quoted.join(" ")
+            );
+            let mut command = Command::new("ssh");
+            command.args(server.ssh_args(false)).arg(r#"exec "${SHELL:-/bin/bash}" -lc 'exec bash -s'"#);
+            (command, script.into_bytes())
         }
-    }
+        None => {
+            let mut command = Command::new(shell);
+            command.args(["-l", "-c", &format!("claude {}", quoted.join(" "))]).current_dir(dir);
+            for (key, _) in std::env::vars() {
+                if key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_") {
+                    command.env_remove(key);
+                }
+            }
+            (command, prompt.as_bytes().to_vec())
+        }
+    };
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|e| format!("Couldn't start claude: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
-        let _ = stdin.write_all(prompt.as_bytes());
+        let _ = stdin.write_all(&input);
     }
     let started = Instant::now();
     loop {
@@ -61,7 +86,8 @@ pub(crate) fn ask_claude(dir: &Path, prompt: &str, model: Option<&str>, timeout:
     if let Some(mut stdout) = child.stdout.take() {
         let _ = stdout.read_to_string(&mut out);
     }
-    let value: serde_json::Value = serde_json::from_str(out.trim()).map_err(|_| "Claude didn't answer.".to_string())?;
+    // A login shell may print first: the answer is the last JSON line.
+    let value: serde_json::Value = out.lines().rev().find_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok().filter(|v| v.is_object())).ok_or_else(|| "Claude didn't answer.".to_string())?;
     if value["is_error"] == true {
         return Err(value["result"].as_str().unwrap_or("Claude failed.").to_string());
     }
@@ -174,8 +200,14 @@ pub fn pending_request(session_dir: &Path) -> Option<(PathBuf, String, std::time
     Some((PathBuf::from(lines.next()?), lines.next().unwrap_or("").to_string(), at))
 }
 
-/// Lets a commit through the gate (a clear round, or Push Anyway).
-pub fn clear(session_dir: &Path, sha: &str) {
+/// Lets a commit through the gate (a clear round, or Push Anyway): here,
+/// and for a session on a server, in its folder there, where its hook reads it.
+pub fn clear(session_dir: &Path, sha: &str, server: Option<&crate::servers::Server>) {
+    if let Some(server) = server {
+        let gate = crate::launch::quote_path(&gate_dir(session_dir));
+        let sha = crate::launch::quote(sha);
+        let _ = crate::servers::command(server, &format!("mkdir -p {gate} && printf '%s\\n' {sha} >> {gate}/clear && rm -f {gate}/request"), None);
+    }
     let dir = gate_dir(session_dir);
     let _ = std::fs::create_dir_all(&dir);
     use std::io::Write;
@@ -264,8 +296,26 @@ fn findings_in(reply: &str, reviewer: &str) -> Option<Vec<Finding>> {
     )
 }
 
-fn run_command(dir: &Path, command: &str) -> (bool, String, Duration) {
+fn run_command(server: Option<&crate::servers::Server>, dir: &Path, command: &str) -> (bool, String, Duration) {
     let started = Instant::now();
+    if let Some(server) = server {
+        // Its exit code as the last line, so a failure keeps its output.
+        let script = format!("cd {} || exit 1\n( {command} ) 2>&1\necho \"__exit=$?\"\n", crate::launch::quote_path(dir));
+        let out = crate::servers::command(server, r#"exec "${SHELL:-/bin/bash}" -lc 'exec bash -s'"#, Some(script.as_bytes()));
+        let took = started.elapsed();
+        return match out {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out);
+                let mut lines: Vec<&str> = text.lines().collect();
+                let ok = lines.last().and_then(|l| l.strip_prefix("__exit=")).is_some_and(|code| code.trim() == "0");
+                if lines.last().is_some_and(|l| l.starts_with("__exit=")) {
+                    lines.pop();
+                }
+                (ok, lines[lines.len().saturating_sub(25)..].join("\n"), took)
+            }
+            Err(e) => (false, e, took),
+        };
+    }
     let shell = crate::paths::shell();
     let out = Command::new(shell).args(["-l", "-c", &format!("{command} 2>&1")]).current_dir(dir).output();
     let took = started.elapsed();
@@ -282,9 +332,14 @@ fn run_command(dir: &Path, command: &str) -> (bool, String, Duration) {
 /// Runs the local steps on the worktree: reviewers (in parallel, told
 /// what earlier rounds found) and commands. Their results, and whether the
 /// gate is clear.
-pub fn local_round(worktree: &Path, workflow: &Workflow, specialists: &[Specialist], round: u32, earlier: &[Finding]) -> (Vec<StepResult>, bool) {
+/// For a session on a server everything runs there, in its worktree.
+pub fn local_round(worktree: &Path, workflow: &Workflow, specialists: &[Specialist], round: u32, earlier: &[Finding], server: Option<&crate::servers::Server>) -> (Vec<StepResult>, bool) {
     let steps: Vec<Step> = workflow.steps_when(When::Local).into_iter().cloned().collect();
-    let base = Command::new("git").args(["-C"]).arg(worktree).args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "origin/main".into());
+    let base_ref = match server {
+        Some(server) => crate::servers::git(server, worktree, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).ok(),
+        None => Command::new("git").args(["-C"]).arg(worktree).args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).output().ok().map(|o| o.stdout),
+    };
+    let base = base_ref.map(|o| String::from_utf8_lossy(&o).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "origin/main".into());
     let earlier_text = if earlier.is_empty() {
         String::new()
     } else {
@@ -296,12 +351,12 @@ pub fn local_round(worktree: &Path, workflow: &Workflow, specialists: &[Speciali
     let handles: Vec<_> = steps
         .into_iter()
         .map(|step| {
-            let (worktree, specialists, base, earlier_text) = (worktree.to_path_buf(), specialists.to_vec(), base.clone(), earlier_text.clone());
+            let (worktree, specialists, base, earlier_text, server) = (worktree.to_path_buf(), specialists.to_vec(), base.clone(), earlier_text.clone(), server.cloned());
             std::thread::spawn(move || {
                 let label = step.label(&specialists);
                 let holds_all = step.holds.as_deref() == Some("all");
                 if let Some(command) = &step.command {
-                    let (ok, tail, took) = run_command(&worktree, command);
+                    let (ok, tail, took) = run_command(server.as_ref(), &worktree, command);
                     return StepResult {
                         label,
                         provider: "Command".into(),
@@ -322,7 +377,7 @@ pub fn local_round(worktree: &Path, workflow: &Workflow, specialists: &[Speciali
                     "{}Review the change in this git worktree before it's pushed: everything since it left {base} (`git diff $(git merge-base HEAD {base})`), committed or not. Don't change anything. Look for bugs, missed cases, security problems and code that doesn't fit the repo; comment only on what the change touches.{earlier_text}\n\nEnd your reply with one fenced ```json block: a list of findings, most important first, each {{\"path\": \"<file>\", \"line\": <line in the new file>, \"severity\": \"blocker\" | \"major\" | \"minor\" | \"nit\", \"comment\": \"<what's wrong and what to do>\"}}. Give [] when there's nothing.",
                     persona(&step, &specialists)
                 );
-                match ask_claude(&worktree, &prompt, model(&step, &specialists).as_deref(), Duration::from_secs(15 * 60)) {
+                match ask_claude_on(server.as_ref(), &worktree, &prompt, model(&step, &specialists).as_deref(), Duration::from_secs(15 * 60)) {
                     Ok(reply) => match findings_in(&reply, &label) {
                         Some(findings) => StepResult {
                             label,

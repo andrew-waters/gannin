@@ -1338,6 +1338,41 @@ impl Workspace {
         self.projects.iter().find(|p| p.repos.iter().any(|r| r == repo)).or(self.projects.first()).map(|p| p.id.clone())
     }
 
+    /// Whether this window's folder is on a server, where sessions are meant to run.
+    fn on_server(&self) -> bool {
+        self.folder.as_ref().is_some_and(|f| f.location.server.is_some())
+    }
+
+    /// Where a repo's harness is for this window: its server (None for this
+    /// Mac) and the harness's path there, as `new_launch` would use.
+    fn place_for(&self, repo: &str) -> Option<(Option<crate::servers::Server>, PathBuf)> {
+        let org = self.org.clone()?;
+        let harness = self.harness_for(repo)?;
+        let path = self
+            .folder
+            .as_ref()
+            .and_then(|f| f.harnesses.iter().find(|h| h.repo_id(&org).eq_ignore_ascii_case(&harness)))
+            .map(|h| h.path.clone())
+            .unwrap_or_else(|| crate::launch::harness_path(&org, &harness));
+        Some((self.folder.as_ref().and_then(|f| f.location.server.clone()), path))
+    }
+
+    /// Another window that suits the work better than this one by `fit`
+    /// (whether its harness covers it, and whether it's on a server): the
+    /// schedule runs in the first window, whose folder may be on this Mac
+    /// while the harness the work needs is open on a server in another.
+    fn better_window(&self, fit: impl Fn(&Workspace) -> Option<(bool, bool)>, cx: &App) -> Option<gpui::WindowHandle<Workspace>> {
+        let own = fit(self);
+        let best = cx
+            .windows()
+            .into_iter()
+            .filter(|h| Some(*h) != self.window_handle)
+            .filter_map(|h| h.downcast::<Workspace>())
+            .filter_map(|w| w.read(cx).ok().and_then(|ws| fit(ws)).map(|f| (w, f)))
+            .max_by_key(|(_, f)| *f)?;
+        own.is_none_or(|own| best.1 > own).then_some(best.0)
+    }
+
     /// The PRs with a review session in a tab, by id: whether it's running.
     fn reviewing(&self, cx: &App) -> HashMap<String, bool> {
         self.sessions
@@ -1860,9 +1895,26 @@ impl Workspace {
         let Some(item) = self.issues.read(cx).issue(&issue.id) else {
             return RunState::Failed { reason: "The issue isn't in this window's org.".into(), at: now };
         };
-        self.prepared = sched.readiness.get(&issue.id).map(|r| r.brief());
-        let started = self.work_on_with(item, Some(gap), window, cx);
-        self.prepared = None;
+        let prepared = sched.readiness.get(&issue.id).map(|r| r.brief());
+        let repo = item.repo.clone();
+        let started = match self.better_window(|ws| ws.review_fit(&repo), cx) {
+            // Where its harness runs: another window's server.
+            Some(other) => other
+                .update(cx, |ws, window, cx| {
+                    ws.prepared = prepared;
+                    let started = ws.work_on_with(item, Some(gap), window, cx);
+                    ws.prepared = None;
+                    started
+                })
+                .ok()
+                .flatten(),
+            None => {
+                self.prepared = prepared;
+                let started = self.work_on_with(item, Some(gap), window, cx);
+                self.prepared = None;
+                started
+            }
+        };
         match started {
             Some(launch) => RunState::Started { launch, at: now },
             None => RunState::Failed { reason: "It already has a session, or no harness covers its repo.".into(), at: now },
@@ -1877,13 +1929,16 @@ impl Workspace {
             if self.scouting.len() >= 2 {
                 break;
             }
-            let Some(harness) = self.harness_for(&issue.repo) else { continue };
-            let path = crate::launch::harness_path(&org, &harness);
+            // Where the session it prepares would run: a server's harness
+            // open in another window first.
+            let elsewhere = self.better_window(|ws| ws.review_fit(&issue.repo), cx).and_then(|w| w.read(cx).ok().and_then(|ws| ws.place_for(&issue.repo)));
+            let Some((server, path)) = elsewhere.or_else(|| self.place_for(&issue.repo)) else { continue };
+            let _ = &org;
             sched.readiness.insert(issue.id.clone(), crate::schedule::Readiness { state: "scouting".into(), ..Default::default() });
             self.scouting.insert(issue.id.clone());
             let id = issue.id.clone();
             cx.spawn(async move |this, cx| {
-                let found = cx.background_executor().spawn(async move { crate::schedule::scout(&path, &issue) }).await;
+                let found = cx.background_executor().spawn(async move { crate::schedule::scout(&path, &issue, server.as_ref()) }).await;
                 let mut sched = crate::schedule::Schedule::load();
                 sched.readiness.insert(id.clone(), found);
                 sched.save();
@@ -2020,8 +2075,21 @@ impl Workspace {
     /// A recurring prompt, as an Ask started by the schedule. Whether it
     /// started.
     fn start_prompt(&mut self, name: &str, text: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        use crate::launch::{self, Flow};
         let (Some(org), Some(harness)) = (self.org.clone(), self.project.clone().or_else(|| self.projects.first().map(|p| p.id.clone()))) else { return false };
+        // In a window with the same harness on a server, when this one's
+        // folder is on this Mac.
+        let fit = |ws: &Workspace| (ws.org.as_deref() == Some(org.as_str()) && ws.projects.iter().any(|p| p.id.eq_ignore_ascii_case(&harness))).then(|| (true, ws.on_server()));
+        if let Some(other) = self.better_window(fit, cx) {
+            let (name, text) = (name.to_string(), text.to_string());
+            return other.update(cx, |ws, window, cx| ws.start_prompt_in(&name, &text, &org, &harness, window, cx)).unwrap_or(false);
+        }
+        self.start_prompt_in(name, text, &org, &harness, window, cx)
+    }
+
+    /// A recurring prompt, started in this window's harness.
+    fn start_prompt_in(&mut self, name: &str, text: &str, org: &str, harness: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use crate::launch::{self, Flow};
+        let (org, harness) = (org.to_string(), harness.to_string());
         let mut launch = self.new_launch(Flow::Ask, name.to_string(), &org, &harness, String::new(), None);
         launch.branch = format!("ask-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..8].to_lowercase());
         launch.unattended = Some(crate::schedule::Schedule::load().settings.gap_minutes);
@@ -2092,10 +2160,9 @@ impl Workspace {
         let now = chrono::Utc::now();
         if let Some(i) = sched.starts.iter().position(|s| s.id == id) {
             let start = sched.starts[i].clone();
-            sched.starts[i].run = match self.issues.read(cx).issue(&start.issue.id).and_then(|issue| self.work_on_with(issue, Some(gap), window, cx)) {
-                Some(launch) => RunState::Started { launch, at: now },
-                None => RunState::Failed { reason: "It already has a session, or isn't in this window's org.".into(), at: now },
-            };
+            // As the schedule starts it: where its harness runs.
+            let run = self.start_scheduled(&start.issue, gap, window, cx, now, &sched);
+            sched.starts[i].run = run;
             sched.note(id, &start.issue.label(), "started", "Run Now");
         } else if let Some(i) = sched.sequences.iter().position(|q| q.id == id) {
             let mut seq = sched.sequences[i].clone();
@@ -2103,10 +2170,7 @@ impl Workspace {
             // Missed or failed items go again; else the next waiting one.
             if let Some(next) = seq.runs.iter().position(|r| matches!(r, RunState::Waiting | RunState::Missed { .. } | RunState::Failed { .. })) {
                 let item = seq.items[next].clone();
-                seq.runs[next] = match self.issues.read(cx).issue(&item.id).and_then(|issue| self.work_on_with(issue, Some(gap), window, cx)) {
-                    Some(launch) => RunState::Started { launch, at: now },
-                    None => RunState::Failed { reason: "It already has a session, or isn't in this window's org.".into(), at: now },
-                };
+                seq.runs[next] = self.start_scheduled(&item, gap, window, cx, now, &sched);
                 seq.paused = false;
                 sched.note(id, &item.label(), "started", "Run Now");
             }

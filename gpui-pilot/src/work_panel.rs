@@ -466,15 +466,17 @@ impl WorkPanel {
         write_run(&dir, &run);
         self.round_running = true;
         let round = run.local.round;
+        // A session on a server has its worktree there: the round runs there.
+        let server = self.live.as_ref().and_then(|l| l.launch.server.clone());
         cx.spawn(async move |this, cx| {
             let (results, clear) = cx
                 .background_executor()
                 .spawn({
-                    let (worktree, flow) = (worktree.clone(), flow.clone());
+                    let (worktree, flow, server) = (worktree.clone(), flow.clone(), server.clone());
                     async move {
                         let harness = worktree.ancestors().find(|p| p.join(".gannin").is_dir() || p.join("specialists").is_dir()).map(|p| p.to_path_buf());
                         let specialists = harness.map(|h| crate::workflows::specialists(&h)).unwrap_or_default();
-                        crate::work_flow::local_round(&worktree, &flow, &specialists, round, &earlier)
+                        crate::work_flow::local_round(&worktree, &flow, &specialists, round, &earlier, server.as_ref())
                     }
                 })
                 .await;
@@ -484,7 +486,8 @@ impl WorkPanel {
                 run.local.status = if clear { "clear".into() } else { "holding".into() };
                 write_run(&dir, &run);
                 if clear {
-                    crate::work_flow::clear(&dir, &sha);
+                    let server = this.live.as_ref().and_then(|l| l.launch.server.clone());
+                    crate::work_flow::clear(&dir, &sha, server.as_ref());
                 }
                 this.pending_message = Some(crate::work_flow::round_message(round, &sha, &results, clear));
                 this.round_running = false;
@@ -602,7 +605,7 @@ impl WorkPanel {
         let Some(live) = &self.live else { return };
         let dir = live.launch.dir();
         let Some(mut run) = crate::work_flow::read_run(&dir) else { return };
-        crate::work_flow::clear(&dir, &run.local.sha);
+        crate::work_flow::clear(&dir, &run.local.sha, live.launch.server.as_ref());
         run.local.status = "clear".into();
         run.local.overridden = true;
         crate::work_flow::write_run(&dir, &run);

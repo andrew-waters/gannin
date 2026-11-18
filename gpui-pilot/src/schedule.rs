@@ -486,7 +486,8 @@ fn issue_text(issue: &IssueRef) -> Option<String> {
     Some(format!("# {}\n\n{}\n\n## Comments\n\n{}", i["title"].as_str()?, i["body"].as_str().unwrap_or("").trim(), if comments.is_empty() { "None.".into() } else { comments.join("\n\n") }))
 }
 
-pub fn scout(harness: &std::path::Path, issue: &IssueRef) -> Readiness {
+/// On `server` when the harness is there, as the session would run.
+pub fn scout(harness: &std::path::Path, issue: &IssueRef, server: Option<&crate::servers::Server>) -> Readiness {
     let text = issue_text(issue).unwrap_or_else(|| "(Gannin couldn't read it: work from the title and the code.)".into());
     let prompt = format!(
         "Scout {repo}#{n}, \"{title}\" ({url}), ahead of an unattended Claude Code session that will work on it later with nobody watching. Don't change anything. The issue, as it is now:\n\n{text}\n\nRead the code it touches (the code repos are under projects/, or this checkout if it's the repo).\n\nFind what that session would otherwise have to stop and ask: choices the issue leaves open that a person should make (scope, approach, naming, behaviour), each with two to four options, the one you'd recommend first. Leave out choices a careful engineer would just make. Also list blockers: what would stop the work outright (missing access, another issue that must land first, an unclear requirement no option settles).\n\nEnd your reply with one fenced ```json block: {{\"notes\": \"<what the session should know: where the code is, how it fits, risks; Markdown>\", \"decisions\": [{{\"question\": \"<the question>\", \"options\": [{{\"label\": \"<short>\", \"description\": \"<what it means>\"}}], \"recommended\": 0}}], \"blockers\": [\"<what blocks it>\"]}}. Use [] for none.",
@@ -497,7 +498,7 @@ pub fn scout(harness: &std::path::Path, issue: &IssueRef) -> Readiness {
         text = text
     );
     let now = Utc::now();
-    match crate::work_flow::ask_claude(harness, &prompt, None, std::time::Duration::from_secs(15 * 60)) {
+    match crate::work_flow::ask_claude_on(server, harness, &prompt, None, std::time::Duration::from_secs(15 * 60)) {
         Ok(reply) => {
             let parsed = reply.rfind("```json").and_then(|start| {
                 let start = start + "```json".len();

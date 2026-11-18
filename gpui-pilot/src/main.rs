@@ -285,7 +285,7 @@ fn main() {
             "--local-round" => {
                 let worktree = std::path::PathBuf::from(args.next().unwrap_or_default());
                 let workflow: workflows::Workflow = serde_json::from_slice(&std::fs::read(args.next().unwrap_or_default()).expect("the workflow file")).expect("a workflow");
-                let (results, clear) = work_flow::local_round(&worktree, &workflow, &[], 1, &[]);
+                let (results, clear) = work_flow::local_round(&worktree, &workflow, &[], 1, &[], None);
                 for r in &results {
                     println!("{} [{}] {}: {}", r.label, r.provider, r.status, r.summary.lines().next().unwrap_or(""));
                     for f in &r.findings {
@@ -320,7 +320,7 @@ fn main() {
                 let repo = args.next().unwrap_or_default();
                 let number: i64 = args.next().and_then(|n| n.parse().ok()).unwrap_or(0);
                 let issue = schedule::IssueRef { id: String::new(), url: format!("https://github.com/{repo}/issues/{number}"), repo, number, title: String::new() };
-                let r = schedule::scout(&harness, &issue);
+                let r = schedule::scout(&harness, &issue, None);
                 println!("state: {} {}", r.state, r.error.unwrap_or_default());
                 println!("notes: {}", r.notes.lines().take(6).collect::<Vec<_>>().join("\n       "));
                 for d in &r.decisions {
