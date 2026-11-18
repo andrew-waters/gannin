@@ -571,12 +571,24 @@ impl Workspace {
                 .tabs
                 .iter()
                 .filter_map(|tab| match tab.nav {
-                    Nav::Session(id) => self.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().map(|l| l.id.clone())),
+                    Nav::Session(id) => self.session(id, cx).and_then(|p| p.read(cx).saved_key()),
+                    _ => None,
+                })
+                .collect(),
+            plain_sessions: self
+                .tabs
+                .iter()
+                .filter_map(|tab| match tab.nav {
+                    Nav::Session(id) => self.session(id, cx).and_then(|p| {
+                        let page = p.read(cx);
+                        let id = page.claude_id.clone().filter(|_| page.launch.is_none())?;
+                        Some(crate::state::PlainSession { id, location: page.location() })
+                    }),
                     _ => None,
                 })
                 .collect(),
             active_session: match self.current() {
-                Some(Nav::Session(id)) => self.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().map(|l| l.id.clone())),
+                Some(Nav::Session(id)) => self.session(id, cx).and_then(|p| p.read(cx).saved_key()),
                 _ => None,
             },
             // Sessions open after the views, so the index counts the views.
@@ -662,6 +674,7 @@ impl Workspace {
         });
         let views = Self::saved_views(&saved);
         let sessions = saved.sessions.clone();
+        let plain_sessions = saved.plain_sessions.clone();
         let active_session = saved.active_session.clone();
         let active = saved.active;
         let mut workspace = Self::build(saved, window, cx);
@@ -689,7 +702,10 @@ impl Workspace {
         workspace.show_on_reopen = active_session;
         let launches = crate::launch::saved();
         for id in &sessions {
-            if let Some(launch) = launches.iter().find(|l| &l.id == id).cloned() {
+            if let Some(plain) = id.strip_prefix("plain:").and_then(|id| plain_sessions.iter().find(|p| p.id == id)).cloned() {
+                workspace.reopening += 1;
+                workspace.open_session_on(Kind::Claude, plain.location.path, None, plain.location.server, Some(plain.id), window, cx);
+            } else if let Some(launch) = launches.iter().find(|l| &l.id == id).cloned() {
                 let folder = launch.harness_path.clone();
                 workspace.reopening += 1;
                 workspace.open_session(Kind::Claude, folder, Some(launch), window, cx);
@@ -1121,7 +1137,7 @@ impl Workspace {
     /// window with no folder asks where to start.
     fn new_session(&mut self, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(location) = self.folder.as_ref().map(|f| f.location.clone()) {
-            self.open_session_on(kind, location.path, None, location.server, window, cx);
+            self.open_session_on(kind, location.path, None, location.server, None, window, cx);
             return;
         }
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -1250,13 +1266,15 @@ impl Workspace {
     /// Opens a session in a tab of its own: a terminal in `folder`, or a
     /// launch's start script.
     fn open_session(&mut self, kind: Kind, folder: PathBuf, launch: Option<crate::launch::Launch>, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_session_on(kind, folder, launch, None, window, cx);
+        self.open_session_on(kind, folder, launch, None, None, window, cx);
     }
 
     /// As `open_session`, for a plain session on `server`: `folder` is a
-    /// path there.
-    fn open_session_on(&mut self, kind: Kind, folder: PathBuf, launch: Option<crate::launch::Launch>, server: Option<crate::servers::Server>, window: &mut Window, cx: &mut Context<Self>) {
-        let task = session::spawn_terminal(kind, folder.clone(), launch.as_ref(), server.as_ref(), window, cx);
+    /// path there. A plain Claude Code session gets a conversation ID of its
+    /// own (or `claude_id`, reopening one), so it can be saved and resumed.
+    fn open_session_on(&mut self, kind: Kind, folder: PathBuf, launch: Option<crate::launch::Launch>, server: Option<crate::servers::Server>, claude_id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let claude_id = (kind == Kind::Claude && launch.is_none()).then(|| claude_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()));
+        let task = session::spawn_terminal(kind, folder.clone(), launch.as_ref(), server.as_ref(), claude_id.as_deref(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let builder = match task.await {
                 Ok(builder) => builder,
@@ -1268,7 +1286,11 @@ impl Workspace {
             this.update_in(cx, |this, window, cx| {
                 let id = this.next_session;
                 this.next_session += 1;
-                let page = cx.new(|cx| SessionPage::new(id, kind, folder, launch, server, builder, window, cx));
+                let page = cx.new(|cx| {
+                    let mut page = SessionPage::new(id, kind, folder, launch, server, builder, window, cx);
+                    page.claude_id = claude_id;
+                    page
+                });
                 this._subscriptions.push(cx.subscribe(&page, |this, _, _: &Changed, cx| {
                     this.sync_reviewing(cx);
                     cx.notify();
@@ -1311,7 +1333,7 @@ impl Workspace {
                 // Sessions reopened at launch don't take the tab that was showing.
                 if this.reopening > 0 {
                     this.reopening -= 1;
-                    let reopened = this.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().map(|l| l.id.clone()));
+                    let reopened = this.session(id, cx).and_then(|p| p.read(cx).saved_key());
                     if reopened.is_some() && reopened == this.show_on_reopen {
                         this.show_on_reopen = None;
                         this.activate(this.tabs.len() - 1, window, cx);

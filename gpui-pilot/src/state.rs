@@ -41,6 +41,9 @@ pub struct SavedState {
     /// The launches of the session tabs that were open, in tab order, to
     /// open again (claude resumes in each).
     pub sessions: Vec<String>,
+    /// The plain Claude Code sessions among them (`plain:<id>` in
+    /// `sessions`): where each runs, to open there and resume.
+    pub plain_sessions: Vec<PlainSession>,
     /// The session tab that was showing, by its launch, to show again.
     pub active_session: Option<String>,
     pub active: usize,
@@ -72,6 +75,13 @@ pub struct SavedState {
     pub sync: SyncPrefs,
 }
 
+/// A plain Claude Code session: its conversation ID and where it runs.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub struct PlainSession {
+    pub id: String,
+    pub location: crate::folders::Location,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct CiSaved {
@@ -94,6 +104,7 @@ impl Default for SavedState {
             tabs: vec![Nav::Ci],
             views: Vec::new(),
             sessions: Vec::new(),
+            plain_sessions: Vec::new(),
             active_session: None,
             active: 0,
             sidebar_open: true,

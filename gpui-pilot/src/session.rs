@@ -68,6 +68,9 @@ pub struct SessionPage {
     /// Started the way Gannin starts a session (Work on This, a review, an
     /// Ask and so on): its state comes from the hooks' files, not the screen.
     pub launch: Option<crate::launch::Launch>,
+    /// A plain Claude Code session's conversation ID, which it was started
+    /// with, so the window can open it again and claude resume it.
+    pub claude_id: Option<String>,
     folder: PathBuf,
     terminal: Entity<Terminal>,
     view: Entity<TerminalView>,
@@ -106,7 +109,20 @@ impl gpui::EventEmitter<crate::harness::OpenDoc> for SessionPage {}
 /// Starts the process in a pty; the page is made once it's running.
 /// `server`: a plain session (no launch) on a server, run there over ssh
 /// in `folder`, a path on the server.
-pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, server: Option<&crate::servers::Server>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
+/// The command a plain Claude Code session runs: with its ID, claude
+/// resumes that conversation when one was started (on whichever machine it
+/// runs on), else starts it under that ID. A session that's never been
+/// typed into has no transcript, and `--resume` would refuse it.
+fn plain_claude(claude_id: Option<&str>) -> String {
+    match claude_id {
+        Some(id) => format!(
+            "if [ -n \"$(find \"$HOME/.claude/projects\" -maxdepth 2 -name '{id}.jsonl' 2>/dev/null | head -n 1)\" ]; then exec claude --resume {id}; else exec claude --session-id {id}; fi"
+        ),
+        None => "claude".into(),
+    }
+}
+
+pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, server: Option<&crate::servers::Server>, claude_id: Option<&str>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
     use settings::Settings;
     let settings = terminal::terminal_settings::TerminalSettings::get_global(cx).clone();
     // A resumed claude is starting until its SessionStart hook says it's
@@ -149,8 +165,8 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch
         None => match server {
             Some(server) => {
                 let run = match kind {
-                    Kind::Claude => "exec \"${SHELL:-/bin/bash}\" -lic claude",
-                    Kind::Shell => "exec \"${SHELL:-/bin/bash}\" -l",
+                    Kind::Claude => format!("exec \"${{SHELL:-/bin/bash}}\" -lic {}", crate::launch::quote(&plain_claude(claude_id))),
+                    Kind::Shell => "exec \"${SHELL:-/bin/bash}\" -l".to_string(),
                 };
                 let remote = format!("cd {} && {run}", crate::launch::quote_path(&folder));
                 (
@@ -171,7 +187,7 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch
         // profile sets up.
         Kind::Claude => util::shell::Shell::WithArguments {
             program: crate::paths::shell(),
-            args: vec!["-l".into(), "-i".into(), "-c".into(), "claude".into()],
+            args: vec!["-l".into(), "-i".into(), "-c".into(), plain_claude(claude_id)],
             title_override: None,
         },
     } };
@@ -194,6 +210,22 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch
 }
 
 impl SessionPage {
+    /// What the window saves to open this session again: its launch, or a
+    /// plain Claude Code session as `plain:<its conversation ID>`. A plain
+    /// terminal isn't saved.
+    pub fn saved_key(&self) -> Option<String> {
+        match (&self.launch, &self.claude_id) {
+            (Some(launch), _) => Some(launch.id.clone()),
+            (None, Some(id)) => Some(format!("plain:{id}")),
+            _ => None,
+        }
+    }
+
+    /// Where a plain session runs, to open it there again.
+    pub fn location(&self) -> crate::folders::Location {
+        crate::folders::Location { path: self.folder.clone(), server: self.server.clone() }
+    }
+
     pub fn new(
         id: u32,
         kind: Kind,
@@ -280,6 +312,7 @@ impl SessionPage {
             id,
             kind,
             launch,
+            claude_id: None,
             folder,
             terminal,
             view,
