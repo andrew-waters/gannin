@@ -314,7 +314,12 @@ fn cache_path(org: &str) -> PathBuf {
 }
 
 pub(crate) fn load(org: &str) -> Result<Vec<IssueItem>, String> {
-    let bytes = std::fs::read(cache_path(org)).map_err(|e| e.to_string())?;
+    // Nothing synced yet (a fresh install) is an empty cache, not an error.
+    let bytes = match std::fs::read(cache_path(org)) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
     let file: File = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     if file.format_version != CURRENT_FORMAT {
         return Err(format!("Store format {} isn't {CURRENT_FORMAT}", file.format_version));
@@ -929,6 +934,7 @@ impl IssuesPage {
                     return;
                 }
                 page.loading = false;
+                page.error = result.as_ref().err().cloned();
                 match result {
                     Ok((issues, elapsed)) => {
                         page.timings = format!("read {} issues in {} ms", thousands(issues.len()), elapsed.as_millis());
@@ -954,7 +960,7 @@ impl IssuesPage {
                         page.rescope();
                         page.refilter();
                     }
-                    Err(error) => page.error = Some(error),
+                    Err(_) => {}
                 }
                 cx.notify();
             })
@@ -2429,7 +2435,14 @@ impl Render for IssuesPage {
         } else if self.loading {
             div().p_4().text_color(theme.secondary).child("Loading").into_any_element()
         } else if matched == 0 {
-            let text = if self.pool_count == 0 { format!("No {noun}") } else { format!("No {noun} match") };
+            let never_synced = self.org.as_deref().is_some_and(|org| crate::sync::last_synced(org).is_none());
+            let text = if self.pool_count == 0 && never_synced {
+                "Not synced yet. Sync this org to see its work here.".to_string()
+            } else if self.pool_count == 0 {
+                format!("No {noun}")
+            } else {
+                format!("No {noun} match")
+            };
             div().p_4().text_color(theme.secondary).child(text).into_any_element()
         } else {
             uniform_list(
