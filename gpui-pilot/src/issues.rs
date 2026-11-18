@@ -1,5 +1,5 @@
 //! The Issues page, one list with the filter bar from `IssueFilterBar`
-//! (search, Assignee, Repository, Label, Board, Field and Milestone, and the
+//! (search, Assignee, Author, Repository, Label, Board, Field and Milestone, and the
 //! state), read from the pilot's issue store, which its own sync fills
 //! (`StoredIssues/<org>.json` in the org's harness `.gannin-cache/`, Gannin's shape). New
 //! Issue at the end of the filter bar opens the form (`new_issue.rs`). Not on a board
@@ -347,6 +347,8 @@ enum Key {
     /// Board Status, on any board the issue is on.
     Status,
     Assignee,
+    /// Who opened the issue.
+    Author,
     Repository,
     Label,
     Board,
@@ -358,6 +360,7 @@ impl Key {
         match self {
             Key::Status => "Status",
             Key::Assignee => "Assignee",
+            Key::Author => "Author",
             Key::Repository => "Repository",
             Key::Label => "Label",
             Key::Board => "Board",
@@ -411,6 +414,7 @@ impl StateFilter {
 pub struct Filters {
     search: String,
     assignees: BTreeSet<String>,
+    authors: BTreeSet<String>,
     repositories: BTreeSet<String>,
     labels: BTreeSet<String>,
     boards: BTreeSet<String>,
@@ -435,6 +439,7 @@ impl Filters {
     fn values(&self, key: Key) -> &BTreeSet<String> {
         match key {
             Key::Assignee => &self.assignees,
+            Key::Author => &self.authors,
             Key::Repository => &self.repositories,
             Key::Label => &self.labels,
             Key::Board => &self.boards,
@@ -446,6 +451,7 @@ impl Filters {
     fn values_mut(&mut self, key: Key) -> &mut BTreeSet<String> {
         match key {
             Key::Assignee => &mut self.assignees,
+            Key::Author => &mut self.authors,
             Key::Repository => &mut self.repositories,
             Key::Label => &mut self.labels,
             Key::Board => &mut self.boards,
@@ -468,6 +474,7 @@ impl Filters {
                     ANYONE_ASSIGNED => !issue.assignee_logins.is_empty(),
                     login => issue.assignee_logins.iter().any(|l| l == login),
                 },
+                Key::Author => issue.author_login.as_deref() == Some(value.as_str()),
                 Key::Repository => issue.repo == *value,
                 Key::Label => issue.labels.contains(value),
                 Key::Board if value == NO_BOARD => issue.has_history && issue.boards.is_empty(),
@@ -519,8 +526,8 @@ impl Filters {
 }
 
 impl Key {
-    fn all() -> [Key; 6] {
-        [Key::Status, Key::Assignee, Key::Repository, Key::Label, Key::Board, Key::Milestone]
+    fn all() -> [Key; 7] {
+        [Key::Status, Key::Assignee, Key::Author, Key::Repository, Key::Label, Key::Board, Key::Milestone]
     }
 }
 
@@ -1274,6 +1281,7 @@ impl IssuesPage {
         self.issues
             .iter()
             .find_map(|i| i.assignee_logins.iter().position(|l| l == login).map(|p| i.assignees[p].clone()))
+            .or_else(|| self.issues.iter().find(|i| i.author_login.as_deref() == Some(login)).and_then(|i| i.author.clone()))
             .unwrap_or_else(|| login.to_string())
     }
 
@@ -1281,7 +1289,7 @@ impl IssuesPage {
         match (key, value) {
             (Key::Assignee, UNASSIGNED) => "Unassigned".into(),
             (Key::Assignee, ANYONE_ASSIGNED) => "Anyone assigned".into(),
-            (Key::Assignee, login) => self.person_name(login),
+            (Key::Assignee, login) | (Key::Author, login) => self.person_name(login),
             (Key::Repository, repo) => repo.rsplit('/').next().unwrap_or(repo).to_string(),
             (Key::Board, NO_BOARD) => "Not on a board".into(),
             (Key::Status, NO_STATUS) => "No status".into(),
@@ -1301,6 +1309,7 @@ impl IssuesPage {
                     v.push(if issue.assignee_logins.is_empty() { UNASSIGNED } else { ANYONE_ASSIGNED }.to_string());
                     v
                 }
+                Key::Author => issue.author_login.iter().cloned().collect(),
                 Key::Repository => vec![issue.repo.clone()],
                 Key::Label => issue.labels.clone(),
                 Key::Board => {
@@ -1349,7 +1358,7 @@ impl IssuesPage {
         rest.sort_by(|a, b| {
             let by_order = |c: &Choice| board_order.get(c.value.as_str()).copied().unwrap_or(i64::MAX);
             let by_count = match key {
-                Key::Assignee => b.count.cmp(&a.count),
+                Key::Assignee | Key::Author => b.count.cmp(&a.count),
                 Key::Status => by_order(a).cmp(&by_order(b)),
                 _ => std::cmp::Ordering::Equal,
             };
@@ -1749,6 +1758,7 @@ impl IssuesPage {
                 d.child(self.menu_button(Menu::Key(Key::Status), theme, cx))
             })
             .child(self.menu_button(Menu::Key(Key::Assignee), theme, cx))
+            .child(self.menu_button(Menu::Key(Key::Author), theme, cx))
             .child(self.menu_button(Menu::Key(Key::Repository), theme, cx))
             .child(self.menu_button(Menu::Key(Key::Label), theme, cx))
             .when(has_boards, |d| d.child(self.menu_button(Menu::Key(Key::Board), theme, cx)))
