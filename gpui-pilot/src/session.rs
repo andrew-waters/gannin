@@ -123,7 +123,7 @@ fn plain_claude(claude_id: Option<&str>) -> String {
     );
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(hook);
-    let settings = format!("{{\"hooks\":{{\"SessionStart\":[{{\"hooks\":[{{\"type\":\"command\",\"command\":\"sh -c \\\"$(echo {encoded} | base64 -d)\\\"\"}}]}}]}}");
+    let settings = format!("{{\"hooks\":{{\"SessionStart\":[{{\"hooks\":[{{\"type\":\"command\",\"command\":\"sh -c \\\"$(echo {encoded} | base64 -d)\\\"\"}}]}}]}}}}");
     format!(
         "cur=$(cat {file} 2>/dev/null); case \"$cur\" in ''|*[!0-9a-f-]*) cur={id};; esac; \
          if [ -n \"$(find \"$HOME/.claude/projects\" -maxdepth 2 -name \"$cur.jsonl\" 2>/dev/null | head -n 1)\" ]; then exec claude --resume \"$cur\" --settings '{settings}'; \
