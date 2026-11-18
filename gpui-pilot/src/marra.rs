@@ -785,25 +785,114 @@ pub fn read_only(tool: &str, input: &Value) -> bool {
     }
 }
 
-/// A shell command that can only read: one program from a short list, with
-/// nothing that chains, redirects or substitutes.
+/// A shell command that can only read: every command in it (split at
+/// `;`, `&&`, `||` and `|`, outside quotes) a reader from a short list,
+/// with no substitution, and no redirect but into /dev/null.
 fn read_only_command(command: &str) -> bool {
-    if command.contains([';', '&', '|', '>', '<', '`', '$', '\n']) {
+    if command.contains(['`', '\n']) || command.contains("$(") || command.contains("<(") || command.contains(">(") {
         return false;
     }
-    let words: Vec<&str> = command.split_whitespace().collect();
+    let Some(parts) = split_command(command) else { return false };
+    !parts.is_empty() && parts.iter().all(|part| read_only_part(part))
+}
+
+/// A command line's commands, split at `;`, `&`, `|` outside quotes, with
+/// the redirects into /dev/null taken out; None when there's any other
+/// redirect, or a quote left open.
+fn split_command(command: &str) -> Option<Vec<String>> {
+    let command = command.replace("2>&1", " ").replace("2>/dev/null", " ").replace("&>/dev/null", " ").replace(">/dev/null", " ");
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    for c in command.chars() {
+        match quote {
+            Some(q) if c == q => {
+                quote = None;
+                current.push(c);
+            }
+            Some(_) => current.push(c),
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    current.push(c);
+                }
+                ';' | '&' | '|' => {
+                    if !current.trim().is_empty() {
+                        parts.push(std::mem::take(&mut current));
+                    }
+                    current.clear();
+                }
+                '>' | '<' => return None,
+                _ => current.push(c),
+            },
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if !current.trim().is_empty() {
+        parts.push(current);
+    }
+    Some(parts)
+}
+
+/// One command that only reads. `rtk` (a token-saving wrapper) in front is
+/// read through to the command it runs.
+fn read_only_part(part: &str) -> bool {
+    let words: Vec<&str> = part.split_whitespace().collect();
     // Options that write a file, run a program or never finish.
-    let risky = |w: &&str| w.starts_with("--output") || w.starts_with("--pre") || w.starts_with("-exec") || w.starts_with("-ok") || w.starts_with("-fprint") || w.starts_with("-fls") || *w == "-delete" || *w == "-f" || *w == "-F" || *w == "--follow";
+    let risky = |w: &&str| w.starts_with("--output") || w.starts_with("--pre") || w.starts_with("-exec") || w.starts_with("-ok") || w.starts_with("-fprint") || w.starts_with("-fls") || *w == "-delete" || *w == "-f" || *w == "--follow" || w.starts_with("-i") && words.first() == Some(&"sed") || *w == "--in-place";
     if words.iter().any(risky) {
         return false;
     }
-    match words.as_slice() {
+    let words: &[&str] = match words.as_slice() {
+        ["rtk", rest @ ..] => rest,
+        all => all,
+    };
+    match words {
         [] => false,
-        ["ls" | "cat" | "head" | "tail" | "wc" | "rg" | "grep" | "find" | "pwd" | "date" | "which" | "echo", ..] => true,
-        ["git", sub, ..] => matches!(*sub, "status" | "log" | "diff" | "show" | "rev-parse" | "ls-files" | "blame"),
+        ["ls" | "cat" | "head" | "tail" | "wc" | "rg" | "grep" | "find" | "pwd" | "date" | "which" | "echo" | "cd" | "sort" | "uniq" | "cut" | "tr" | "jq" | "stat" | "file" | "basename" | "dirname" | "true" | "tree" | "read", ..] => true,
+        // sed only printing lines: -n and addresses ending in p, then files.
+        ["sed", rest @ ..] => rest.contains(&"-n") && rest.iter().filter(|w| !w.starts_with('-')).take(1).all(|w| {
+            let script = w.trim_matches(['\'', '"']);
+            script.ends_with('p') && script[..script.len() - 1].chars().all(|c| c.is_ascii_digit() || c == ',' || c == '$')
+        }),
+        ["git", rest @ ..] => {
+            // `git -C <dir>` first, as the worker often writes it.
+            let rest = match rest {
+                ["-C", _, rest @ ..] => rest,
+                rest => rest,
+            };
+            matches!(rest.first(), Some(&("status" | "log" | "diff" | "show" | "rev-parse" | "ls-files" | "blame" | "grep")))
+        }
         ["gh", "pr" | "issue" | "run" | "repo" | "release", sub, ..] => matches!(*sub, "view" | "list" | "diff" | "checks" | "status"),
         ["gh", "search", ..] => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::read_only_command as ro;
+
+    #[test]
+    fn reads_chained_reads() {
+        assert!(ro("rtk read skills/raise-issue.md; rtk ls skills/ .github/ISSUE_TEMPLATE 2>/dev/null"));
+        assert!(ro("cd /x/clients/apps/console && rtk grep -n -i -B2 -A8 \"reminder\" navigation.ts"));
+        assert!(ro("cat pages/reminders/index.vue | head -80; rtk grep -rn -i \"count\" types/link.ts 2>/dev/null"));
+        assert!(ro("grep -n \"a\\|b\" x.ts | grep -i y"));
+        assert!(ro("sed -n 1,70p apps/Sidebar.vue; echo ----"));
+    }
+
+    #[test]
+    fn refuses_writes() {
+        assert!(!ro("f=$(grep -rl x .); head -3 \"$f\""));
+        assert!(!ro("cat a > b"));
+        assert!(!ro("sed -i s/a/b/ x"));
+        assert!(!ro("gh issue create --title x"));
+        assert!(!ro("ls; rm -rf x"));
+        assert!(!ro("git push"));
+        assert!(!ro("find . -delete"));
     }
 }
 

@@ -649,8 +649,10 @@ impl Marra {
                 continue;
             }
             changed = true;
-            // A worker is read only: the user's Allow always is Marra's, not its.
-            if errand.convo.apply(events, &[]) && !errand.convo.engine.busy {
+            // The user's Allow always holds for workers too, but never for
+            // gh or git: a worker's writes to GitHub always ask.
+            let worker_always: Vec<String> = always.iter().filter(|k| !k.starts_with("Bash(gh") && !k.starts_with("Bash(git") && !k.starts_with("Bash(rtk gh") && !k.starts_with("Bash(rtk git")).cloned().collect();
+            if errand.convo.apply(events, &worker_always) && !errand.convo.engine.busy {
                 finished.push(errand.saved.id.clone());
             }
         }
