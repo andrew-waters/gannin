@@ -20,7 +20,7 @@ const REMIND: [(&str, Option<i64>); 7] = [("5m", Some(5)), ("10m", Some(10)), ("
 /// The models offered in the menu; any other goes with /model.
 const MODELS: [(&str, Option<&str>); 4] = [("Claude's default", None), ("Opus", Some("opus")), ("Sonnet", Some("sonnet")), ("Haiku", Some("haiku"))];
 
-const COMMANDS: [(&str, &str); 14] = [
+const COMMANDS: [(&str, &str); 15] = [
     ("/waiting", "What needs you now"),
     ("/catch-up", "Sum up the unread threads"),
     ("/ask", "A data question, answered by a worker in a harness"),
@@ -29,6 +29,7 @@ const COMMANDS: [(&str, &str); 14] = [
     ("/standup", "Yesterday and today, from your work"),
     ("/open", "Bring a session's tab forward"),
     ("/later", "Park the top item for 30 minutes"),
+    ("/todo", "Add a todo: /todo send the invoice"),
     ("/compact", "Compact Marra's conversation"),
     ("/new", "Start a new conversation"),
     ("/model", "Marra's model: /model sonnet, /model default"),
@@ -56,6 +57,10 @@ pub struct MarraView {
     more_menu: bool,
     /// New Issue's menu of harnesses to raise it from.
     issue_menu: bool,
+    /// The checklist, as last read or changed (`todos.rs`).
+    todos: Vec<crate::todos::Todo>,
+    /// Whether the composer's placeholder says it adds a todo.
+    todo_placeholder: bool,
     /// Why New Issue couldn't start, shown until the next try.
     issue_error: Option<String>,
     row_menu: Option<(String, Point<Pixels>)>,
@@ -141,6 +146,8 @@ impl MarraView {
             more_menu: false,
             issue_menu: false,
             issue_error: None,
+            todos: crate::todos::load(),
+            todo_placeholder: false,
             row_menu: None,
             menu_closed: None,
             phone: (None, 0),
@@ -213,6 +220,15 @@ impl MarraView {
         }
         // Main first, then the newest; pinned ones lead.
         threads.sort_by(|a, b| (b.kind == ThreadKind::Main).cmp(&(a.kind == ThreadKind::Main)).then(b.activity.cmp(&a.activity)));
+        // The checklist next, always: it isn't a conversation.
+        let open: Vec<&crate::todos::Todo> = self.todos.iter().filter(|t| t.done.is_none()).collect();
+        let last = match open.len() {
+            0 => "Nothing to do".to_string(),
+            1 => open[0].text.clone(),
+            n => format!("{n} to do: {}", open[0].text),
+        };
+        let at = threads.iter().position(|t| t.kind != ThreadKind::Main).unwrap_or(threads.len());
+        threads.insert(at, Thread { id: "todos".into(), kind: ThreadKind::Todos, title: "Todos".into(), last, activity: None, working: false, org: None });
         threads
     }
 
@@ -457,6 +473,18 @@ impl MarraView {
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).text(cx).trim().to_string();
         if text.is_empty() {
+            return;
+        }
+        // A todo, with the checklist open or /todo from anywhere: kept here,
+        // never sent to Marra.
+        let todo = match text.strip_prefix("/todo ").map(str::trim) {
+            Some(todo) => Some(todo),
+            None => (self.open.as_deref() == Some("todos")).then_some(text.as_str()),
+        };
+        if let Some(todo) = todo {
+            crate::todos::add(&mut self.todos, todo);
+            self.composer.update(cx, |editor, cx| editor.set_text("", window, cx));
+            cx.notify();
             return;
         }
         self.composer.update(cx, |editor, cx| editor.set_text("", window, cx));
@@ -894,6 +922,7 @@ fn avatar(kind: ThreadKind, theme: &Theme) -> (&'static str, Hsla) {
         ThreadKind::Question => ("icons/database_zap.svg", theme.slot(6)),
         ThreadKind::Investigation => ("icons/magnifying_glass.svg", theme.orange()),
         ThreadKind::Issue => ("icons/notepad.svg", theme.good()),
+        ThreadKind::Todos => ("icons/list_todo.svg", theme.selected),
         ThreadKind::Build => ("icons/tool_hammer.svg", theme.good()),
         ThreadKind::Review => ("icons/pull_request.svg", theme.slot(4)),
     }
@@ -1646,6 +1675,9 @@ impl MarraView {
     }
 
     fn thread_view(&self, id: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        if id == "todos" {
+            return self.todos_view(theme, cx);
+        }
         let marra = self.marra.read(cx);
         let Some(thread) = marra.threads().into_iter().find(|t| t.id == id) else {
             return div().flex_1().p_4().text_color(theme.secondary).child(div().id("gone").cursor_pointer().text_color(theme.selected).child("‹ Threads").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)))).child("This thread has closed.").into_any_element();
@@ -1719,6 +1751,111 @@ impl MarraView {
             }
         };
         div().flex_1().min_h_0().flex().flex_col().child(nav).child(body).into_any_element()
+    }
+
+    /// The checklist: to do first, oldest first, then what's done, newest
+    /// first; each with when it was added and, once done, when and how long.
+    fn todos_view(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let mut open: Vec<crate::todos::Todo> = self.todos.iter().filter(|t| t.done.is_none()).cloned().collect();
+        open.sort_by_key(|t| t.added);
+        let mut done: Vec<crate::todos::Todo> = self.todos.iter().filter(|t| t.done.is_some()).cloned().collect();
+        done.sort_by(|a, b| b.done.cmp(&a.done));
+        let has_done = !done.is_empty();
+        let nav = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .px_3()
+            .h(px(40.))
+            .border_b_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .when(!self.split(), |d| d.child(div().id("back").flex_none().w(px(80.)).text_sm().text_color(theme.selected).cursor_pointer().child("‹ Threads").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)))))
+            .child(div().flex_1().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(format!("Todos · {} to do", open.len())))
+            .when(has_done, |d| {
+                d.child(div().id("clear-done").text_xs().text_color(theme.selected).cursor_pointer().child("Clear done").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    crate::todos::clear_done(&mut this.todos);
+                    cx.notify();
+                })))
+            });
+        let row = |todo: crate::todos::Todo, cx: &mut Context<Self>| {
+            let (toggle_id, remove_id) = (todo.id.clone(), todo.id.clone());
+            let is_done = todo.done.is_some();
+            let times = match (todo.done, crate::todos::took(&todo)) {
+                (Some(at), Some(took)) => format!("Added {} · done {} · {took}", crate::todos::when(todo.added), crate::todos::when(at)),
+                _ => format!("Added {}", crate::todos::when(todo.added)),
+            };
+            div()
+                .id(SharedString::from(format!("todo-{}", todo.id)))
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_3()
+                .px_4()
+                .py_2()
+                .hover(|s| s.bg(theme.tile))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("todo-check-{}", todo.id)))
+                        .flex_none()
+                        .mt(px(2.))
+                        .size(px(16.))
+                        .rounded(px(4.))
+                        .border_1()
+                        .cursor_pointer()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .map(|d| if is_done { d.bg(theme.selected).border_color(theme.selected).text_color(theme.on_selected).text_xs().child("✓") } else { d.border_color(theme.secondary) })
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            crate::todos::toggle(&mut this.todos, &toggle_id);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_sm().text_color(if is_done { theme.secondary } else { theme.fg }).when(is_done, |d| d.line_through()).child(todo.text.clone()))
+                        .child(div().text_xs().text_color(theme.tertiary).child(times)),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!("todo-remove-{}", todo.id)))
+                        .flex_none()
+                        .px_1()
+                        .text_sm()
+                        .text_color(theme.tertiary)
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(theme.fg))
+                        .child("×")
+                        .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("Remove".into())).into())
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            crate::todos::remove(&mut this.todos, &remove_id);
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        };
+        let empty = open.is_empty() && done.is_empty();
+        let open_rows: Vec<AnyElement> = open.into_iter().map(|t| row(t, cx)).collect();
+        let done_rows: Vec<AnyElement> = done.into_iter().map(|t| row(t, cx)).collect();
+        let list = div()
+            .id("todos-list")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .py_2()
+            .when(empty, |d| d.child(div().px_4().py_6().text_sm().text_color(theme.secondary).text_center().child("Nothing yet. Type below and press Return to add one; /todo adds one from any thread.")))
+            .children(open_rows)
+            .when(!done_rows.is_empty(), |d| d.child(div().px_4().pt_3().pb_1().text_xs().text_color(theme.secondary).child("Done")))
+            .children(done_rows);
+        div().flex_1().min_h_0().flex().flex_col().child(nav).child(list).into_any_element()
     }
 
     /// A session's thread: where you left off, from Gannin's own state, then
@@ -2307,6 +2444,12 @@ impl Render for MarraView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
         self.theme = theme;
+        // The composer says what Return does: add a todo, or message.
+        let todos_open = self.open.as_deref() == Some("todos");
+        if todos_open != self.todo_placeholder {
+            self.todo_placeholder = todos_open;
+            self.composer.update(cx, |editor, cx| editor.set_placeholder_text(if todos_open { "Add a todo" } else { "Message Marra" }, window, cx));
+        }
         let menus = self.menus(&theme, cx);
         let row_menu = self.row_menu_view(&theme, cx);
         let panel = if self.split() {

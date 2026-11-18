@@ -73,6 +73,7 @@ mod session_move;
 mod shell;
 mod state;
 mod sync;
+mod todos;
 mod work;
 mod zed;
 

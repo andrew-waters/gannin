@@ -474,6 +474,8 @@ pub enum ThreadKind {
     Question,
     Investigation,
     Issue,
+    /// The plain checklist: no AI, kept on this Mac (`todos.rs`).
+    Todos,
     Build,
     Review,
 }
