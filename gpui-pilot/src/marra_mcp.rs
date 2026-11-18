@@ -402,24 +402,30 @@ fn clip(s: &str, max: usize) -> String {
 }
 
 /// The harnesses Gannin knows (from its sessions) and their skills.
+/// A harness's skills, from this Mac's checkout of the same repo: each
+/// one's name and the description its front matter gives (may be empty).
+pub fn harness_skills(place: &HarnessPlace) -> Vec<(String, String)> {
+    let harness = place.local.clone().unwrap_or_else(|| place.path.clone());
+    let mut skills: Vec<(String, String)> = Vec::new();
+    for folder in ["skills", ".claude/skills"] {
+        for entry in std::fs::read_dir(harness.join(folder)).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let file = if path.is_dir() { path.join("SKILL.md") } else { path.clone() };
+            let about = std::fs::read_to_string(&file).ok().and_then(|t| t.lines().find(|l| l.trim_start().starts_with("description:")).map(|l| l.trim_start().trim_start_matches("description:").trim().trim_matches('"').to_string())).unwrap_or_default();
+            if !name.starts_with('.') && !skills.iter().any(|(n, _)| *n == name) {
+                skills.push((name, about));
+            }
+        }
+    }
+    skills.sort();
+    skills
+}
+
 pub fn skills() -> String {
     let mut out = Vec::new();
     for place in harness_places() {
-        // The skills from this Mac's checkout of the same repo.
-        let harness = place.local.clone().unwrap_or_else(|| place.path.clone());
-        let mut names: Vec<String> = Vec::new();
-        for folder in ["skills", ".claude/skills"] {
-            for entry in std::fs::read_dir(harness.join(folder)).into_iter().flatten().flatten() {
-                let path = entry.path();
-                let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                let file = if path.is_dir() { path.join("SKILL.md") } else { path.clone() };
-                let about = std::fs::read_to_string(&file).ok().and_then(|t| t.lines().find(|l| l.trim_start().starts_with("description:")).map(|l| l.trim_start().trim_start_matches("description:").trim().trim_matches('"').to_string())).unwrap_or_default();
-                if !name.starts_with('.') {
-                    names.push(if about.is_empty() { format!("  - {name}") } else { format!("  - {name}: {}", clip(&about, 160)) });
-                }
-            }
-        }
-        names.sort();
+        let names: Vec<String> = harness_skills(&place).into_iter().map(|(name, about)| if about.is_empty() { format!("  - {name}") } else { format!("  - {name}: {}", clip(&about, 160)) }).collect();
         out.push(format!("{}\n{}", place.label(), if names.is_empty() { "  (no skills)".to_string() } else { names.join("\n") }));
     }
     if out.is_empty() {

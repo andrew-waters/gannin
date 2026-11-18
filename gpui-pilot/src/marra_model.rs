@@ -927,8 +927,8 @@ impl Marra {
 
     /// New Issue: an Issue errand in the harness picked (as `harness_places`
     /// labels it), its worker asking what the issue is about.
-    pub fn start_issue(&mut self, harness: &str) -> Result<String, String> {
-        let id = self.start_errand(ErrandKind::Issue, ISSUE_OPENING, harness, &[])?;
+    pub fn start_issue(&mut self, harness: &str, skills: &[String]) -> Result<String, String> {
+        let id = self.start_errand(ErrandKind::Issue, ISSUE_OPENING, harness, skills)?;
         if let Some(errand) = self.errands.iter_mut().find(|e| e.saved.id == id) {
             errand.saved.title = "New issue".into();
         }

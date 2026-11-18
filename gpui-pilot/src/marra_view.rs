@@ -38,6 +38,30 @@ const COMMANDS: [(&str, &str); 15] = [
     ("/help", "What Marra can do"),
 ];
 
+/// New Issue's picker: the harness, once picked (its label for the errand,
+/// and its name as shown), then its skills, each ticked or not.
+#[derive(Clone, Default)]
+struct IssuePick {
+    harness: Option<(String, String)>,
+    skills: Vec<(String, String, bool)>,
+}
+
+/// Skills a new issue inherits unticking nothing: those about issues and
+/// the planning around them, by their name or description.
+fn issue_skill(name: &str, about: &str) -> bool {
+    let text = format!("{name} {about}").to_lowercase();
+    ["issue", "ticket", "triage", "plan", "scope", "spec", "story", "backlog", "epic"].iter().any(|w| text.contains(w))
+}
+
+/// A harness as the picker names it: its folder, and its server if any.
+fn place_name(place: &crate::marra_mcp::HarnessPlace) -> String {
+    let name = place.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| place.label());
+    match &place.server {
+        Some(server) => format!("{name} on {}", server.name()),
+        None => name,
+    }
+}
+
 pub struct MarraView {
     marra: Entity<Marra>,
     docked: bool,
@@ -55,8 +79,8 @@ pub struct MarraView {
     later_menu: bool,
     scope_menu: bool,
     more_menu: bool,
-    /// New Issue's menu of harnesses to raise it from.
-    issue_menu: bool,
+    /// New Issue's picker in the thread list, while it's open.
+    issue_pick: Option<IssuePick>,
     /// The open thread's conversation scroll, which follows new activity
     /// while it's at the bottom.
     chat_scroll: gpui::ScrollHandle,
@@ -149,7 +173,7 @@ impl MarraView {
             later_menu: false,
             scope_menu: false,
             more_menu: false,
-            issue_menu: false,
+            issue_pick: None,
             issue_error: None,
             chat_scroll: gpui::ScrollHandle::new(),
             chat_for: None,
@@ -199,7 +223,6 @@ impl MarraView {
     }
 
     fn close_menus(&mut self) {
-        self.issue_menu = false;
         self.scope_menu = false;
         self.more_menu = false;
         self.row_menu = None;
@@ -1027,25 +1050,6 @@ impl MarraView {
             )
             .child(
                 div()
-                    .id("new-issue")
-                    .px_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme.row_selected))
-                    .child(gpui::svg().path("icons/square_plus.svg").size(px(15.)).text_color(theme.secondary))
-                    .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("New issue".into())).into())
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        if this.just_closed() {
-                            return;
-                        }
-                        this.issue_menu = !this.issue_menu;
-                        this.scope_menu = false;
-                        this.more_menu = false;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                div()
                     .id("scope")
                     .px_2()
                     .py_0p5()
@@ -1146,43 +1150,6 @@ impl MarraView {
     }
 
     fn menus(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.issue_menu {
-            // Which harness to raise it from: each the issue errand can run in.
-            let places = crate::marra_mcp::harness_places();
-            let mut rows: Vec<AnyElement> = vec![div().px_2().py_1().text_xs().text_color(theme.secondary).child("New issue in").into_any_element()];
-            if places.is_empty() {
-                rows.push(div().px_2().pb_1().text_sm().text_color(theme.secondary).child("No harness yet: start a session in one first.").into_any_element());
-            }
-            for (i, place) in places.into_iter().enumerate() {
-                let label = place.label();
-                let name = place.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| label.clone());
-                let shown = match &place.server {
-                    Some(server) => format!("{name} on {}", server.name()),
-                    None => name,
-                };
-                rows.push(
-                    Self::menu_row(format!("issue-in-{i}"), shown, false, theme)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.issue_menu = false;
-                            let started = this.marra.update(cx, |m, cx| {
-                                let started = m.start_issue(&label);
-                                cx.notify();
-                                started
-                            });
-                            match started {
-                                Ok(id) => {
-                                    this.issue_error = None;
-                                    this.open_thread(format!("e:{id}"), cx);
-                                }
-                                Err(error) => this.issue_error = Some(error),
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                );
-            }
-            return Some(self.menu_shell(theme, 280., cx).children(rows).into_any_element());
-        }
         if self.scope_menu {
             let mut scopes: Vec<Option<String>> = vec![None];
             scopes.extend(self.orgs(cx).into_iter().map(Some));
@@ -1410,6 +1377,156 @@ impl MarraView {
     }
 
     /// One thing at a time: the top item as a card, the rest behind "more".
+    /// New Issue, at the top of the thread list: a button, then the harness
+    /// to raise it from, then that harness's skills it inherits (those about
+    /// issues and planning ticked), then Start opens its conversation.
+    fn new_issue_view(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let Some(pick) = self.issue_pick.clone() else {
+            return div()
+                .flex_none()
+                .px_3()
+                .pt_2()
+                .child(
+                    div()
+                        .id("new-issue")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .text_sm()
+                        .text_color(theme.selected)
+                        .hover(|s| s.bg(theme.row_selected))
+                        .child(gpui::svg().path("icons/square_plus.svg").size(px(14.)).text_color(theme.selected))
+                        .child("New issue")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.issue_pick = Some(IssuePick::default());
+                            this.issue_error = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element();
+        };
+        let cancel = div().id("issue-cancel").text_xs().text_color(theme.selected).cursor_pointer().child("Cancel").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.issue_pick = None;
+            cx.notify();
+        }));
+        let mut panel = div().flex_none().flex().flex_col().gap_1().mx_3().mt_2().p_2().rounded(px(10.)).bg(theme.sidebar).border_1().border_color(theme.border);
+        match &pick.harness {
+            None => {
+                panel = panel.child(div().flex().flex_row().items_center().child(div().flex_1().text_xs().text_color(theme.secondary).child("New issue in")).child(cancel));
+                let places = crate::marra_mcp::harness_places();
+                if places.is_empty() {
+                    panel = panel.child(div().text_sm().text_color(theme.secondary).child("No harness yet: start a session in one first."));
+                }
+                for (i, place) in places.into_iter().enumerate() {
+                    let shown = place_name(&place);
+                    let label = place.label();
+                    let skills: Vec<(String, String, bool)> = crate::marra_mcp::harness_skills(&place).into_iter().map(|(name, about)| {
+                        let on = issue_skill(&name, &about);
+                        (name, about, on)
+                    }).collect();
+                    let name = shown.clone();
+                    panel = panel.child(
+                        div()
+                            .id(SharedString::from(format!("issue-in-{i}")))
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .text_sm()
+                            .text_color(theme.fg)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme.row_selected))
+                            .child(shown)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.issue_pick = Some(IssuePick { harness: Some((label.clone(), name.clone())), skills: skills.clone() });
+                                cx.notify();
+                            })),
+                    );
+                }
+            }
+            Some((label, shown)) => {
+                panel = panel.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(div().id("issue-back").text_xs().text_color(theme.selected).cursor_pointer().child("‹").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            if let Some(pick) = this.issue_pick.as_mut() {
+                                pick.harness = None;
+                                pick.skills.clear();
+                            }
+                            cx.notify();
+                        })))
+                        .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(format!("New issue in {shown}")))
+                        .child(cancel),
+                );
+                panel = panel.child(div().text_xs().text_color(theme.secondary).child(if pick.skills.is_empty() { "No skills in this harness: its CLAUDE.md and templates still apply." } else { "Skills it inherits" }));
+                let mut list = div().id("issue-skills").max_h(px(220.)).overflow_y_scroll().flex().flex_col();
+                for (i, (name, about, on)) in pick.skills.iter().cloned().enumerate() {
+                    list = list.child(
+                        div()
+                            .id(SharedString::from(format!("issue-skill-{i}")))
+                            .flex()
+                            .flex_row()
+                            .items_start()
+                            .gap_2()
+                            .px_1()
+                            .py_0p5()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme.row_selected))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .mt(px(2.))
+                                    .size(px(13.))
+                                    .rounded(px(3.))
+                                    .border_1()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .map(|d| if on { d.bg(theme.selected).border_color(theme.selected).text_color(theme.on_selected).text_xs().child("✓") } else { d.border_color(theme.secondary) }),
+                            )
+                            .child(div().flex_1().min_w_0().flex().flex_col().child(div().text_xs().text_color(theme.fg).child(name)).when(!about.is_empty(), |d| d.child(div().text_xs().text_color(theme.tertiary).truncate().child(about))))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                if let Some(skill) = this.issue_pick.as_mut().and_then(|p| p.skills.get_mut(i)) {
+                                    skill.2 = !skill.2;
+                                }
+                                cx.notify();
+                            })),
+                    );
+                }
+                panel = panel.child(list);
+                let label = label.clone();
+                panel = panel.child(div().flex().flex_row().pt_1().child(button("issue-start", "Start", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let skills: Vec<String> = this.issue_pick.as_ref().map(|p| p.skills.iter().filter(|s| s.2).map(|s| s.0.clone()).collect()).unwrap_or_default();
+                    let started = this.marra.update(cx, |m, cx| {
+                        let started = m.start_issue(&label, &skills);
+                        cx.notify();
+                        started
+                    });
+                    match started {
+                        Ok(id) => {
+                            this.issue_pick = None;
+                            this.issue_error = None;
+                            this.open_thread(format!("e:{id}"), cx);
+                        }
+                        Err(error) => this.issue_error = Some(error),
+                    }
+                    cx.notify();
+                }))));
+            }
+        }
+        panel
+            .when_some(self.issue_error.clone(), |d, error| d.child(div().text_xs().text_color(theme.orange()).child(format!("Couldn't start it: {error}"))))
+            .into_any_element()
+    }
+
     fn needs_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let needs = self.needs(cx);
         let selected = self.selected.min(needs.len().saturating_sub(1));
@@ -2475,7 +2592,7 @@ impl Render for MarraView {
         let panel = if self.split() {
             // The list on the left; the thread clicked, and the composer
             // that writes to it, on the right.
-            let list = div().flex_none().w(px(340.)).h_full().min_h_0().flex().flex_col().border_r_1().border_color(theme.border).bg(theme.bg).child(self.needs_view(&theme, cx)).child(self.threads_view(&theme, cx));
+            let list = div().flex_none().w(px(340.)).h_full().min_h_0().flex().flex_col().border_r_1().border_color(theme.border).bg(theme.bg).child(self.new_issue_view(&theme, cx)).child(self.needs_view(&theme, cx)).child(self.threads_view(&theme, cx));
             let detail = div()
                 .relative()
                 .flex_1()
@@ -2501,7 +2618,7 @@ impl Render for MarraView {
                 .bg(theme.bg)
                 .map(|d| match self.open.clone() {
                     Some(id) => d.child(self.thread_view(&id, &theme, cx)),
-                    None => d.child(self.needs_view(&theme, cx)).child(self.threads_view(&theme, cx)),
+                    None => d.child(self.new_issue_view(&theme, cx)).child(self.needs_view(&theme, cx)).child(self.threads_view(&theme, cx)),
                 })
                 .child(self.composer_view(&theme, cx))
         };
@@ -2531,7 +2648,6 @@ impl Render for MarraView {
             .text_color(theme.fg)
             .font_family(".SystemUIFont")
             .child(self.title_bar(&theme, cx))
-            .when_some(self.issue_error.clone(), |d, error| d.child(div().flex_none().px_3().py_1().text_xs().text_color(theme.orange()).child(format!("Couldn't start the issue: {error}"))))
             .child(panel)
             .when_some(menus, |d, m| d.child(m))
             .when_some(row_menu, |d, m| d.child(m))
