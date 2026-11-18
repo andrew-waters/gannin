@@ -250,11 +250,11 @@ impl MarraView {
     /// thread is open.
     fn watch_session(&mut self, key: String, cx: &mut Context<Self>) {
         let info = marra_model::sessions(cx).into_iter().find(|s| s.key == key);
-        let (claude, folder, on_server) = info.map(|s| (s.claude_id, s.folder, s.server.is_some())).unwrap_or((None, std::path::PathBuf::new(), true));
+        let (claude, folder, on_server, trail) = info.map(|s| (s.claude_id, s.folder, s.server.is_some(), crate::marra::Trail { server: s.remote, harness: s.harness })).unwrap_or((None, std::path::PathBuf::new(), true, crate::marra::Trail::default()));
         let read_at = self.since.as_ref().filter(|(k, _, _)| k == &key).and_then(|(_, _, at)| *at).map(|at| at.with_timezone(&chrono::Utc));
         let mut audited = false;
         self._tail_task = Some(cx.spawn(async move |this, cx| loop {
-            let (claude, folder) = (claude.clone(), folder.clone());
+            let (claude, folder, trail) = (claude.clone(), folder.clone(), trail.clone());
             let first = !audited;
             audited = true;
             let (lines, digest, audit) = cx
@@ -267,7 +267,7 @@ impl MarraView {
                             crate::marra_mcp::transcript_messages(&id, 30).unwrap_or_default(),
                             crate::marra_mcp::digest(&id, read_at),
                             // The trail once, when the thread opens; a new call adds itself.
-                            first.then(|| crate::marra::summary_calls(&id)),
+                            first.then(|| crate::marra::summary_calls(&id, &trail)),
                         ),
                         None => (Vec::new(), None, first.then(Vec::new)),
                     }
@@ -307,6 +307,7 @@ impl MarraView {
         let read_at = self.since.as_ref().filter(|(k, _, _)| k == &key).and_then(|(_, _, at)| *at).map(|at| at.with_timezone(&chrono::Utc));
         let title = info.subject.clone().map(|s| format!("{s}: {}", info.title)).unwrap_or(info.title.clone());
         let (claude, folder, on_server) = (info.claude_id.clone(), info.folder.clone(), info.server.is_some());
+        let trail = crate::marra::Trail { server: info.remote.clone(), harness: info.harness.clone() };
         let model = self.marra.read(cx).saved.summary_model.clone();
         self.summarising = Some(key.clone());
         self.summary = None;
@@ -325,7 +326,7 @@ impl MarraView {
                         "Summarise what happened in this Claude Code session {since}, for the person who owns it. They switch between several sessions, so lead with where it stands now and what, if anything, it needs from them; then what was done and what changed. At most six short bullets, plain words, no preamble.\n\nSession: {title}\n\nConversation:\n\n{}",
                         crate::marra_mcp::as_text(lines)
                     );
-                    Ok(crate::marra::summarise(&prompt, model.as_deref(), &id, &title, read_at.map(|at| at.to_rfc3339())))
+                    Ok(crate::marra::summarise(&prompt, model.as_deref(), &id, &title, read_at.map(|at| at.to_rfc3339()), &trail))
                 })
                 .await;
             this.update(cx, |this, cx| {

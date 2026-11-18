@@ -461,10 +461,37 @@ fn summary_log() -> PathBuf {
     dir().join("summaries.jsonl")
 }
 
-/// Every summary call made for a conversation, oldest first.
-pub fn summary_calls(conversation: &str) -> Vec<SummaryCall> {
-    std::fs::read_to_string(summary_log())
-        .unwrap_or_default()
+/// Where a session's summaries are kept: in its harness, on the machine
+/// it runs on (this Mac, or its server, never copied here).
+#[derive(Clone, Debug, Default)]
+pub struct Trail {
+    pub server: Option<crate::servers::Server>,
+    pub harness: Option<PathBuf>,
+}
+
+impl Trail {
+    /// The file here: the harness's git-ignored cache, else Marra's folder
+    /// when the harness isn't a checkout.
+    fn local(&self) -> PathBuf {
+        self.harness.as_deref().and_then(crate::paths::harness_cache).map(|c| c.join("marra/summaries.jsonl")).unwrap_or_else(summary_log)
+    }
+
+    /// Shell that sets `f` to the file on the server, as `local` chooses
+    /// here; with `make`, creating the cache (ignoring itself) on the way.
+    fn remote(&self, make: bool) -> String {
+        let harness = self.harness.as_deref().map(crate::launch::quote_path).unwrap_or_else(|| "''".into());
+        let make = if make { r#"mkdir -p "$h/.gannin-cache/marra"; [ -f "$h/.gannin-cache/.gitignore" ] || printf '*\n' > "$h/.gannin-cache/.gitignore"; "# } else { "" };
+        format!(r#"h={harness}; if [ -n "$h" ] && [ -e "$h/.git" ]; then {make}f="$h/.gannin-cache/marra/summaries.jsonl"; else f="$HOME/.gannin/marra/summaries.jsonl"; fi"#)
+    }
+}
+
+/// Every summary call made for a conversation, oldest first, from its trail.
+pub fn summary_calls(conversation: &str, trail: &Trail) -> Vec<SummaryCall> {
+    let text = match &trail.server {
+        Some(server) => crate::servers::command(server, &format!("{}; cat \"$f\" 2>/dev/null; exit 0", trail.remote(false)), None).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default(),
+        None => std::fs::read_to_string(trail.local()).unwrap_or_default(),
+    };
+    text
         .lines()
         .filter_map(|l| serde_json::from_str::<SummaryCall>(l).ok())
         .filter(|c| c.conversation == conversation)
@@ -473,9 +500,14 @@ pub fn summary_calls(conversation: &str) -> Vec<SummaryCall> {
 
 /// Adds a call to the trail, keeping the last `SUMMARY_CALLS_KEPT`. The
 /// prompts hold transcript text, so only this user can read the file.
-fn record_summary(call: &SummaryCall) {
-    let path = summary_log();
-    let _ = std::fs::create_dir_all(dir());
+fn record_summary(call: &SummaryCall, trail: &Trail) {
+    if let Some(server) = &trail.server {
+        return record_remote(call, server, trail);
+    }
+    let path = trail.local();
+    if let Some(folder) = path.parent() {
+        let _ = std::fs::create_dir_all(folder);
+    }
     let mut lines: Vec<String> = std::fs::read_to_string(&path).unwrap_or_default().lines().map(str::to_string).collect();
     let Ok(line) = serde_json::to_string(call) else { return };
     lines.push(line);
@@ -491,11 +523,24 @@ fn record_summary(call: &SummaryCall) {
     }
 }
 
+/// Adds a call to a server's trail, as `record_summary` does here.
+fn record_remote(call: &SummaryCall, server: &crate::servers::Server, trail: &Trail) {
+    use base64::Engine;
+    let Ok(line) = serde_json::to_string(call) else { return };
+    let encoded = base64::engine::general_purpose::STANDARD.encode(line + "\n");
+    let script = format!(
+        r#"set -e; umask 077; {place}; mkdir -p "$(dirname "$f")"; printf %s '{encoded}' | base64 -d >> "$f"; tail -n {SUMMARY_CALLS_KEPT} "$f" > "$f.tmp"; mv "$f.tmp" "$f"; chmod 600 "$f""#,
+        place = trail.remote(true)
+    );
+    let _ = crate::servers::command(server, "bash -s", Some(script.as_bytes()));
+}
+
 /// A one-off summary: one call, no tools, no MCP and nothing saved by
 /// claude, on `model` (Haiku when None), where Marra's own model would cost
 /// more and add to its conversation. Recorded in the trail whatever happens.
-/// Blocks: call it off the main thread.
-pub fn summarise(prompt: &str, model: Option<&str>, conversation: &str, title: &str, since: Option<String>) -> SummaryCall {
+/// For a session on a server, claude runs there and the call is kept in the
+/// server's trail, not here. Blocks: call it off the main thread.
+pub fn summarise(prompt: &str, model: Option<&str>, conversation: &str, title: &str, since: Option<String>, trail: &Trail) -> SummaryCall {
     let model = model.filter(|m| !m.trim().is_empty()).unwrap_or("haiku").to_string();
     let started = Instant::now();
     let mut call = SummaryCall {
@@ -512,7 +557,11 @@ pub fn summarise(prompt: &str, model: Option<&str>, conversation: &str, title: &
         input_tokens: None,
         output_tokens: None,
     };
-    match run_summary(prompt, &model) {
+    let ran = match &trail.server {
+        Some(server) => run_remote_summary(prompt, &model, server),
+        None => run_summary(prompt, &model),
+    };
+    match ran {
         Ok(result) => {
             let text = result["result"].as_str().unwrap_or_default().trim().to_string();
             call.cost_usd = result["total_cost_usd"].as_f64();
@@ -528,8 +577,24 @@ pub fn summarise(prompt: &str, model: Option<&str>, conversation: &str, title: &
         Err(error) => call.error = Some(format!("{model} couldn't summarise it: {error}")),
     }
     call.ms = started.elapsed().as_millis() as u64;
-    record_summary(&call);
+    record_summary(&call, trail);
     call
+}
+
+/// `run_summary` on a server: claude there, in a login shell for its PATH,
+/// the prompt carried in the script.
+fn run_remote_summary(prompt: &str, model: &str, server: &crate::servers::Server) -> Result<Value, String> {
+    use base64::Engine;
+    let args = ["-p", "--model", model, "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json"];
+    let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(prompt);
+    let script = format!(
+        "command -v claude >/dev/null 2>&1 || {{ echo 'Claude Code is not installed on {name}.' >&2; exit 127; }}\nprintf %s '{encoded}' | base64 -d | claude {args}\n",
+        name = server.name(),
+        args = quoted.join(" ")
+    );
+    let output = crate::servers::script(server, &script)?;
+    output.lines().rev().find_map(|l| serde_json::from_str::<Value>(l.trim()).ok().filter(|v| v.is_object())).ok_or_else(|| "it gave nothing back".to_string())
 }
 
 /// Runs claude once with the prompt on stdin; its JSON result.

@@ -280,6 +280,10 @@ pub struct SessionInfo {
     pub org: Option<String>,
     pub folder: PathBuf,
     pub server: Option<String>,
+    /// That server, to reach it: a summary of its session is made and kept there.
+    pub remote: Option<crate::servers::Server>,
+    /// Its harness, on whichever machine it runs: where its summaries are kept.
+    pub harness: Option<PathBuf>,
     pub subject: Option<String>,
     /// The issue or PR it's about, to open in Gannin or on GitHub.
     pub subject_link: Option<crate::launch::Subject>,
@@ -330,6 +334,8 @@ fn live_sessions(cx: &App) -> Vec<SessionInfo> {
                 org: launch.map(|l| l.org.clone()),
                 folder: p.folder(cx),
                 server: p.server_name(),
+                remote: p.server(),
+                harness: launch.map(|l| l.harness_path.clone()).or_else(|| Some(p.folder(cx))),
                 subject: launch.and_then(|l| l.subject.as_ref()).map(|s| format!("{}#{}", s.repo, s.number)),
                 subject_link: launch.and_then(|l| l.subject.clone()),
                 claude_id: launch.map(|l| l.claude_id()).or_else(|| p.claude_id.clone()),

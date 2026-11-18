@@ -426,6 +426,11 @@ impl SessionPage {
     }
 
     /// The server it runs on, by name; None on this Mac.
+    /// The server it runs on, if any.
+    pub fn server(&self) -> Option<crate::servers::Server> {
+        self.server.clone().or(self.launch.as_ref().and_then(|l| l.server.clone()))
+    }
+
     pub fn server_name(&self) -> Option<String> {
         self.server.as_ref().or(self.launch.as_ref().and_then(|l| l.server.as_ref())).map(|s| s.name())
     }
