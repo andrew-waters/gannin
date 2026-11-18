@@ -108,21 +108,28 @@ fn window_key_bindings() -> Vec<KeyBinding> {
 /// Marra's). Close Window asks first in a Gannin window with sessions
 /// running, as its close button does.
 fn handle_window_actions(cx: &mut App) {
-    fn on_active(cx: &mut App, f: impl FnOnce(&mut gpui::Window, &mut App)) {
-        if let Some(handle) = cx.active_window() {
-            let _ = handle.update(cx, |_, window, cx| f(window, cx));
-        }
+    // Deferred: a shortcut's action arrives inside the active window's own
+    // update, and that window is lent out until it returns, so updating it
+    // now fails without a word.
+    fn on_active(cx: &mut App, f: impl FnOnce(&mut gpui::Window, &mut App) + 'static) {
+        cx.defer(move |cx| {
+            if let Some(handle) = cx.active_window() {
+                let _ = handle.update(cx, |_, window, cx| f(window, cx));
+            }
+        });
     }
     cx.on_action(|_: &CloseWindow, cx| {
-        let Some(handle) = cx.active_window() else { return };
-        match handle.downcast::<Workspace>() {
-            Some(workspace) => {
-                let _ = workspace.update(cx, |workspace, window, cx| workspace.close_window(window, cx));
+        cx.defer(|cx| {
+            let Some(handle) = cx.active_window() else { return };
+            match handle.downcast::<Workspace>() {
+                Some(workspace) => {
+                    let _ = workspace.update(cx, |workspace, window, cx| workspace.close_window(window, cx));
+                }
+                None => {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
             }
-            None => {
-                let _ = handle.update(cx, |_, window, _| window.remove_window());
-            }
-        }
+        });
     });
     cx.on_action(|_: &Minimize, cx| on_active(cx, |window, _| window.minimize_window()));
     cx.on_action(|_: &Zoom, cx| on_active(cx, |window, _| window.zoom_window()));
