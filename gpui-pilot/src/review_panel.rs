@@ -503,8 +503,24 @@ impl ReviewPanel {
         self.tell(text, window, cx);
     }
 
+    /// Whether Post Review is on: a result not posted yet, and no sheet open.
+    pub fn can_post(&self) -> bool {
+        self.result.is_some() && self.posted_latest().is_none() && self.post.is_none()
+    }
+
+    /// Whether Review Again is on: claude idle with a result, and the PR
+    /// changed since.
+    pub fn can_again(&self) -> bool {
+        self.idle() && self.result.is_some() && self.has_changes() && !self.again_pending()
+    }
+
+    /// Whether Check for Changes is running.
+    pub fn is_checking(&self) -> bool {
+        self.checking
+    }
+
     /// Asks claude to review it afresh, as Gannin's Review Again.
-    fn review_again(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn review_again(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.takes_input() {
             return;
         }
@@ -630,7 +646,7 @@ impl ReviewPanel {
 
     /// Checks GitHub for what's changed since the review (read only). A
     /// review of the viewer's found there counts as posted.
-    fn check_for_changes(&mut self, cx: &mut Context<Self>) {
+    pub fn check_for_changes(&mut self, cx: &mut Context<Self>) {
         if self.checking {
             return;
         }
@@ -1051,7 +1067,7 @@ impl ReviewPanel {
         let url = self.url();
         let link = url.clone();
         let has_result = self.result.is_some();
-        let can_again = self.idle() && has_result && self.has_changes() && !self.again_pending();
+        let can_again = self.can_again();
         let (_, status_tint) = self.status(theme);
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));

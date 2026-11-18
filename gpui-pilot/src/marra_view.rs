@@ -376,6 +376,12 @@ impl MarraView {
                 let marra = self.marra.clone();
                 cx.defer(move |cx| marra.update(cx, |m, cx| m.open_subject(&key, cx)));
             }
+            Act::Review(key, button) => {
+                // After this window's update: the review's window may be
+                // Marra's own when docked, lent out until then.
+                let marra = self.marra.clone();
+                cx.defer(move |cx| marra.update(cx, |m, cx| m.press_review(&key, button, cx)));
+            }
             Act::StartReview(subject) => {
                 let marra = self.marra.clone();
                 cx.defer(move |cx| marra.update(cx, |m, cx| m.start_review(subject, cx)));
@@ -1717,6 +1723,24 @@ impl MarraView {
                     .when_some(need, |d, n| d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {}", n.task))))
                     .child({
                         let mut links = div().flex().flex_row().flex_wrap().gap_1p5().pt_1();
+                        // A review's own buttons, on when they are in its panel.
+                        if let Some(review) = s.page.read(cx).review() {
+                            let r = review.read(cx);
+                            let (can_post, can_again, checking) = (r.can_post(), r.can_again(), r.is_checking());
+                            for (n, label, which, on, primary) in [
+                                (0, "Post Review", marra_model::ReviewButton::Post, can_post, true),
+                                (1, "Review Again", marra_model::ReviewButton::Again, can_again, false),
+                                (2, if checking { "Checking" } else { "Check for Changes" }, marra_model::ReviewButton::Check, !checking, false),
+                            ] {
+                                let key = key.to_string();
+                                let b = button(format!("left-off-review-{n}"), label, primary && on, theme);
+                                links = links.child(if on {
+                                    b.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Review(key.clone(), which), window, cx)))
+                                } else {
+                                    b.opacity(0.45).cursor_default()
+                                });
+                            }
+                        }
                         let open_key = key.to_string();
                         links = links.child(icon_button("left-off-session", "icons/terminal.svg", "Open session", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(open_key.clone()), window, cx))));
                         // Only where there's a conversation to read, and something in it.

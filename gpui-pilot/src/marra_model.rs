@@ -389,6 +389,17 @@ pub enum Act {
     Reply(String, String),
     /// Review with Claude, in the front Gannin window.
     StartReview(crate::launch::Subject),
+    /// A review session's own button, pressed in its panel.
+    Review(String, ReviewButton),
+}
+
+/// The review panel's buttons Marra offers, which do there what they do in
+/// the panel: Post Review opens its sheet, so posting is still confirmed there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ReviewButton {
+    Post,
+    Again,
+    Check,
 }
 
 /// Something the user has to act on.
@@ -1044,6 +1055,25 @@ impl Marra {
                 window.activate_window();
             })
             .is_ok()
+    }
+
+    /// Presses a review session's button in its panel; for Post Review, with
+    /// its tab brought forward, where the sheet to confirm it opens.
+    pub fn press_review(&mut self, key: &str, button: ReviewButton, cx: &mut App) {
+        let Some(s) = self.sessions.clone().into_iter().find(|s| s.key == key) else { return };
+        let (id, page) = (s.id, s.page.clone());
+        let _ = s.window.update(cx, |workspace, window, cx| {
+            let Some(review) = page.read(cx).review() else { return };
+            if button == ReviewButton::Post {
+                workspace.reveal_session(id, window, cx);
+                window.activate_window();
+            }
+            review.update(cx, |review, cx| match button {
+                ReviewButton::Post => review.start_post(window, cx),
+                ReviewButton::Again => review.review_again(window, cx),
+                ReviewButton::Check => review.check_for_changes(cx),
+            });
+        });
     }
 
     /// A session's issue in a drawer in the session's window; a PR, or an
