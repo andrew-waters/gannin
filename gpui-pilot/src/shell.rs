@@ -513,6 +513,11 @@ pub struct Workspace {
     collapsed_kinds: std::collections::HashSet<TabKind>,
     /// Which window this is, for where its state is saved (0 is the first).
     slot: usize,
+    /// Closed by the person: its state is gone and must never be written
+    /// again, though its pages may still update (a fetch finishing) and
+    /// call `persist` after the window's gone, which would bring it back
+    /// at the next launch.
+    closed: bool,
     /// Sessions being reopened at launch, which open without switching,
     /// but for the one that was showing (by its launch).
     reopening: usize,
@@ -635,7 +640,7 @@ impl Workspace {
             Page::Prs(page) => page.read(cx).is_resizing(),
             _ => false,
         });
-        if self.resizing.is_some() || resizing_column {
+        if self.closed || self.resizing.is_some() || resizing_column {
             return;
         }
         let state = self.snapshot(cx);
@@ -650,9 +655,13 @@ impl Workspace {
         // with it; a closed window (but the first) doesn't open again.
         let this = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
-            let Some(this) = this.upgrade() else { return true };
-            let running = this.read(cx).running(cx);
-            Self::confirm_close(running, slot, window, cx)
+            let Some(entity) = this.upgrade() else { return true };
+            let running = entity.read(cx).running(cx);
+            let close = Self::confirm_close(running, slot, this.clone(), window, cx);
+            if close {
+                entity.update(cx, |workspace, _| workspace.closed = true);
+            }
+            close
         });
         let views = Self::saved_views(&saved);
         let sessions = saved.sessions.clone();
@@ -883,6 +892,7 @@ impl Workspace {
             marra_dock: None,
             reopening: 0,
             slot: 0,
+            closed: false,
             show_on_reopen: None,
             tab_filter_open: false,
             paused_sessions: Default::default(),
@@ -3414,7 +3424,9 @@ impl Workspace {
     /// Quitting with sessions running asks first, as Gannin's quit guard does.
     /// Whether the window can close now: at once when nothing's running in
     /// it, else after asking, closing it if the person says so.
-    fn confirm_close(running: Vec<Entity<SessionPage>>, slot: usize, window: &mut Window, cx: &mut App) -> bool {
+    /// `this` is marked closed before its state goes, when it closes after
+    /// asking; when it can close at once the caller marks it.
+    fn confirm_close(running: Vec<Entity<SessionPage>>, slot: usize, this: gpui::WeakEntity<Self>, window: &mut Window, cx: &mut App) -> bool {
         if running.is_empty() {
             remove_slot(slot);
             return true;
@@ -3428,6 +3440,7 @@ impl Workspace {
         window
             .spawn(cx, async move |cx| {
                 if answer.await == Ok(0) {
+                    this.update(cx, |workspace, _| workspace.closed = true).ok();
                     remove_slot(slot);
                     cx.update(|window, _| window.remove_window()).ok();
                 }
@@ -3439,7 +3452,8 @@ impl Workspace {
     /// Close Window: as the window's close button, asking first while
     /// sessions run in it.
     pub fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if Self::confirm_close(self.running(cx), self.slot, window, cx) {
+        if Self::confirm_close(self.running(cx), self.slot, cx.entity().downgrade(), window, cx) {
+            self.closed = true;
             window.remove_window();
         }
     }
