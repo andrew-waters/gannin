@@ -277,6 +277,52 @@ impl Risk {
         }
     }
 
+    /// How a group's grade was reached, for the posted review: what each
+    /// signal measures, the weighted mean with this review's numbers, and
+    /// the cut-offs.
+    pub fn group_working(&self, group: Group) -> Vec<String> {
+        let mut lines: Vec<String> = SIGNALS.iter().filter(|s| s.2 == group).map(|s| format!("{}: {}", s.1, meaning(s.0))).collect();
+        let scored: Vec<(&Signal, u8)> = self.signals.iter().filter(|s| s.group() == group).filter_map(|s| s.score().map(|score| (s, score))).collect();
+        let scale = SIGNALS.iter().filter(|s| s.2 == group).map(|s| format!("{} ×{}", s.1.to_lowercase(), s.3)).collect::<Vec<_>>().join(", ");
+        lines.push(format!(
+            "Each signal scores 1 ({}) to 3 ({}), weighted {scale}; one not graded, or n/a, is left out.",
+            if group == Group::Exposure { "small, low, good" } else { "good" },
+            if group == Group::Exposure { "large, high, poor" } else { "poor" }
+        ));
+        if let Some(score) = self.group_score(group) {
+            let total: f32 = scored.iter().map(|(s, _)| s.weight()).sum();
+            let sum: f32 = scored.iter().map(|(s, n)| s.weight() * *n as f32).sum();
+            let terms = scored.iter().map(|(s, n)| format!("{}×{n}", s.weight())).collect::<Vec<_>>().join(" + ");
+            lines.push(format!(
+                "Here ({terms}) / {total} = {:.2}. Under 1.5 is {}, from 2.25 is {}, between is {}: so {}.",
+                sum / total,
+                group.word(1),
+                group.word(3),
+                group.word(2),
+                group.word(score)
+            ));
+        }
+        let raised: Vec<String> = self.signals.iter().filter(|s| s.group() == group).filter_map(|s| s.raised.as_ref().map(|r| format!("{} was raised: {}.", s.title, r.to_lowercase()))).collect();
+        lines.extend(raised);
+        lines
+    }
+
+    /// How the overall grade came from the two groups.
+    pub fn level_working(&self) -> Vec<String> {
+        let mut lines = vec![
+            "Merge risk is how bad it would be if merging went wrong, not how good the code is: the comments below cover that.".to_string(),
+            "Exposure (what the change touches) sets it; confidence (whether we can tell it works) moves it a step only at the edges:".to_string(),
+            "- High exposure: medium with good confidence, otherwise high. Never low, however well tested.".to_string(),
+            "- Medium exposure: medium, or high with poor confidence.".to_string(),
+            "- Low exposure: low, or medium with poor confidence.".to_string(),
+            "A path the team marks sensitive makes impact at least medium, and an acceptance criterion not met makes verification at least decent (poor when missing).".to_string(),
+        ];
+        if let (Some(e), Some(c), Some(level)) = (self.group_score(Group::Exposure), self.group_score(Group::Confidence), self.level()) {
+            lines.push(format!("Here exposure is {} and confidence {}, so {}.", Group::Exposure.word(e), Group::Confidence.word(c), level.title()));
+        }
+        lines
+    }
+
     /// Whether an acceptance criterion this PR is for isn't done: an
     /// approval never goes by itself then, whatever the grade.
     pub fn criteria_missing(&self) -> bool {
@@ -298,6 +344,9 @@ impl Risk {
             Some(level) => format!("{} **Merge risk: {}.** {}", level.emoji(), level.title(), self.next_step()),
             None => "**Merge risk:** not enough to grade it.".to_string(),
         }];
+        if self.level().is_some() {
+            out.extend(details("How the merge risk is worked out", &self.level_working()));
+        }
         for group in [Group::Exposure, Group::Confidence] {
             let signals: Vec<&&Signal> = graded.iter().filter(|s| s.group() == group).collect();
             if signals.is_empty() {
@@ -320,6 +369,7 @@ impl Risk {
                 line.push('.');
                 out.push(line);
             }
+            out.extend(details(&format!("How {} is worked out", group.title().to_lowercase()), &self.group_working(group)));
         }
         let unmet: Vec<&Criterion> = self.criteria.iter().filter(|c| c.status == "missing" || c.status == "partial").collect();
         if !unmet.is_empty() {
@@ -353,6 +403,29 @@ impl Risk {
         alert.extend(out.iter().map(|line| if line.is_empty() { ">".to_string() } else { format!("> {line}") }));
         Some(alert.join("\n"))
     }
+}
+
+/// What a signal measures, as the posted review explains it (the prompt
+/// says the same to claude).
+fn meaning(key: &str) -> &'static str {
+    match key {
+        "impact" => "how much can behave differently at run time, and how much that matters (auth, payments, data, config weigh more), not how many files changed.",
+        "rollback" => "whether a revert undoes it (low) or it's a one-way door such as a destructive migration or a sent message (high).",
+        "detection" => "whether a failure would show in logs, monitoring or errors before users report it.",
+        "verification" => "whether tests, screenshots or measurements show the behaviour that changes at run time works.",
+        "alignment" => "whether every behaviour change is the one the PR and its issue describe, with nothing unmentioned.",
+        _ => "",
+    }
+}
+
+/// A collapsed section for a GitHub body: closed until clicked. The blank
+/// lines let markdown inside it render.
+fn details(summary: &str, lines: &[String]) -> Vec<String> {
+    let mut out = vec![String::new(), format!("<details><summary>{summary}</summary>"), String::new()];
+    // Never "- `": the body's findings are read back by that.
+    out.extend(lines.iter().flat_map(|l| [l.clone(), String::new()]));
+    out.push("</details>".into());
+    out
 }
 
 // MARK: - Sensitive areas
@@ -527,12 +600,17 @@ mod tests {
     #[test]
     fn gaps_stay_out_of_the_body() {
         let risk = parse(&serde_json::json!({ "risk": {
-            "impact": "small", "verification": "good", "gaps": ["A screenshot of the empty state"]
+            "impact": "small", "verification": "good", "gaps": ["A recording of the empty state"]
         }}))
         .unwrap();
         let body = risk.markdown().unwrap();
         assert!(body.contains("**Exposure: low**") && body.contains("**Confidence: good**"));
-        assert!(!body.contains("screenshot"));
+        assert!(!body.contains("empty state"));
+        assert!(body.contains("> <details><summary>How exposure is worked out</summary>"));
+        assert!(body.contains("Here (2×1) / 2 = 1.00"));
+        assert!(body.contains("Here exposure is low and confidence good, so low."));
+        // The body's findings are read back by "- `": the working never starts a line so.
+        assert!(!body.lines().any(|l| l.trim_start_matches("> ").starts_with("- `")));
     }
 
     #[test]
