@@ -27,6 +27,15 @@ pub enum Level {
 }
 
 impl Level {
+    /// The colour it reads as at a glance, in a posted review.
+    pub fn emoji(self) -> &'static str {
+        match self {
+            Level::Low => "🟢",
+            Level::Medium => "🟠",
+            Level::High => "🔴",
+        }
+    }
+
     pub fn title(self) -> &'static str {
         match self {
             Level::Low => "low",
@@ -220,13 +229,20 @@ impl Risk {
             return None;
         }
         let mut out = vec![match self.level() {
-            Some(level) => format!("**Merge risk: {}.** {}", level.title(), self.next_step()),
-            None => "**Merge risk:** not enough to grade it.".to_string(),
+            Some(level) => format!("{} **Merge risk: {}.** {}", level.emoji(), level.title(), self.next_step()),
+            None => "⚪ **Merge risk:** not enough to grade it.".to_string(),
         }];
         if !graded.is_empty() {
             out.push(String::new());
             for s in graded {
-                let mut line = format!("- {}: {}", s.title, s.verdict.clone().unwrap_or_default());
+                // Never "- `": the body's findings are read back by that.
+                let mark = match s.score() {
+                    Some(1) => "✅",
+                    Some(2) => "🟡",
+                    Some(_) => "🔴",
+                    None => "⚪",
+                };
+                let mut line = format!("- {mark} {}: {}", s.title, s.verdict.clone().unwrap_or_default());
                 if let Some(reason) = &s.reason {
                     line.push_str(&format!(". {}", reason.trim_end_matches('.')));
                 }
@@ -240,26 +256,36 @@ impl Risk {
         let unmet: Vec<&Criterion> = self.criteria.iter().filter(|c| c.status == "missing" || c.status == "partial").collect();
         if !unmet.is_empty() {
             out.push(String::new());
-            out.push("Acceptance criteria not met:".into());
+            out.push("📋 **Acceptance criteria not met**".into());
             for c in unmet {
                 let issue = c.issue.as_ref().map(|i| format!(" ({i})")).unwrap_or_default();
-                let status = if c.status == "missing" { "missing" } else { "partly met" };
-                out.push(format!("- {}{issue}: {status}{}", c.criterion, c.evidence.as_ref().map(|e| format!(". {e}")).unwrap_or_default()));
+                let (mark, status) = if c.status == "missing" { ("❌", "missing") } else { ("⚠️", "partly met") };
+                out.push(format!("- {mark} {}{issue}: {status}{}", c.criterion, c.evidence.as_ref().map(|e| format!(". {e}")).unwrap_or_default()));
             }
         }
         if !self.sensitive.is_empty() {
             out.push(String::new());
-            out.push("Touches paths the team marks sensitive:".into());
+            out.push("🔒 **Touches paths the team marks sensitive**".into());
             for (path, why) in &self.sensitive {
                 out.push(format!("- {path}{}", why.as_ref().map(|w| format!(": {w}")).unwrap_or_default()));
             }
         }
         if !self.gaps.is_empty() {
             out.push(String::new());
-            out.push("To bring it down:".into());
+            out.push("🛠️ **To bring it down**".into());
             out.extend(self.gaps.iter().map(|g| format!("- {g}")));
         }
-        Some(out.join("\n"))
+        // A GitHub alert, so it's marked off from the review beneath: its
+        // colour follows the grade.
+        let kind = match self.level() {
+            Some(Level::Low) => "TIP",
+            Some(Level::Medium) => "WARNING",
+            Some(Level::High) => "CAUTION",
+            None => "NOTE",
+        };
+        let mut alert = vec![format!("> [!{kind}]")];
+        alert.extend(out.iter().map(|line| if line.is_empty() { ">".to_string() } else { format!("> {line}") }));
+        Some(alert.join("\n"))
     }
 }
 

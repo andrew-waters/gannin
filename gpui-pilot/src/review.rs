@@ -451,6 +451,15 @@ fn similar(finding: &str, comment: &str) -> bool {
     all > 0.0 && shared / all >= 0.8
 }
 
+/// Whether a posted body is this review's own: it holds its summary,
+/// after the merge risk (or first, as reviews were posted before the risk
+/// led). Never count it as an earlier review: its body findings would be
+/// left out of the post as already said.
+fn ours(body: &str, summary: &str) -> bool {
+    let summary = summary.trim();
+    !summary.is_empty() && body.contains(summary)
+}
+
 impl Snapshot {
     /// Whether a comment near the line, or an earlier review's body, already
     /// says it.
@@ -462,7 +471,7 @@ impl Snapshot {
                 && finding.line.is_none_or(|l| c.line.is_some_and(|cl| (cl - l).abs() <= 3))
                 && similar(&finding.comment, &c.body)
         });
-        let in_body = self.reviews.iter().filter(|(_, _, _, body)| !body.starts_with(summary.trim())).any(|(_, _, _, body)| {
+        let in_body = self.reviews.iter().filter(|(_, _, _, body)| !ours(body, summary)).any(|(_, _, _, body)| {
             body.lines().any(|line| {
                 let Some(rest) = line.strip_prefix("- `") else { return false };
                 let Some((location, text)) = rest.split_once("`: ") else { return false };
@@ -507,14 +516,16 @@ pub fn draft(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: &Snap
             }),
         }
     }
-    // The summary first: an earlier review of ours is known by the body
-    // starting with it. Findings in the body are read back line by line
-    // ("- `path:line`: ..."), so the risk's lines never start that way.
-    let mut body = result.summary.trim().to_string();
+    // The merge risk first, then the summary: an earlier review of ours is
+    // known by its body holding the summary (`ours`). Findings in the body
+    // are read back line by line ("- `path:line`: ..."), so the risk's lines
+    // never start that way.
+    let mut body = String::new();
     if let Some(risk) = risk.and_then(|r| r.markdown()) {
-        body.push_str("\n\n");
         body.push_str(&risk);
+        body.push_str("\n\n---\n\n");
     }
+    body.push_str(result.summary.trim());
     if !general.is_empty() {
         body.push_str("\n\n");
         body.push_str(&general.join("\n"));
