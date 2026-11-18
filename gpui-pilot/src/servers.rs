@@ -92,7 +92,14 @@ impl Server {
     /// then batch mode (or a terminal, for a session), the server's own
     /// options, its port and where to.
     pub fn ssh_args(&self, terminal: bool) -> Vec<String> {
-        let mut args: Vec<String> = ["-o", "ControlMaster=auto", "-o", &format!("ControlPath={CONTROL_PATH}"), "-o", "ControlPersist=300", "-o", "ServerAliveInterval=30"].map(str::to_string).to_vec();
+        // A terminal gets its own connection: through the shared master,
+        // a resize goes to the master, which has no terminal to read the
+        // size from, so the server's stays at what the tab first had.
+        let mut args: Vec<String> = if terminal {
+            ["-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ServerAliveInterval=30"].map(str::to_string).to_vec()
+        } else {
+            ["-o", "ControlMaster=auto", "-o", &format!("ControlPath={CONTROL_PATH}"), "-o", "ControlPersist=300", "-o", "ServerAliveInterval=30"].map(str::to_string).to_vec()
+        };
         if terminal {
             args.push("-t".into());
         } else {
