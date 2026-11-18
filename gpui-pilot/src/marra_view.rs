@@ -48,9 +48,8 @@ struct IssuePick {
 
 /// Skills a new issue inherits unticking nothing: those about issues and
 /// the planning around them, by their name or description.
-fn issue_skill(name: &str, about: &str) -> bool {
-    let text = format!("{name} {about}").to_lowercase();
-    ["issue", "ticket", "triage", "plan", "scope", "spec", "story", "backlog", "epic"].iter().any(|w| text.contains(w))
+fn issue_skill(name: &str, _about: &str) -> bool {
+    name.to_lowercase().contains("issue")
 }
 
 /// A harness as the picker names it: its folder, and its server if any.
@@ -81,6 +80,10 @@ pub struct MarraView {
     more_menu: bool,
     /// New Issue's picker in the thread list, while it's open.
     issue_pick: Option<IssuePick>,
+    /// Narrows New Issue's skill list by name or description.
+    skill_filter: Entity<editor::Editor>,
+    /// New Issue's first message: what it's about, sent as the worker starts.
+    issue_about: Entity<editor::Editor>,
     /// The open thread's conversation scroll, which follows new activity
     /// while it's at the bottom.
     chat_scroll: gpui::ScrollHandle,
@@ -138,6 +141,27 @@ impl MarraView {
             editor.set_placeholder_text("Message Marra", window, cx);
             editor
         });
+        let issue_about = cx.new(|cx| {
+            let mut editor = editor::Editor::auto_height(2, 8, window, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_placeholder_text("What's the issue about?", window, cx);
+            editor
+        });
+        let about_edits = cx.subscribe(&issue_about, |_: &mut Self, _, event: &editor::EditorEvent, cx| {
+            if matches!(event, editor::EditorEvent::BufferEdited) {
+                cx.notify();
+            }
+        });
+        let skill_filter = cx.new(|cx| {
+            let mut editor = editor::Editor::single_line(window, cx);
+            editor.set_placeholder_text("Filter skills", window, cx);
+            editor
+        });
+        let filtering = cx.subscribe(&skill_filter, |_: &mut Self, _, event: &editor::EditorEvent, cx| {
+            if matches!(event, editor::EditorEvent::BufferEdited) {
+                cx.notify();
+            }
+        });
         let edits = cx.subscribe(&composer, |this: &mut Self, _, event: &editor::EditorEvent, cx| {
             if matches!(event, editor::EditorEvent::BufferEdited) {
                 this.suggest = 0;
@@ -174,6 +198,8 @@ impl MarraView {
             scope_menu: false,
             more_menu: false,
             issue_pick: None,
+            skill_filter,
+            issue_about,
             issue_error: None,
             chat_scroll: gpui::ScrollHandle::new(),
             chat_for: None,
@@ -198,7 +224,7 @@ impl MarraView {
             audit_prompts: HashSet::new(),
             _tail_task: None,
             theme: Theme::for_window(window),
-            _subscriptions: vec![edits, observe],
+            _subscriptions: vec![edits, observe, filtering, about_edits],
         };
         // In its own window the list and a thread show side by side, so
         // one's always open: the main conversation to start.
@@ -227,6 +253,33 @@ impl MarraView {
         self.more_menu = false;
         self.row_menu = None;
         self.menu_closed = Some(Instant::now());
+    }
+
+    /// Starts New Issue with the harness and skills picked, and what it's
+    /// about as the worker's first message; opens its thread.
+    fn start_issue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((label, _)) = self.issue_pick.as_ref().and_then(|p| p.harness.clone()) else { return };
+        let about = self.issue_about.read(cx).text(cx).trim().to_string();
+        if about.is_empty() {
+            return;
+        }
+        let skills: Vec<String> = self.issue_pick.as_ref().map(|p| p.skills.iter().filter(|s| s.2).map(|s| s.0.clone()).collect()).unwrap_or_default();
+        let started = self.marra.update(cx, |m, cx| {
+            let started = m.start_issue(&label, &skills, &about);
+            cx.notify();
+            started
+        });
+        match started {
+            Ok(id) => {
+                self.issue_pick = None;
+                self.issue_error = None;
+                self.issue_about.update(cx, |editor, cx| editor.set_text("", window, cx));
+                self.open_thread(format!("e:{id}"), cx);
+                self.focus_input(window, cx);
+            }
+            Err(error) => self.issue_error = Some(error),
+        }
+        cx.notify();
     }
 
     // MARK: Queries
@@ -1425,10 +1478,12 @@ impl MarraView {
                 for (i, place) in places.into_iter().enumerate() {
                     let shown = place_name(&place);
                     let label = place.label();
-                    let skills: Vec<(String, String, bool)> = crate::marra_mcp::harness_skills(&place).into_iter().map(|(name, about)| {
+                    let mut skills: Vec<(String, String, bool)> = crate::marra_mcp::harness_skills(&place).into_iter().map(|(name, about)| {
                         let on = issue_skill(&name, &about);
                         (name, about, on)
                     }).collect();
+                    // The issue skills first, ticked; the rest after.
+                    skills.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
                     let name = shown.clone();
                     panel = panel.child(
                         div()
@@ -1441,14 +1496,16 @@ impl MarraView {
                             .cursor_pointer()
                             .hover(|s| s.bg(theme.row_selected))
                             .child(shown)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                 this.issue_pick = Some(IssuePick { harness: Some((label.clone(), name.clone())), skills: skills.clone() });
+                                this.skill_filter.update(cx, |editor, cx| editor.set_text("", window, cx));
+                                window.focus(&this.issue_about.focus_handle(cx), cx);
                                 cx.notify();
                             })),
                     );
                 }
             }
-            Some((label, shown)) => {
+            Some((_, shown)) => {
                 panel = panel.child(
                     div()
                         .flex()
@@ -1465,25 +1522,55 @@ impl MarraView {
                         .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(format!("New issue in {shown}")))
                         .child(cancel),
                 );
+                // What it's about: the worker's first message, so it starts
+                // from there. Return starts it; Shift-Return is a new line.
+                panel = panel.child(
+                    div()
+                        .px_2()
+                        .py_1p5()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.bg)
+                        .text_sm()
+                        .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                            let m = &event.keystroke.modifiers;
+                            if event.keystroke.key == "enter" && !m.shift && !m.alt && !m.control {
+                                cx.stop_propagation();
+                                this.start_issue(window, cx);
+                            }
+                        }))
+                        .child(self.issue_about.clone()),
+                );
                 panel = panel.child(div().text_xs().text_color(theme.secondary).child(if pick.skills.is_empty() { "No skills in this harness: its CLAUDE.md and templates still apply." } else { "Skills it inherits" }));
-                let mut list = div().id("issue-skills").max_h(px(220.)).overflow_y_scroll().flex().flex_col();
+                let filter = self.skill_filter.read(cx).text(cx).trim().to_lowercase();
+                if !pick.skills.is_empty() {
+                    panel = panel.child(div().px_2().py_1().rounded_md().border_1().border_color(theme.border).bg(theme.bg).text_xs().child(self.skill_filter.clone()));
+                }
+                let mut list = div().id("issue-skills").max_h(px(240.)).overflow_y_scroll().flex().flex_col();
+                let mut shown_any = false;
                 for (i, (name, about, on)) in pick.skills.iter().cloned().enumerate() {
+                    if !filter.is_empty() && !name.to_lowercase().contains(&filter) && !about.to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    shown_any = true;
+                    let tip = if about.is_empty() { name.clone() } else { format!("{name}: {about}") };
                     list = list.child(
                         div()
                             .id(SharedString::from(format!("issue-skill-{i}")))
                             .flex()
                             .flex_row()
-                            .items_start()
+                            .items_center()
                             .gap_2()
                             .px_1()
                             .py_0p5()
                             .rounded_md()
                             .cursor_pointer()
                             .hover(|s| s.bg(theme.row_selected))
+                            .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
                             .child(
                                 div()
                                     .flex_none()
-                                    .mt(px(2.))
                                     .size(px(13.))
                                     .rounded(px(3.))
                                     .border_1()
@@ -1492,7 +1579,9 @@ impl MarraView {
                                     .justify_center()
                                     .map(|d| if on { d.bg(theme.selected).border_color(theme.selected).text_color(theme.on_selected).text_xs().child("✓") } else { d.border_color(theme.secondary) }),
                             )
-                            .child(div().flex_1().min_w_0().flex().flex_col().child(div().text_xs().text_color(theme.fg).child(name)).when(!about.is_empty(), |d| d.child(div().text_xs().text_color(theme.tertiary).truncate().child(about))))
+                            // One line: the name, then as much of what it's for as fits.
+                            .child(div().flex_none().max_w(px(180.)).truncate().text_xs().text_color(theme.fg).child(name))
+                            .child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.tertiary).child(about))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 if let Some(skill) = this.issue_pick.as_mut().and_then(|p| p.skills.get_mut(i)) {
                                     skill.2 = !skill.2;
@@ -1501,25 +1590,16 @@ impl MarraView {
                             })),
                     );
                 }
+                if !shown_any && !pick.skills.is_empty() {
+                    list = list.child(div().px_1().py_1().text_xs().text_color(theme.secondary).child("No skill matches."));
+                }
                 panel = panel.child(list);
-                let label = label.clone();
-                panel = panel.child(div().flex().flex_row().pt_1().child(button("issue-start", "Start", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let skills: Vec<String> = this.issue_pick.as_ref().map(|p| p.skills.iter().filter(|s| s.2).map(|s| s.0.clone()).collect()).unwrap_or_default();
-                    let started = this.marra.update(cx, |m, cx| {
-                        let started = m.start_issue(&label, &skills);
-                        cx.notify();
-                        started
-                    });
-                    match started {
-                        Ok(id) => {
-                            this.issue_pick = None;
-                            this.issue_error = None;
-                            this.open_thread(format!("e:{id}"), cx);
-                        }
-                        Err(error) => this.issue_error = Some(error),
-                    }
-                    cx.notify();
-                }))));
+                let ready = !self.issue_about.read(cx).text(cx).trim().is_empty();
+                panel = panel.child(
+                    div().flex().flex_row().items_center().gap_2().pt_1().child(
+                        button("issue-start", "Start", ready, theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.start_issue(window, cx))),
+                    ).when(!ready, |d| d.child(div().text_xs().text_color(theme.tertiary).child("Say what it's about first"))),
+                );
             }
         }
         panel

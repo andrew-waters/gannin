@@ -412,7 +412,7 @@ pub fn harness_skills(place: &HarnessPlace) -> Vec<(String, String)> {
             let path = entry.path();
             let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let file = if path.is_dir() { path.join("SKILL.md") } else { path.clone() };
-            let about = std::fs::read_to_string(&file).ok().and_then(|t| t.lines().find(|l| l.trim_start().starts_with("description:")).map(|l| l.trim_start().trim_start_matches("description:").trim().trim_matches('"').to_string())).unwrap_or_default();
+            let about = std::fs::read_to_string(&file).ok().map(|t| description(&t)).unwrap_or_default();
             if !name.starts_with('.') && !skills.iter().any(|(n, _)| *n == name) {
                 skills.push((name, about));
             }
@@ -420,6 +420,20 @@ pub fn harness_skills(place: &HarnessPlace) -> Vec<(String, String)> {
     }
     skills.sort();
     skills
+}
+
+/// A skill's `description:` from its front matter, as one line: a folded
+/// or literal block (`>`, `>-`, `|`) read from the indented lines after it.
+fn description(text: &str) -> String {
+    let mut lines = text.lines().skip_while(|l| !l.trim_start().starts_with("description:"));
+    let Some(first) = lines.next() else { return String::new() };
+    let value = first.trim_start().trim_start_matches("description:").trim();
+    let value = if value.is_empty() || value.starts_with(['>', '|']) {
+        lines.take_while(|l| l.starts_with([' ', '\t']) || l.trim().is_empty()).map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ")
+    } else {
+        value.to_string()
+    };
+    value.trim_matches(['"', '\'']).to_string()
 }
 
 pub fn skills() -> String {
