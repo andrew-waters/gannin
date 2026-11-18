@@ -350,7 +350,9 @@ fn live_sessions(cx: &App) -> Vec<SessionInfo> {
             out.push(SessionInfo {
                 // Its claude conversation where it has one, so pins, mutes and
                 // reminders outlive a relaunch; else its window and tab.
-                key: launch.map(|l| l.claude_id()).unwrap_or_else(|| format!("{}:{}", handle.window_id().as_u64(), p.id)),
+                // A plain Claude Code tab by its own key, which a relaunch
+                // keeps (it resumes by it); only a terminal by its window.
+                key: launch.map(|l| l.claude_id()).or_else(|| p.claude_id.clone()).unwrap_or_else(|| format!("{}:{}", handle.window_id().as_u64(), p.id)),
                 window,
                 id: p.id,
                 page: page.clone(),
