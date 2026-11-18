@@ -164,10 +164,16 @@ pub fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) -> s
     stream.flush()
 }
 
-/// A conversation's transcript file, in whichever project folder it is.
+/// A conversation's transcript file, in whichever project folder it is;
+/// for a session on a server, the copy its mirror keeps in the session's
+/// folder here (`servers::pull`), as claude's own is on the server.
 fn transcript_file(claude_id: &str) -> Option<std::path::PathBuf> {
     let projects = std::env::var_os("HOME").map(std::path::PathBuf::from)?.join(".claude/projects");
-    std::fs::read_dir(projects).ok()?.flatten().map(|d| d.path().join(format!("{claude_id}.jsonl"))).find(|p| p.exists())
+    let local = std::fs::read_dir(projects).ok().and_then(|dirs| dirs.flatten().map(|d| d.path().join(format!("{claude_id}.jsonl"))).find(|p| p.exists()));
+    local.or_else(|| {
+        // A launch's folder is named by its ID, which claude's is the lower case of.
+        [claude_id.to_uppercase(), claude_id.to_string()].into_iter().map(|id| crate::launch::sessions_dir().join(id).join("transcript.jsonl")).find(|p| p.exists())
+    })
 }
 
 /// The conversation a session is having: its own ID, else (a plain tab
