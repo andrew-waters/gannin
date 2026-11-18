@@ -20,6 +20,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// Marra's folder: claude's working directory (so `--resume` finds the
 /// conversation) and Gannin's state and chat log.
@@ -61,6 +62,12 @@ pub struct Saved {
     /// Phone access: the HTTP API on the local network.
     #[serde(default)]
     pub api: bool,
+    /// Summaries of what a session did (Summarise) turned off.
+    #[serde(default)]
+    pub summaries_off: bool,
+    /// The model summaries use; None is Haiku.
+    #[serde(default)]
+    pub summary_model: Option<String>,
 }
 
 impl Saved {
@@ -418,11 +425,113 @@ impl Drop for Engine {
     }
 }
 
-/// A one-off summary from Haiku, no tools, no MCP and nothing saved: for
-/// reading what a session did, where Marra's own model would cost more and
-/// add to its conversation. Blocks: call it off the main thread.
-pub fn summarise(prompt: &str) -> Result<String, String> {
-    let args = ["-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "text"];
+/// One summary call, as the audit trail keeps it: what was sent, what
+/// came back, and what it cost.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SummaryCall {
+    pub at: String,
+    /// The session's Claude Code conversation, which outlives its tab.
+    pub conversation: String,
+    pub title: String,
+    pub model: String,
+    /// The transcript read from this time on (RFC 3339), else all of it.
+    #[serde(default)]
+    pub since: Option<String>,
+    pub prompt: String,
+    #[serde(default)]
+    pub output: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub ms: u64,
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+}
+
+/// The most summary calls the trail keeps; older ones go.
+const SUMMARY_CALLS_KEPT: usize = 200;
+
+fn summary_log() -> PathBuf {
+    dir().join("summaries.jsonl")
+}
+
+/// Every summary call made for a conversation, oldest first.
+pub fn summary_calls(conversation: &str) -> Vec<SummaryCall> {
+    std::fs::read_to_string(summary_log())
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<SummaryCall>(l).ok())
+        .filter(|c| c.conversation == conversation)
+        .collect()
+}
+
+/// Adds a call to the trail, keeping the last `SUMMARY_CALLS_KEPT`. The
+/// prompts hold transcript text, so only this user can read the file.
+fn record_summary(call: &SummaryCall) {
+    let path = summary_log();
+    let _ = std::fs::create_dir_all(dir());
+    let mut lines: Vec<String> = std::fs::read_to_string(&path).unwrap_or_default().lines().map(str::to_string).collect();
+    let Ok(line) = serde_json::to_string(call) else { return };
+    lines.push(line);
+    let start = lines.len().saturating_sub(SUMMARY_CALLS_KEPT);
+    let tmp = path.with_extension("jsonl.tmp");
+    if std::fs::write(&tmp, lines[start..].join("\n") + "\n").is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        let _ = std::fs::rename(tmp, path);
+    }
+}
+
+/// A one-off summary: one call, no tools, no MCP and nothing saved by
+/// claude, on `model` (Haiku when None), where Marra's own model would cost
+/// more and add to its conversation. Recorded in the trail whatever happens.
+/// Blocks: call it off the main thread.
+pub fn summarise(prompt: &str, model: Option<&str>, conversation: &str, title: &str, since: Option<String>) -> SummaryCall {
+    let model = model.filter(|m| !m.trim().is_empty()).unwrap_or("haiku").to_string();
+    let started = Instant::now();
+    let mut call = SummaryCall {
+        at: now(),
+        conversation: conversation.to_string(),
+        title: title.to_string(),
+        model: model.clone(),
+        since,
+        prompt: prompt.to_string(),
+        output: None,
+        error: None,
+        ms: 0,
+        cost_usd: None,
+        input_tokens: None,
+        output_tokens: None,
+    };
+    match run_summary(prompt, &model) {
+        Ok(result) => {
+            let text = result["result"].as_str().unwrap_or_default().trim().to_string();
+            call.cost_usd = result["total_cost_usd"].as_f64();
+            let usage = &result["usage"];
+            call.input_tokens = Some(["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].iter().filter_map(|k| usage[*k].as_u64()).sum()).filter(|n| *n > 0);
+            call.output_tokens = usage["output_tokens"].as_u64();
+            if result["is_error"].as_bool() == Some(true) || text.is_empty() {
+                call.error = Some(format!("{model} couldn't summarise it: {}", if text.is_empty() { "it gave nothing back" } else { &text }));
+            } else {
+                call.output = Some(text);
+            }
+        }
+        Err(error) => call.error = Some(format!("{model} couldn't summarise it: {error}")),
+    }
+    call.ms = started.elapsed().as_millis() as u64;
+    record_summary(&call);
+    call
+}
+
+/// Runs claude once with the prompt on stdin; its JSON result.
+fn run_summary(prompt: &str, model: &str) -> Result<Value, String> {
+    let args = ["-p", "--model", model, "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "json"];
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     let line = format!("command -v claude >/dev/null 2>&1 || {{ echo 'Claude Code is not installed on this Mac.' >&2; exit 127; }}; exec claude {}", quoted.join(" "));
     let folder = dir();
@@ -434,19 +543,18 @@ pub fn summarise(prompt: &str) -> Result<String, String> {
             command.env_remove(key);
         }
     }
-    let mut child = command.spawn().map_err(|e| format!("Couldn't start claude: {e}"))?;
+    let mut child = command.spawn().map_err(|e| format!("couldn't start claude: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(prompt.as_bytes()).map_err(|e| format!("Couldn't reach claude: {e}"))?;
+        stdin.write_all(prompt.as_bytes()).map_err(|e| format!("couldn't reach claude: {e}"))?;
     }
     let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if output.status.success() && !text.is_empty() {
-        Ok(text)
-    } else {
-        let error = String::from_utf8_lossy(&output.stderr);
-        let error = error.lines().filter(|l| !l.trim().is_empty() && !l.contains("can't change option") && !l.contains("no job control")).last().unwrap_or("it gave nothing back");
-        Err(format!("Haiku couldn't summarise it: {error}"))
+    // A login shell may print first: the result is the last JSON line.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if let Some(value) = stdout.lines().rev().find_map(|l| serde_json::from_str::<Value>(l.trim()).ok().filter(|v| v.is_object())) {
+        return Ok(value);
     }
+    let error = String::from_utf8_lossy(&output.stderr);
+    Err(error.lines().filter(|l| !l.trim().is_empty() && !l.contains("can't change option") && !l.contains("no job control")).last().unwrap_or("it gave nothing back").to_string())
 }
 
 fn shell_quote(s: &str) -> String {

@@ -79,6 +79,11 @@ pub struct MarraView {
     /// couldn't; and the session being summarised now.
     summary: Option<(String, Result<String, String>)>,
     summarising: Option<String>,
+    /// The open session's summary calls, from the audit trail: by session key.
+    audit: Option<(String, Vec<crate::marra::SummaryCall>)>,
+    /// Calls in the trail shown open, and those showing their prompt.
+    audit_open: HashSet<(String, usize)>,
+    audit_prompts: HashSet<(String, usize)>,
     _tail_task: Option<Task<()>>,
     theme: Theme,
     _subscriptions: Vec<Subscription>,
@@ -144,6 +149,9 @@ impl MarraView {
             digest: None,
             summary: None,
             summarising: None,
+            audit: None,
+            audit_open: HashSet::new(),
+            audit_prompts: HashSet::new(),
             _tail_task: None,
             theme: Theme::for_window(window),
             _subscriptions: vec![edits, observe],
@@ -202,6 +210,7 @@ impl MarraView {
             (key.to_string(), m.since_read(key), m.read_at(key))
         });
         self.digest = None;
+        self.audit = None;
         if self.summary.as_ref().is_some_and(|(k, _)| Some(k.as_str()) != id.strip_prefix("s:")) {
             self.summary = None;
         }
@@ -231,16 +240,24 @@ impl MarraView {
         let info = marra_model::sessions(cx).into_iter().find(|s| s.key == key);
         let (claude, folder, on_server) = info.map(|s| (s.claude_id, s.folder, s.server.is_some())).unwrap_or((None, std::path::PathBuf::new(), true));
         let read_at = self.since.as_ref().filter(|(k, _, _)| k == &key).and_then(|(_, _, at)| *at).map(|at| at.with_timezone(&chrono::Utc));
+        let mut audited = false;
         self._tail_task = Some(cx.spawn(async move |this, cx| loop {
             let (claude, folder) = (claude.clone(), folder.clone());
-            let (lines, digest) = cx
+            let first = !audited;
+            audited = true;
+            let (lines, digest, audit) = cx
                 .background_executor()
                 .spawn(async move {
                     // A plain tab from before tabs had a conversation ID: its
                     // folder's newest transcript.
                     match crate::marra_mcp::resolve_claude(claude, &folder, on_server) {
-                        Some(id) => (crate::marra_mcp::transcript_messages(&id, 30).unwrap_or_default(), crate::marra_mcp::digest(&id, read_at)),
-                        None => (Vec::new(), None),
+                        Some(id) => (
+                            crate::marra_mcp::transcript_messages(&id, 30).unwrap_or_default(),
+                            crate::marra_mcp::digest(&id, read_at),
+                            // The trail once, when the thread opens; a new call adds itself.
+                            first.then(|| crate::marra::summary_calls(&id)),
+                        ),
+                        None => (Vec::new(), None, first.then(Vec::new)),
                     }
                 })
                 .await;
@@ -249,6 +266,10 @@ impl MarraView {
                 .update(cx, |this, cx| {
                     if this.tail.as_ref().is_none_or(|(k, l)| k != &key || l != &lines) {
                         this.tail = Some((key.clone(), lines));
+                        cx.notify();
+                    }
+                    if let Some(audit) = audit {
+                        this.audit = Some((key.clone(), audit));
                         cx.notify();
                     }
                     if this.digest.as_ref().is_none_or(|(k, d)| k != &key || d != &digest) {
@@ -274,6 +295,7 @@ impl MarraView {
         let read_at = self.since.as_ref().filter(|(k, _, _)| k == &key).and_then(|(_, _, at)| *at).map(|at| at.with_timezone(&chrono::Utc));
         let title = info.subject.clone().map(|s| format!("{s}: {}", info.title)).unwrap_or(info.title.clone());
         let (claude, folder, on_server) = (info.claude_id.clone(), info.folder.clone(), info.server.is_some());
+        let model = self.marra.read(cx).saved.summary_model.clone();
         self.summarising = Some(key.clone());
         self.summary = None;
         cx.notify();
@@ -284,20 +306,32 @@ impl MarraView {
                     let id = crate::marra_mcp::resolve_claude(claude, &folder, on_server).ok_or("Its conversation isn't on this Mac.")?;
                     let lines = crate::marra_mcp::transcript_since(&id, read_at, 150, 600).ok_or("Couldn't read its conversation.")?;
                     if lines.is_empty() {
-                        return Ok("Nothing has happened since you looked.".to_string());
+                        return Err("Nothing has happened since you looked, so nothing was sent.".to_string());
                     }
                     let since = if read_at.is_some() { "since they last looked" } else { "so far" };
                     let prompt = format!(
                         "Summarise what happened in this Claude Code session {since}, for the person who owns it. They switch between several sessions, so lead with where it stands now and what, if anything, it needs from them; then what was done and what changed. At most six short bullets, plain words, no preamble.\n\nSession: {title}\n\nConversation:\n\n{}",
                         crate::marra_mcp::as_text(lines)
                     );
-                    crate::marra::summarise(&prompt)
+                    Ok(crate::marra::summarise(&prompt, model.as_deref(), &id, &title, read_at.map(|at| at.to_rfc3339())))
                 })
-                .await
-                .map_err(|e: String| e);
+                .await;
             this.update(cx, |this, cx| {
                 this.summarising = None;
-                this.summary = Some((key, result));
+                let shown = match &result {
+                    Ok(call) => match (&call.output, &call.error) {
+                        (Some(text), _) => Ok(text.clone()),
+                        (None, error) => Err(error.clone().unwrap_or_else(|| "It gave nothing back.".into())),
+                    },
+                    Err(error) => Err(error.clone()),
+                };
+                if let Ok(call) = result {
+                    match this.audit.as_mut().filter(|(k, _)| k == &key) {
+                        Some((_, calls)) => calls.push(call),
+                        None => this.audit = Some((key.clone(), vec![call])),
+                    }
+                }
+                this.summary = Some((key, shown));
                 cx.notify();
             })
             .ok();
@@ -1048,6 +1082,39 @@ impl MarraView {
         if let Some(other) = model.filter(|m| !MODELS.iter().any(|(_, v)| *v == Some(m.as_str()))) {
             rows.push(div().px_2().py_1().text_sm().text_color(theme.fg).child(format!("✓ {other}")).into_any_element());
         }
+        // Summaries of what a session did: off, or the model that writes them.
+        let (summaries_off, summary_model) = {
+            let saved = &self.marra.read(cx).saved;
+            (saved.summaries_off, saved.summary_model.clone().unwrap_or_else(|| "haiku".into()))
+        };
+        rows.push(div().mx_2().my_1().h(px(1.)).bg(theme.border).into_any_element());
+        rows.push(div().px_2().pb_0p5().text_xs().text_color(theme.secondary).child("Summaries").into_any_element());
+        let choices: [(&str, Option<&str>); 4] = [("Off", None), ("Haiku", Some("haiku")), ("Sonnet", Some("sonnet")), ("Opus", Some("opus"))];
+        for (i, (label, value)) in choices.into_iter().enumerate() {
+            let on = match value {
+                None => summaries_off,
+                Some(v) => !summaries_off && summary_model == v,
+            };
+            rows.push(
+                Self::menu_row(format!("summary-model-{i}"), format!("{}{label}", if on { "✓ " } else { "   " }), false, theme)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.marra.update(cx, |m, cx| {
+                            match value {
+                                None => m.saved.summaries_off = true,
+                                Some(v) => {
+                                    m.saved.summaries_off = false;
+                                    m.saved.summary_model = (v != "haiku").then(|| v.to_string());
+                                }
+                            }
+                            m.saved.save();
+                            cx.notify();
+                        });
+                        this.more_menu = false;
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
         // Phone access: the API on the local network, with its pairing code.
         let (api_on, code, error) = {
             let m = self.marra.read(cx);
@@ -1451,6 +1518,8 @@ impl MarraView {
         let digest = self.digest.clone().filter(|(k, _)| k == key).map(|(_, d)| d);
         let summary = self.summary.clone().filter(|(k, _)| k == key).map(|(_, r)| r);
         let summarising = self.summarising.as_deref() == Some(key);
+        let summaries_on = !self.marra.read(cx).saved.summaries_off;
+        let audit = self.audit.clone().filter(|(k, _)| k == key).map(|(_, c)| c).unwrap_or_default();
         let mut body = div().id(SharedString::from(format!("session-body-{key}"))).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_2().px_3().py_3();
         if let Some(s) = &info {
             let what = format!("{} ({}){}", s.subject.clone().unwrap_or_else(|| s.title.clone()), s.kind, s.server.as_ref().map(|n| format!(", on {n}")).unwrap_or_default());
@@ -1498,7 +1567,7 @@ impl MarraView {
                         let open_key = key.to_string();
                         links = links.child(button("left-off-session", "Open session", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(open_key.clone()), window, cx))));
                         // Only where there's a conversation to read, and something in it.
-                        if digest.as_ref().and_then(|d| d.as_ref()).is_some_and(|d| !d.is_empty()) && !summarising {
+                        if summaries_on && digest.as_ref().and_then(|d| d.as_ref()).is_some_and(|d| !d.is_empty()) && !summarising {
                             let summary_key = key.to_string();
                             links = links.child(button("left-off-summary", "Summarise", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.summarise_session(summary_key.clone(), cx))));
                         }
@@ -1520,6 +1589,9 @@ impl MarraView {
                     }),
             );
         }
+        if !audit.is_empty() {
+            body = body.child(self.audit_view(key, &audit, theme, cx));
+        }
         if lines.is_empty() {
             let text = match &info {
                 Some(s) if s.kind == "terminal" => "A terminal: open it to see its screen.".to_string(),
@@ -1539,6 +1611,106 @@ impl MarraView {
             });
         }
         body.into_any_element()
+    }
+
+    /// The summary calls made for this session: when, which model, how long,
+    /// what it cost, and what came back; each opens to its output and,
+    /// on request, the exact prompt sent.
+    fn audit_view(&self, key: &str, calls: &[crate::marra::SummaryCall], theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .w_full()
+            .p_3()
+            .rounded(px(14.))
+            .bg(theme.sidebar)
+            .child(div().text_xs().text_color(theme.secondary).child(format!("Summary calls ({})", calls.len())));
+        for (n, call) in calls.iter().enumerate().rev() {
+            let id = (key.to_string(), n);
+            let open = self.audit_open.contains(&id);
+            let prompt_open = self.audit_prompts.contains(&id);
+            let at = chrono::DateTime::parse_from_rfc3339(&call.at).map(|d| d.with_timezone(&chrono::Local).format("%d %b %H:%M").to_string()).unwrap_or_else(|_| call.at.clone());
+            let mut facts = vec![at, call.model.clone(), format!("{:.1}s", call.ms as f64 / 1000.)];
+            if let Some(cost) = call.cost_usd {
+                facts.push(format!("${cost:.4}"));
+            }
+            match (call.input_tokens, call.output_tokens) {
+                (Some(i), Some(o)) => facts.push(format!("{i} in, {o} out tokens")),
+                _ => facts.push(format!("{} characters sent", call.prompt.chars().count())),
+            }
+            if call.error.is_some() {
+                facts.push("failed".into());
+            }
+            let toggle = id.clone();
+            list = list.child(
+                div()
+                    .id(SharedString::from(format!("audit-{key}-{n}")))
+                    .flex()
+                    .flex_row()
+                    .gap_1()
+                    .cursor_pointer()
+                    .text_sm()
+                    .text_color(if call.error.is_some() { theme.orange() } else { theme.fg })
+                    .child(if open { "▾" } else { "▸" })
+                    .child(facts.join(" · "))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        if !this.audit_open.remove(&toggle) {
+                            this.audit_open.insert(toggle.clone());
+                        }
+                        cx.notify();
+                    })),
+            );
+            if !open {
+                continue;
+            }
+            let shown = call.output.clone().or(call.error.clone()).unwrap_or_default();
+            let prompt_toggle = id.clone();
+            list = list.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .pl_4()
+                    .when_some(call.since.as_ref(), |d, since| {
+                        let since = chrono::DateTime::parse_from_rfc3339(since).map(|d| d.with_timezone(&chrono::Local).format("%H:%M").to_string()).unwrap_or_else(|_| since.clone());
+                        d.child(div().text_xs().text_color(theme.secondary).child(format!("Read the conversation from {since} on")))
+                    })
+                    .child(div().p_2().rounded(px(10.)).bg(theme.tile).text_sm().text_color(theme.fg).child(markdown(&format!("audit-out-{key}-{n}"), &shown, theme)))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("audit-prompt-toggle-{key}-{n}")))
+                            .text_xs()
+                            .text_color(theme.selected)
+                            .cursor_pointer()
+                            .child(if prompt_open { "Hide the prompt sent" } else { "Show the prompt sent" })
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                if !this.audit_prompts.remove(&prompt_toggle) {
+                                    this.audit_prompts.insert(prompt_toggle.clone());
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .when(prompt_open, |d| {
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!("audit-prompt-{key}-{n}")))
+                                .max_h(px(320.))
+                                .overflow_y_scroll()
+                                .p_2()
+                                .rounded(px(10.))
+                                .bg(theme.bg)
+                                .border_1()
+                                .border_color(theme.border)
+                                .text_xs()
+                                .font_family("Menlo")
+                                .text_color(theme.secondary)
+                                .children(call.prompt.lines().map(|l| div().child(if l.is_empty() { " ".to_string() } else { l.to_string() }))),
+                        )
+                    }),
+            );
+        }
+        list.into_any_element()
     }
 
     /// A long reply folds with a fade and Show all.
