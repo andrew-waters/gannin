@@ -57,6 +57,11 @@ pub struct MarraView {
     more_menu: bool,
     /// New Issue's menu of harnesses to raise it from.
     issue_menu: bool,
+    /// The open thread's conversation scroll, which follows new activity
+    /// while it's at the bottom.
+    chat_scroll: gpui::ScrollHandle,
+    /// The thread it was last showing, to start a newly opened one at its end.
+    chat_for: Option<String>,
     /// The checklist, as last read or changed (`todos.rs`).
     todos: Vec<crate::todos::Todo>,
     /// Whether the composer's placeholder says it adds a todo.
@@ -146,6 +151,8 @@ impl MarraView {
             more_menu: false,
             issue_menu: false,
             issue_error: None,
+            chat_scroll: gpui::ScrollHandle::new(),
+            chat_for: None,
             todos: crate::todos::load(),
             todo_placeholder: false,
             row_menu: None,
@@ -1919,7 +1926,7 @@ impl MarraView {
         let summary = self.summary.clone().filter(|(k, _)| k == key).map(|(_, r)| r);
         let summarising = self.summarising.as_deref() == Some(key);
         let audit = self.audit.clone().filter(|(k, _)| k == key).map(|(_, c)| c).unwrap_or_default();
-        let mut body = div().id(SharedString::from(format!("session-body-{key}"))).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_2().px_3().py_3();
+        let mut body = div().id(SharedString::from(format!("session-body-{key}"))).flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.chat_scroll).flex().flex_col().gap_2().px_3().py_3();
         if let Some(s) = &info {
             let what = format!("{} ({}){}", s.subject.clone().unwrap_or_else(|| s.title.clone()), s.kind, s.server.as_ref().map(|n| format!(", on {n}")).unwrap_or_default());
             let state = format!("{} since {}", s.state.label(), s.since.format("%H:%M"));
@@ -2143,7 +2150,7 @@ impl MarraView {
         let doing = convo.doing.clone();
         let asks: HashSet<String> = convo.asks.keys().cloned().collect();
         let confirms: Vec<(u64, String, String)> = if errand { Vec::new() } else { marra.confirms.iter().map(|c| (c.id, c.title.clone(), c.text.clone())).collect() };
-        let mut body = div().id(SharedString::from(format!("convo-{thread}"))).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_2().px_3().py_3();
+        let mut body = div().id(SharedString::from(format!("convo-{thread}"))).flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.chat_scroll).flex().flex_col().gap_2().px_3().py_3();
         if chat.is_empty() && !busy {
             body = body.child(div().w_full().px_6().pt_6().text_sm().text_color(theme.secondary).text_center().child(if errand { "Starting." } else { "Ask Marra anything: what's waiting, what a session is doing, a data question for a harness. / shows the commands." }));
         }
@@ -2448,6 +2455,15 @@ impl Render for MarraView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
         self.theme = theme;
+        // The conversation follows what's new while you're at its end (within
+        // a line), and a thread opens at its end; scrolled up, it stays put.
+        let behind = self.chat_scroll.max_offset().y + self.chat_scroll.offset().y;
+        if self.chat_for != self.open {
+            self.chat_for = self.open.clone();
+            self.chat_scroll.scroll_to_bottom();
+        } else if behind <= px(24.) {
+            self.chat_scroll.scroll_to_bottom();
+        }
         // The composer says what Return does: add a todo, or message.
         let todos_open = self.open.as_deref() == Some("todos");
         if todos_open != self.todo_placeholder {
