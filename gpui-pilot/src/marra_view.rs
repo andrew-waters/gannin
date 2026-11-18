@@ -8,7 +8,7 @@ use crate::marra::Entry;
 use crate::marra_model::{self, ago, waiting, Act, Lane, Marra, Need, Thread, ThreadKind, Who};
 use crate::markdown::markdown;
 use crate::shell::Workspace;
-use gpui::{actions, div, prelude::*, px, AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, KeyDownEvent, Pixels, Point, SharedString, Subscription, Task, Window};
+use gpui::{actions, div, prelude::*, px, relative, AnyElement, App, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, KeyDownEvent, Pixels, Point, SharedString, Subscription, Task, Window};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -2192,7 +2192,7 @@ impl MarraView {
         for (n, (who, text)) in lines.iter().enumerate() {
             body = body.child(match who.as_str() {
                 "tool" => div().pl_3().flex().flex_row().gap_1().items_center().child(gpui::svg().path("icons/tool_hammer.svg").size(px(11.)).text_color(theme.tertiary)).child(div().min_w_0().truncate().text_xs().text_color(theme.tertiary).child(text.clone())).into_any_element(),
-                "User" => div().w_full().flex().flex_col().items_end().child(div().max_w(px(320.)).px_3().py_1p5().rounded(px(18.)).text_sm().bg(theme.selected).text_color(theme.on_selected).children(text.lines().map(|l| div().child(l.to_string())))).into_any_element(),
+                "User" => div().w_full().flex().flex_col().items_end().child(div().max_w(relative(0.85)).px_3().py_1p5().rounded(px(18.)).text_sm().bg(theme.selected).text_color(theme.on_selected).children(text.lines().map(|l| div().child(l.to_string())))).into_any_element(),
                 _ => self.folded(&format!("s:{key}"), n, text, theme, cx),
             });
         }
@@ -2301,7 +2301,9 @@ impl MarraView {
 
     /// A long reply folds with a fade and Show all.
     fn folded(&self, thread: &str, n: usize, text: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let long = text.lines().count() > 12 || text.len() > 900;
+        // Up to 50 lines (or as many characters) shows whole; longer folds at
+        // about that height, with Show all.
+        let long = text.lines().count() > 50 || text.len() > 5000;
         let open = self.long_open.contains(&(thread.to_string(), n));
         let key = (thread.to_string(), n);
         div()
@@ -2313,14 +2315,14 @@ impl MarraView {
             .child(
                 div()
                     .relative()
-                    .max_w(px(380.))
+                    .max_w(relative(0.85))
                     .px_3()
                     .py_1p5()
                     .rounded(px(18.))
                     .bg(theme.tile)
                     .text_sm()
                     .text_color(theme.fg)
-                    .when(long && !open, |d| d.h(px(200.)).overflow_hidden())
+                    .when(long && !open, |d| d.h(px(1000.)).overflow_hidden())
                     .child(markdown(&format!("md-{thread}-{n}"), text, theme))
                     .when(long && !open, |d| d.child(div().absolute().bottom_0().left_0().right_0().h(px(40.)).bg(gpui::linear_gradient(180., gpui::linear_color_stop(theme.tile.opacity(0.), 0.), gpui::linear_color_stop(theme.tile, 1.))))),
             )
@@ -2370,7 +2372,7 @@ impl MarraView {
                 _ => "",
             };
             let element: AnyElement = match entry {
-                Entry::You { text, .. } => div().w_full().flex().flex_col().items_end().child(div().max_w(px(320.)).px_3().py_1p5().rounded(px(18.)).text_sm().bg(theme.selected).text_color(theme.on_selected).children(text.lines().map(|l| div().child(l.to_string())))).into_any_element(),
+                Entry::You { text, .. } => div().w_full().flex().flex_col().items_end().child(div().max_w(relative(0.85)).px_3().py_1p5().rounded(px(18.)).text_sm().bg(theme.selected).text_color(theme.on_selected).children(text.lines().map(|l| div().child(l.to_string())))).into_any_element(),
                 Entry::Marra { text, .. } => self.folded(thread, n, if errand { without_contract(text) } else { text }, theme, cx),
                 Entry::Note { text, .. } => self.folded(thread, n, text, theme, cx),
                 Entry::Reply { point, body: detail, .. } => {
@@ -2381,7 +2383,7 @@ impl MarraView {
                         .flex()
                         .flex_col()
                         .gap_1p5()
-                        .child(div().max_w(px(340.)).px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.fg).child(point.clone()))
+                        .child(div().max_w(relative(0.85)).px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.fg).child(point.clone()))
                         .when(!detail.is_empty(), |d| {
                             d.child(
                                 div()
@@ -2427,7 +2429,7 @@ impl MarraView {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .max_w(px(380.))
+                            .max_w(relative(0.85))
                             .p_3()
                             .rounded(px(14.))
                             .bg(theme.tile)
@@ -2459,7 +2461,7 @@ impl MarraView {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .max_w(px(380.))
+                        .max_w(relative(0.85))
                         .p_3()
                         .rounded(px(14.))
                         .bg(theme.tile)
@@ -2480,7 +2482,7 @@ impl MarraView {
         }
         if !streaming.trim().is_empty() {
             let shown = if errand { without_contract(&streaming).to_string() } else { streaming.clone() };
-            body = body.child(div().max_w(px(380.)).px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.fg).child(markdown(&format!("stream-{thread}"), &shown, theme)));
+            body = body.child(div().max_w(relative(0.85)).px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.fg).child(markdown(&format!("stream-{thread}"), &shown, theme)));
         } else if busy {
             let line = status.map(|s| if s == "compacting" { "Compacting".to_string() } else { s }).or(doing).unwrap_or_else(|| "Thinking".into());
             // Stop asks claude to end the turn, as Esc does; Restart ends its
