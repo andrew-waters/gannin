@@ -5619,7 +5619,7 @@ impl Workspace {
     /// A tab's own icon: its page's, or its session's kind.
     fn tab_icon(&self, tab: &Tab, cx: &App) -> &'static str {
         match tab.nav {
-            Nav::PullRequests => "icons/pull_request.svg",
+            Nav::PullRequests | Nav::Pull(_) => "icons/pull_request.svg",
             Nav::Issues => "icons/circle.svg",
             Nav::Scorecards => "icons/table.svg",
             Nav::Ci => "icons/play_outlined.svg",
@@ -5643,6 +5643,10 @@ impl Workspace {
     /// needs you, your turn, ended), a review's verdict once it's in and
     /// claude's waiting; a page's is plain.
     fn tab_tint(&self, tab: &Tab, theme: &Theme, cx: &App) -> gpui::Hsla {
+        // A PR's page in its state's colour.
+        if let Page::Pull(page) = &tab.page {
+            return page.read(cx).state_colour(theme);
+        }
         let Nav::Session(id) = tab.nav else { return theme.secondary };
         let Some(page) = self.session(id, cx) else { return theme.secondary };
         let state = page.read(cx).state;

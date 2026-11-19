@@ -1,11 +1,14 @@
-//! A pull request as a page of its own (the PR drawer's Open in Page), laid
-//! out as GitHub's PR overview so it can stand in for it: the title, state,
-//! branches and size, then Overview, Commits, Checks and Files changed. The
-//! Overview leads with what the harness knows (the merge risk Gannin's
-//! review reached, the sessions about it, the plans it delivers on, and
-//! Review and Explain), then the description and one timeline of comments,
-//! reviews with their threads, commits and events; the sidebar has the
-//! activity, reviewers, assignees, labels, milestone, linked issues and
+//! A pull request as a page of its own (the PR drawer's Open in Page). Not
+//! GitHub's page again: the Overview answers Gannin's question, where it
+//! stands and whose move it is. It leads with that one line and its facts
+//! (open threads, checks, approvals, merge risk), then what Needs attention
+//! (changes requested, failing checks, open threads, reviewers yet to
+//! review), each with who it waits on and since when; then what the harness
+//! knows, the description, and the timeline in rounds (a push of commits
+//! and what followed), newest first, with those since the viewer last
+//! looked marked and open, and bots, review requests and labels folded to
+//! one line. Commits, Checks and Files changed are tabs; the sidebar has
+//! the reviewers, assignees, labels, milestone, linked issues and
 //! participants.
 //!
 //! Read only: it's fetched in one GraphQL query when it opens and on
@@ -50,10 +53,14 @@ enum Section {
 struct Person {
     login: String,
     avatar: Option<String>,
+    /// An app's account (CodeRabbit, Dependabot): its comments fold away.
+    bot: bool,
 }
 
 struct Reviewer {
     person: Person,
+    /// When they reviewed, or were asked to for one who hasn't.
+    at: Option<DateTime<Utc>>,
     /// APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, or REQUESTED for
     /// one asked who hasn't reviewed.
     state: String,
@@ -96,16 +103,46 @@ struct Thread {
     line: Option<i64>,
     resolved: bool,
     comments: Vec<(String, String)>,
+    /// Who started it, who said the last word and when, and its link.
+    started_by: String,
+    last_by: String,
+    last_at: Option<DateTime<Utc>>,
+    url: String,
 }
 
 enum Event {
     Comment { author: Person, body: String, at: Option<DateTime<Utc>>, url: String },
     Review { id: String, author: Person, state: String, body: String, at: Option<DateTime<Utc>>, url: String },
     Commit { short: String, headline: String, at: Option<DateTime<Utc>>, author: String },
-    Note { actor: String, text: String, at: Option<DateTime<Utc>> },
+    /// `noise` for what folds away in a round: review requests, labels.
+    Note { actor: String, text: String, at: Option<DateTime<Utc>>, noise: bool },
+}
+
+impl Event {
+    fn at(&self) -> Option<DateTime<Utc>> {
+        match self {
+            Event::Comment { at, .. } | Event::Review { at, .. } | Event::Commit { at, .. } | Event::Note { at, .. } => *at,
+        }
+    }
+
+    /// What a round folds into one line: bots, a bare bot command
+    /// ("@ctrl-hub-bot run tests"), review requests and labels.
+    fn is_noise(&self) -> bool {
+        match self {
+            Event::Comment { author, body, .. } => {
+                let body = body.trim();
+                author.bot || (body.starts_with('@') && !body.contains('\n') && body.len() <= 60)
+            }
+            Event::Review { author, .. } => author.bot,
+            Event::Note { noise, .. } => *noise,
+            Event::Commit { .. } => false,
+        }
+    }
 }
 
 struct PullData {
+    /// Who's signed in, for "since you looked".
+    viewer: String,
     id: String,
     title: String,
     state: String,
@@ -135,14 +172,14 @@ struct PullData {
     threads: Vec<Thread>,
 }
 
-const QUERY: &str = r#"query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+const QUERY: &str = r#"query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) {
   id title state isDraft body createdAt mergedAt closedAt additions deletions baseRefName headRefName
   author { login avatarUrl } mergedBy { login }
   labels(first: 20) { nodes { name color } }
   assignees(first: 10) { nodes { login avatarUrl } }
   milestone { title }
   reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login avatarUrl } ... on Team { name } } } }
-  latestReviews(first: 20) { nodes { state author { login avatarUrl } } }
+  latestReviews(first: 20) { nodes { state submittedAt author { login avatarUrl } } }
   closingIssuesReferences(first: 10) { nodes { id number title url state repository { nameWithOwner } } }
   participants(first: 30) { nodes { login avatarUrl } }
   commits(last: 100) { totalCount nodes { commit { abbreviatedOid messageHeadline committedDate url author { name user { login } } } } }
@@ -150,10 +187,10 @@ const QUERY: &str = r#"query($owner: String!, $name: String!, $number: Int!) { r
   checks: commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename
     ... on CheckRun { name conclusion status detailsUrl }
     ... on StatusContext { context state targetUrl } } } } } } }
-  reviewThreads(first: 100) { nodes { isResolved path line comments(first: 20) { nodes { body author { login } pullRequestReview { id } } } } }
+  reviewThreads(first: 100) { nodes { isResolved path line comments(first: 20) { nodes { body createdAt url author { login } pullRequestReview { id } } } } }
   timelineItems(last: 150, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, LABELED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, CROSS_REFERENCED_EVENT]) { nodes { __typename
-    ... on IssueComment { body createdAt url author { login avatarUrl } }
-    ... on PullRequestReview { id body state submittedAt url author { login avatarUrl } }
+    ... on IssueComment { body createdAt url author { __typename login avatarUrl } }
+    ... on PullRequestReview { id body state submittedAt url author { __typename login avatarUrl } }
     ... on PullRequestCommit { commit { abbreviatedOid messageHeadline committedDate author { name user { login } } } }
     ... on MergedEvent { createdAt actor { login } commit { abbreviatedOid } }
     ... on ClosedEvent { createdAt actor { login } }
@@ -180,7 +217,8 @@ fn nodes(v: &Value) -> Vec<Value> {
 }
 
 fn person(v: &Value) -> Person {
-    Person { login: v["login"].as_str().unwrap_or("ghost").to_string(), avatar: v["avatarUrl"].as_str().map(str::to_string) }
+    let login = v["login"].as_str().unwrap_or("ghost").to_string();
+    Person { bot: v["__typename"] == "Bot" || login.ends_with("[bot]"), login, avatar: v["avatarUrl"].as_str().map(str::to_string) }
 }
 
 /// The whole PR, read from GitHub. Blocking: run it off the main thread.
@@ -192,12 +230,20 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
     if pr.is_null() {
         return Err("GitHub didn't return the pull request.".into());
     }
-    let mut reviewers: Vec<Reviewer> = nodes(&pr["latestReviews"]).iter().map(|r| Reviewer { person: person(&r["author"]), state: text(&r["state"]) }).collect();
+    // When each reviewer was last asked, from the timeline.
+    let mut asked: std::collections::HashMap<String, DateTime<Utc>> = std::collections::HashMap::new();
+    for n in nodes(&pr["timelineItems"]).iter().filter(|n| n["__typename"] == "ReviewRequestedEvent") {
+        let who = &n["requestedReviewer"];
+        if let (Some(login), Some(at)) = (who["login"].as_str().or(who["name"].as_str()), time(&n["createdAt"])) {
+            asked.insert(login.to_string(), at);
+        }
+    }
+    let mut reviewers: Vec<Reviewer> = nodes(&pr["latestReviews"]).iter().map(|r| Reviewer { person: person(&r["author"]), at: time(&r["submittedAt"]), state: text(&r["state"]) }).collect();
     for request in nodes(&pr["reviewRequests"]) {
         let who = &request["requestedReviewer"];
         let login = who["login"].as_str().or(who["name"].as_str()).unwrap_or("").to_string();
         if !login.is_empty() && !reviewers.iter().any(|r| r.person.login == login) {
-            reviewers.push(Reviewer { person: Person { login, avatar: who["avatarUrl"].as_str().map(str::to_string) }, state: "REQUESTED".into() });
+            reviewers.push(Reviewer { at: asked.get(&login).copied(), person: Person { login, avatar: who["avatarUrl"].as_str().map(str::to_string), bot: false }, state: "REQUESTED".into() });
         }
     }
     let checks = nodes(&pr["checks"]).first().map(|c| nodes(&c["commit"]["statusCheckRollup"]["contexts"])).unwrap_or_default();
@@ -250,7 +296,12 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
         .iter()
         .map(|t| {
             let comments = nodes(&t["comments"]);
+            let login = |c: Option<&Value>| c.and_then(|c| c["author"]["login"].as_str()).unwrap_or("ghost").to_string();
             Thread {
+                started_by: login(comments.first()),
+                last_by: login(comments.last()),
+                last_at: comments.last().and_then(|c| time(&c["createdAt"])),
+                url: comments.first().map(|c| text(&c["url"])).unwrap_or_default(),
                 review: comments.first().and_then(|c| c["pullRequestReview"]["id"].as_str().map(str::to_string)),
                 path: text(&t["path"]),
                 line: t["line"].as_i64(),
@@ -283,26 +334,27 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
                         author: c["author"]["user"]["login"].as_str().or(c["author"]["name"].as_str()).unwrap_or("").to_string(),
                     }
                 }
-                "MergedEvent" => Event::Note { actor: actor(n), text: format!("merged commit {}", text(&n["commit"]["abbreviatedOid"])), at },
-                "ClosedEvent" => Event::Note { actor: actor(n), text: "closed this".into(), at },
-                "ReopenedEvent" => Event::Note { actor: actor(n), text: "reopened this".into(), at },
-                "ReadyForReviewEvent" => Event::Note { actor: actor(n), text: "marked this ready for review".into(), at },
-                "ConvertToDraftEvent" => Event::Note { actor: actor(n), text: "converted this to a draft".into(), at },
+                "MergedEvent" => Event::Note { noise: false, actor: actor(n), text: format!("merged commit {}", text(&n["commit"]["abbreviatedOid"])), at },
+                "ClosedEvent" => Event::Note { noise: false, actor: actor(n), text: "closed this".into(), at },
+                "ReopenedEvent" => Event::Note { noise: false, actor: actor(n), text: "reopened this".into(), at },
+                "ReadyForReviewEvent" => Event::Note { noise: false, actor: actor(n), text: "marked this ready for review".into(), at },
+                "ConvertToDraftEvent" => Event::Note { noise: false, actor: actor(n), text: "converted this to a draft".into(), at },
                 "ReviewRequestedEvent" => {
                     let who = &n["requestedReviewer"];
-                    Event::Note { actor: actor(n), text: format!("asked {} for a review", who["login"].as_str().or(who["name"].as_str()).unwrap_or("someone")), at }
+                    Event::Note { noise: true, actor: actor(n), text: format!("asked {} for a review", who["login"].as_str().or(who["name"].as_str()).unwrap_or("someone")), at }
                 }
-                "LabeledEvent" => Event::Note { actor: actor(n), text: format!("added the {} label", text(&n["label"]["name"])), at },
-                "HeadRefForcePushedEvent" => Event::Note { actor: actor(n), text: "force-pushed the branch".into(), at },
+                "LabeledEvent" => Event::Note { noise: true, actor: actor(n), text: format!("added the {} label", text(&n["label"]["name"])), at },
+                "HeadRefForcePushedEvent" => Event::Note { noise: false, actor: actor(n), text: "force-pushed the branch".into(), at },
                 "CrossReferencedEvent" => {
                     let s = &n["source"];
-                    Event::Note { actor: actor(n), text: format!("mentioned this in {}#{}: {}", text(&s["repository"]["nameWithOwner"]), s["number"].as_i64().unwrap_or(0), text(&s["title"])), at }
+                    Event::Note { noise: false, actor: actor(n), text: format!("mentioned this in {}#{}: {}", text(&s["repository"]["nameWithOwner"]), s["number"].as_i64().unwrap_or(0), text(&s["title"])), at }
                 }
                 _ => return None,
             })
         })
         .collect();
     Ok(PullData {
+        viewer: text(&data["viewer"]["login"]),
         id: text(&pr["id"]),
         title: text(&pr["title"]),
         state: text(&pr["state"]),
@@ -356,12 +408,17 @@ pub struct PullPage {
     related: Vec<Related>,
     /// The body's width as last laid out, for how many columns it takes.
     width: std::rc::Rc<std::cell::Cell<f32>>,
+    /// Rounds opened or closed by the person, by index; the rest follow
+    /// whether they're the latest or new since the viewer looked.
+    rounds_open: std::collections::HashMap<usize, bool>,
+    /// Rounds whose folded events (bots, requests, labels) are shown.
+    noise_open: std::collections::HashSet<usize>,
     _fetch: Option<Task<()>>,
 }
 
 impl PullPage {
     pub fn new(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { pr, org, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), width: Default::default(), _fetch: None };
+        let mut page = Self { pr, org, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), _fetch: None };
         page.refresh(cx);
         page
     }
@@ -431,6 +488,11 @@ impl PullPage {
 
     fn button(id: &'static str, label: &str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
         div().id(id).flex_none().px_2().py_0p5().rounded_md().border_1().border_color(theme.border).text_sm().cursor_pointer().hover(|s| s.bg(theme.row_selected)).child(label.to_string())
+    }
+
+    /// Its state's colour, for its tab's icon.
+    pub fn state_colour(&self, theme: &Theme) -> Hsla {
+        self.state_tint(theme).1
     }
 
     fn state_tint(&self, theme: &Theme) -> (&'static str, Hsla) {
@@ -640,9 +702,11 @@ impl PullPage {
             })
     }
 
-    fn timeline(&self, data: &PullData, theme: &Theme, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The timeline's events at `indexes`, as cards and lines.
+    fn events(&self, data: &PullData, indexes: &[usize], theme: &Theme, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = Vec::new();
-        for (i, event) in data.timeline.iter().enumerate() {
+        for &i in indexes {
+            let event = &data.timeline[i];
             let element = match event {
                 Event::Comment { author, body, at, url } => Self::card(theme)
                     .child(Self::card_head(author, div().into_any_element(), *at, Some((format!("pull-comment-link-{i}"), url.clone())), theme, cx))
@@ -681,7 +745,7 @@ impl PullPage {
                     .child(div().flex_none().font_family(crate::zed::MONO).text_xs().child(short.clone()))
                     .child(div().flex_none().child(Self::when(*at)))
                     .into_any_element(),
-                Event::Note { actor, text, at } => Self::note(theme, actor, text, *at, None).into_any_element(),
+                Event::Note { actor, text, at, .. } => Self::note(theme, actor, text, *at, None).into_any_element(),
             };
             out.push(element);
         }
@@ -742,15 +806,302 @@ impl PullPage {
             })
     }
 
+    /// Who a thread waits on: the author when a reviewer spoke last, the
+    /// one who started it when the author answered.
+    fn thread_owner<'a>(thread: &'a Thread, author: &'a str) -> &'a str {
+        if thread.last_by == author { &thread.started_by } else { author }
+    }
+
+    /// The one line that says where the PR stands and whose move it is,
+    /// and its colour.
+    fn decision(&self, data: &PullData, theme: &Theme) -> (String, Hsla) {
+        let author = data.author.login.as_str();
+        let names = |list: Vec<&str>| match list.len() {
+            0 => String::new(),
+            1 => list[0].to_string(),
+            n => format!("{} and {}", list[..n - 1].join(", "), list[n - 1]),
+        };
+        match data.state.as_str() {
+            "MERGED" => return (format!("Merged by {} {}", data.merged_by.clone().unwrap_or_default(), Self::when(data.merged_at)), theme.slot(5)),
+            "CLOSED" => return (format!("Closed without merging {}", Self::when(data.closed_at)), theme.secondary),
+            _ => {}
+        }
+        if data.draft {
+            return (format!("Draft: {author} hasn't asked for review yet"), theme.secondary);
+        }
+        let changes: Vec<&str> = data.reviewers.iter().filter(|r| r.state == "CHANGES_REQUESTED").map(|r| r.person.login.as_str()).collect();
+        let failing = data.checks.iter().filter(|c| c.outcome == "failure").count();
+        let on_author = data.threads.iter().filter(|t| !t.resolved && Self::thread_owner(t, author) == author).count();
+        if !changes.is_empty() {
+            return (format!("Waiting on {author}: {} requested changes", names(changes)), theme.orange());
+        }
+        if failing > 0 {
+            return (format!("Waiting on {author}: {failing} check{} failing", if failing == 1 { "" } else { "s" }), theme.critical());
+        }
+        if on_author > 0 {
+            return (format!("Waiting on {author}: {on_author} open thread{} to answer", if on_author == 1 { "" } else { "s" }), theme.orange());
+        }
+        let asked: Vec<&str> = data.reviewers.iter().filter(|r| r.state == "REQUESTED").map(|r| r.person.login.as_str()).collect();
+        let approved = data.reviewers.iter().any(|r| r.state == "APPROVED");
+        if approved && data.checks.iter().all(|c| c.outcome != "pending") {
+            return (format!("Approved: ready for {author} to merge"), theme.good());
+        }
+        if !asked.is_empty() {
+            return (format!("Waiting on {} to review", names(asked)), gpui::rgb(0xEDA100).into());
+        }
+        if data.checks.iter().any(|c| c.outcome == "pending") {
+            return ("Waiting on checks to finish".into(), gpui::rgb(0xEDA100).into());
+        }
+        (format!("Waiting on {author} to ask for a review"), theme.secondary)
+    }
+
+    /// The decision, then the facts behind it as chips.
+    fn decision_block(&self, data: &PullData, theme: &Theme) -> impl IntoElement {
+        let (line, tint) = self.decision(data, theme);
+        let open = data.threads.iter().filter(|t| !t.resolved).count();
+        let (failing, pending) = (data.checks.iter().filter(|c| c.outcome == "failure").count(), data.checks.iter().filter(|c| c.outcome == "pending").count());
+        let approvals = data.reviewers.iter().filter(|r| r.state == "APPROVED").count();
+        let chip = |text: String, tint: Hsla| div().flex().flex_row().items_center().gap_1().text_sm().child(div().size(px(7.)).rounded_full().bg(tint)).child(text);
+        let checks = if data.checks.is_empty() {
+            chip("No checks".into(), theme.tertiary)
+        } else if failing > 0 {
+            chip(format!("{failing} failing"), theme.critical())
+        } else if pending > 0 {
+            chip(format!("{pending} checks running"), gpui::rgb(0xEDA100).into())
+        } else {
+            chip("Checks passing".into(), theme.good())
+        };
+        let risk = crate::risk::level_for(&data.id);
+        div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(line))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_x_4()
+                    .gap_y_1()
+                    .text_color(theme.secondary)
+                    .child(chip(if open == 1 { "1 open thread".into() } else { format!("{open} open threads") }, if open > 0 { theme.orange() } else { theme.good() }))
+                    .child(checks)
+                    .child(chip(if approvals == 1 { "1 approval".into() } else { format!("{approvals} approvals") }, if approvals > 0 { theme.good() } else { theme.tertiary }))
+                    .child(match risk {
+                        Some(level) => chip(format!("Merge risk {}", level.title()), crate::review_panel::risk_tint(level, theme)),
+                        None => chip("Merge risk not graded".into(), theme.tertiary),
+                    }),
+            )
+    }
+
+    /// What's open, each with whose move it is and for how long: changes
+    /// requested, failing checks, open threads, reviewers yet to review.
+    fn attention(&self, data: &PullData, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        struct Item {
+            tint: Hsla,
+            text: String,
+            detail: Option<String>,
+            owner: String,
+            since: Option<DateTime<Utc>>,
+            url: Option<String>,
+        }
+        let author = data.author.login.clone();
+        let mut items: Vec<Item> = Vec::new();
+        if data.state == "OPEN" {
+            for r in data.reviewers.iter().filter(|r| r.state == "CHANGES_REQUESTED") {
+                items.push(Item { tint: theme.orange(), text: format!("{} requested changes", r.person.login), detail: None, owner: author.clone(), since: r.at, url: None });
+            }
+            for c in data.checks.iter().filter(|c| c.outcome == "failure") {
+                items.push(Item { tint: theme.critical(), text: format!("{} is failing", c.name), detail: None, owner: author.clone(), since: None, url: c.url.clone() });
+            }
+            let mut threads: Vec<&Thread> = data.threads.iter().filter(|t| !t.resolved).collect();
+            threads.sort_by_key(|t| t.last_at);
+            for t in threads {
+                let first = t.comments.first().map(|(_, body)| body.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string());
+                items.push(Item {
+                    tint: theme.orange(),
+                    text: match t.line {
+                        Some(line) => format!("{} line {line}", t.path),
+                        None => t.path.clone(),
+                    },
+                    detail: first.map(|f| format!("{}: {f}", t.started_by)),
+                    owner: Self::thread_owner(t, &author).to_string(),
+                    since: t.last_at,
+                    url: Some(t.url.clone()).filter(|u| !u.is_empty()),
+                });
+            }
+            for r in data.reviewers.iter().filter(|r| r.state == "REQUESTED") {
+                items.push(Item { tint: gpui::rgb(0xEDA100).into(), text: format!("{} hasn't reviewed", r.person.login), detail: None, owner: r.person.login.clone(), since: r.at, url: None });
+            }
+        }
+        if items.is_empty() {
+            return div().text_sm().text_color(theme.secondary).child(if data.state == "OPEN" { "Nothing open." } else { "Nothing open: it's done." }).into_any_element();
+        }
+        let count = items.len();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().flex().flex_row().gap_1p5().font_weight(FontWeight::SEMIBOLD).child("Needs attention").child(div().text_color(theme.secondary).font_weight(FontWeight::NORMAL).child(count.to_string())))
+            .child(div().flex().flex_col().rounded_lg().border_1().border_color(theme.border).children(items.into_iter().enumerate().map(|(i, item)| {
+                div()
+                    .id(("pull-attention", i))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py_1p5()
+                    .when(i > 0, |d| d.border_t_1().border_color(theme.border))
+                    .when_some(item.url, |d, url| d.cursor_pointer().hover(|s| s.bg(theme.tile)).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                    .child(div().flex_none().size(px(7.)).rounded_full().bg(item.tint))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().truncate().text_sm().child(item.text))
+                            .when_some(item.detail, |d, detail| d.child(div().truncate().text_xs().text_color(theme.secondary).child(detail))),
+                    )
+                    .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("on {}", item.owner)))
+                    .when_some(item.since, |d, at| d.child(div().flex_none().w(px(80.)).text_right().text_sm().text_color(theme.tertiary).child(Self::when(Some(at)))))
+            })))
+            .into_any_element()
+    }
+
+    /// The timeline in rounds: each starts with a push of commits and
+    /// holds what followed it, in order. Indexes into `timeline`.
+    fn rounds(data: &PullData) -> Vec<Vec<usize>> {
+        let mut rounds: Vec<Vec<usize>> = Vec::new();
+        let mut current: Vec<usize> = Vec::new();
+        for (i, event) in data.timeline.iter().enumerate() {
+            let commit = matches!(event, Event::Commit { .. });
+            if commit && current.iter().any(|&j| !matches!(data.timeline[j], Event::Commit { .. })) {
+                rounds.push(std::mem::take(&mut current));
+            }
+            current.push(i);
+        }
+        if !current.is_empty() {
+            rounds.push(current);
+        }
+        rounds
+    }
+
+    /// When the viewer last commented or reviewed here.
+    fn last_look(data: &PullData) -> Option<DateTime<Utc>> {
+        data.timeline
+            .iter()
+            .filter_map(|e| match e {
+                Event::Comment { author, at, .. } | Event::Review { author, at, .. } if author.login.eq_ignore_ascii_case(&data.viewer) => *at,
+                _ => None,
+            })
+            .max()
+    }
+
+    /// The rounds, newest first: the latest and any since the viewer
+    /// looked open, the rest a line each; in each, what folds away (bots,
+    /// review requests, labels) is one line until clicked.
+    fn rounds_view(&self, data: &PullData, theme: &Theme, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let rounds = Self::rounds(data);
+        let last_look = Self::last_look(data);
+        let latest = rounds.len().saturating_sub(1);
+        let mut out = Vec::new();
+        for (index, round) in rounds.iter().enumerate().rev() {
+            let end = round.iter().filter_map(|&i| data.timeline[i].at()).max();
+            let new = last_look.is_some_and(|look| round.iter().any(|&i| {
+                let e = &data.timeline[i];
+                e.at().is_some_and(|at| at > look) && !e.is_noise() && !matches!(e, Event::Comment { author, .. } | Event::Review { author, .. } if author.login.eq_ignore_ascii_case(&data.viewer))
+            }));
+            let open = self.rounds_open.get(&index).copied().unwrap_or(index == latest || new);
+            let commits = round.iter().filter(|&&i| matches!(data.timeline[i], Event::Commit { .. })).count();
+            let reviews = round.iter().filter(|&&i| matches!(&data.timeline[i], Event::Review { author, .. } if !author.bot)).count();
+            let comments = round.iter().filter(|&&i| matches!(&data.timeline[i], Event::Comment { .. }) && !data.timeline[i].is_noise()).count();
+            let mut summary: Vec<String> = Vec::new();
+            for (n, one, many) in [(commits, "commit", "commits"), (reviews, "review", "reviews"), (comments, "comment", "comments")] {
+                if n > 0 {
+                    summary.push(format!("{n} {}", if n == 1 { one } else { many }));
+                }
+            }
+            let header = div()
+                .id(("pull-round", index))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .py_1()
+                .cursor_pointer()
+                .text_sm()
+                .hover(|s| s.text_color(theme.fg))
+                .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                    page.rounds_open.insert(index, !open);
+                    cx.notify();
+                }))
+                .child(div().flex_none().w(px(10.)).text_color(theme.tertiary).child(if open { "▾" } else { "▸" }))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("Round {}", index + 1)))
+                .child(div().text_color(theme.secondary).child(summary.join(", ")))
+                .when(new, |d| d.child(div().px_1p5().rounded_full().text_xs().bg(theme.selected).text_color(theme.on_selected).child("New since you looked")))
+                .child(div().flex_1())
+                .child(div().text_color(theme.tertiary).child(Self::when(end)));
+            out.push(header.into_any_element());
+            if !open {
+                continue;
+            }
+            let shown: Vec<usize> = round.iter().copied().filter(|&i| !data.timeline[i].is_noise()).collect();
+            let folded: Vec<usize> = round.iter().copied().filter(|&i| data.timeline[i].is_noise()).collect();
+            let events = self.events(data, &shown, theme, cx);
+            let mut body = div().flex().flex_col().gap_2().pl_4().pb_2().children(events);
+            if !folded.is_empty() {
+                let bots = folded.iter().filter(|&&i| matches!(data.timeline[i], Event::Comment { .. } | Event::Review { .. })).count();
+                let notes = folded.len() - bots;
+                let mut parts = Vec::new();
+                if bots > 0 {
+                    parts.push(format!("{bots} bot comment{}", if bots == 1 { "" } else { "s" }));
+                }
+                if notes > 0 {
+                    parts.push(format!("{notes} review request{} and label{}", if notes == 1 { "" } else { "s" }, if notes == 1 { "" } else { "s" }));
+                }
+                let showing = self.noise_open.contains(&index);
+                body = body.child(
+                    div()
+                        .id(("pull-noise", index))
+                        .px_3()
+                        .text_sm()
+                        .text_color(theme.tertiary)
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(theme.secondary))
+                        .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                            if !page.noise_open.remove(&index) {
+                                page.noise_open.insert(index);
+                            }
+                            cx.notify();
+                        }))
+                        .child(format!("{} {}", if showing { "Hide" } else { "Show" }, parts.join(", "))),
+                );
+                if showing {
+                    body = body.children(self.events(data, &folded, theme, cx));
+                }
+            }
+            out.push(body.into_any_element());
+        }
+        out
+    }
+
+    /// Gannin's question first (where it stands, whose move, what's open),
+    /// then what the harness knows, the description, and the rounds.
     fn overview(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let Some(data) = &self.data else {
             return div().p_4().text_color(theme.secondary).child(self.error.clone().unwrap_or_else(|| "Loading the pull request".into())).into_any_element();
         };
-        let timeline = self.timeline(data, theme, cx);
+        let attention = self.attention(data, theme, cx);
+        let rounds = self.rounds_view(data, theme, cx);
         div()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_4()
+            .child(self.decision_block(data, theme))
+            .child(attention)
             .child(self.harness_strip(theme, cx))
             .child(
                 Self::card(theme)
@@ -761,7 +1112,7 @@ impl PullPage {
                         markdown("pull-body", &data.body, theme)
                     })),
             )
-            .children(timeline)
+            .child(div().flex().flex_col().gap_1().children(rounds))
             .into_any_element()
     }
 
