@@ -256,6 +256,13 @@ impl TabStatus {
 /// What Resume All tells each session Pause All stopped.
 const RESUME: &str = "Carry on from where you were interrupted.";
 
+/// Message: one message to several Claude Code sessions at once. While
+/// it's open, each session's tab has a checkbox; those ticked get it.
+struct Broadcast {
+    field: Entity<editor::Editor>,
+    picked: std::collections::HashSet<u32>,
+}
+
 /// What a tab is, for its icon and the tab bar's filter; in the order
 /// grouped tabs go.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
@@ -509,6 +516,8 @@ pub struct Workspace {
     tab_filter_open: bool,
     /// Sessions Pause All stopped, for Resume All to start again.
     paused_sessions: std::collections::HashSet<u32>,
+    /// Message's composer and the sessions picked, while it's open.
+    broadcast: Option<Broadcast>,
     /// Kinds whose group of tabs is folded away.
     collapsed_kinds: std::collections::HashSet<TabKind>,
     /// Which window this is, for where its state is saved (0 is the first).
@@ -896,6 +905,7 @@ impl Workspace {
             show_on_reopen: None,
             tab_filter_open: false,
             paused_sessions: Default::default(),
+            broadcast: None,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
             _subscriptions: subscriptions,
@@ -4745,10 +4755,159 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Whether a session can be sent a message: a Claude Code one (not a
+    /// plain terminal, where it'd run as a command) that hasn't ended.
+    fn messageable(&self, id: u32, cx: &App) -> bool {
+        self.session(id, cx).is_some_and(|p| {
+            let p = p.read(cx);
+            p.kind == Kind::Claude && p.state != State::Ended
+        })
+    }
+
+    /// Opens Message with every session the tab bar shows picked, so a
+    /// filter or search narrows who gets it; closes it when open.
+    fn toggle_broadcast(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.broadcast.take().is_some() {
+            cx.notify();
+            return;
+        }
+        let picked = self
+            .tabs
+            .iter()
+            .filter(|t| self.tab_shows(t, cx))
+            .filter_map(|t| match t.nav {
+                Nav::Session(id) if self.messageable(id, cx) => Some(id),
+                _ => None,
+            })
+            .collect();
+        let field = cx.new(|cx| {
+            let mut field = editor::Editor::auto_height(1, 6, window, cx);
+            field.set_placeholder_text("Message the sessions ticked", window, cx);
+            field
+        });
+        window.focus(&field.focus_handle(cx), cx);
+        self.broadcast = Some(Broadcast { field, picked });
+        cx.notify();
+    }
+
+    /// Types the message into each session ticked, as if typed there; a
+    /// working one queues it for after its turn, as Claude Code does.
+    fn send_broadcast(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(broadcast) = &self.broadcast else { return };
+        let text = broadcast.field.read(cx).text(cx).trim().to_string();
+        let picked: Vec<u32> = broadcast.picked.iter().copied().filter(|id| self.messageable(*id, cx)).collect();
+        if text.is_empty() || picked.is_empty() {
+            return;
+        }
+        for id in picked {
+            if let Some(session) = self.session(id, cx).cloned() {
+                session.update(cx, |s, cx| s.tell(&text, cx));
+            }
+        }
+        self.broadcast = None;
+        self.focus_current(window, cx);
+        cx.notify();
+    }
+
+    /// Message's composer, under the tabs: who it goes to, the text, and
+    /// Send. Enter sends, Shift-Enter starts a new line, Escape closes.
+    fn broadcast_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let broadcast = self.broadcast.as_ref()?;
+        let all: Vec<u32> = self
+            .tabs
+            .iter()
+            .filter_map(|t| match t.nav {
+                Nav::Session(id) if self.messageable(id, cx) => Some(id),
+                _ => None,
+            })
+            .collect();
+        let count = broadcast.picked.iter().filter(|id| all.contains(id)).count();
+        let ready = count > 0 && !broadcast.field.read(cx).text(cx).trim().is_empty();
+        let link = |id: &'static str, label: &'static str| {
+            div().id(id).flex_none().px_1p5().rounded_sm().text_sm().cursor_pointer().text_color(theme.secondary).hover(|s| s.bg(theme.row_selected).text_color(theme.fg)).child(label)
+        };
+        let button = |id: &'static str, label: String, prominent: bool, enabled: bool| {
+            div()
+                .id(id)
+                .flex_none()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .text_sm()
+                .map(|d| if prominent { d.bg(theme.selected).text_color(theme.on_selected) } else { d.border_1().border_color(theme.border) })
+                .when(enabled, |d| d.cursor_pointer().hover(|s| s.opacity(0.85)))
+                .when(!enabled, |d| d.opacity(0.4))
+                .child(label)
+        };
+        let every = all.clone();
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .bg(theme.sidebar)
+                .border_b_1()
+                .border_color(theme.border)
+                .child(div().flex_none().pt_0p5().text_sm().font_weight(FontWeight::MEDIUM).child(format!("Message {count} of {}", all.len())))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.bg)
+                        .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| match event.keystroke.key.as_str() {
+                            "enter" if !event.keystroke.modifiers.shift => {
+                                cx.stop_propagation();
+                                this.send_broadcast(window, cx);
+                            }
+                            "escape" => {
+                                cx.stop_propagation();
+                                this.broadcast = None;
+                                this.focus_current(window, cx);
+                                cx.notify();
+                            }
+                            _ => cx.notify(),
+                        }))
+                        .child(broadcast.field.clone()),
+                )
+                .child(link("broadcast-all", "All").on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(b) = this.broadcast.as_mut() {
+                        b.picked = every.iter().copied().collect();
+                    }
+                    cx.notify();
+                })))
+                .child(link("broadcast-none", "None").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    if let Some(b) = this.broadcast.as_mut() {
+                        b.picked.clear();
+                    }
+                    cx.notify();
+                })))
+                .child(button("broadcast-cancel", "Cancel".into(), false, true).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.broadcast = None;
+                    this.focus_current(window, cx);
+                    cx.notify();
+                })))
+                .child(button("broadcast-send", if count == 1 { "Send to 1".into() } else { format!("Send to {count}") }, true, ready).when(ready, |d| {
+                    d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_broadcast(window, cx)))
+                })),
+        )
+    }
+
     /// Pause All and Resume All, beside the "+": each shows only when it
-    /// would do something.
+    /// would do something. Message shows while a Claude Code session can
+    /// take one.
     fn pause_controls(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let working = self.sessions.iter().filter(|s| s.read(cx).state == State::Working).count();
+        let can_message = self.sessions.iter().any(|s| self.messageable(s.read(cx).id, cx));
+        let messaging = self.broadcast.is_some();
         let paused = self.paused_sessions.iter().filter(|id| self.session(**id, cx).is_some_and(|s| s.read(cx).state != State::Ended)).count();
         let button = |id: &'static str, label: String, tip: String| {
             div()
@@ -4771,7 +4930,17 @@ impl Workspace {
             .flex_row()
             .items_center()
             .gap_1()
-            .when(working > 0 || paused > 0, |d| d.px_1().border_l_1().border_color(theme.border))
+            .when(working > 0 || paused > 0 || can_message, |d| d.px_1().border_l_1().border_color(theme.border))
+            .when(can_message || messaging, |d| {
+                d.child(
+                    button("message-sessions", "Message".into(), "Send one message to several Claude Code sessions: tick them in the tabs".into())
+                        .when(messaging, |b| b.bg(theme.row_selected).text_color(theme.fg))
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.toggle_broadcast(window, cx);
+                        })),
+                )
+            })
             .when(working > 0, |d| {
                 d.child(button("pause-all", format!("Pause All ({working})"), "Stop every working session, as Esc in each".into()).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
@@ -5033,6 +5202,43 @@ impl Workspace {
                     .on_drag(DraggedTab(index, label.clone()), |dragged, _, _, cx| cx.new(|_| ColumnDrag(dragged.1.clone())))
                     .drag_over::<DraggedTab>(move |style, _, _, _| style.bg(landing))
                     .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| this.move_tab(dragged.0, index, cx)))
+                    // While Message is open, a Claude Code session's tab
+                    // has a checkbox for whether it gets the message.
+                    .when_some(
+                        self.broadcast.as_ref().and_then(|b| match tab.nav {
+                            Nav::Session(session) if self.messageable(session, cx) => Some((session, b.picked.contains(&session))),
+                            _ => None,
+                        }),
+                        |d, (session, on)| {
+                            d.child(
+                                div()
+                                    .id(("broadcast-pick", index))
+                                    .flex_none()
+                                    .size(px(14.))
+                                    .rounded(px(3.))
+                                    .border_1()
+                                    .border_color(if on { theme.selected } else { theme.secondary })
+                                    .when(on, |d| d.bg(theme.selected))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_xs()
+                                    .text_color(theme.on_selected)
+                                    .cursor_pointer()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        if let Some(b) = this.broadcast.as_mut() {
+                                            if !b.picked.remove(&session) {
+                                                b.picked.insert(session);
+                                            }
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .child(if on { "✓" } else { "" }),
+                            )
+                        },
+                    )
                     .when(!filtered, |d| d.child(gpui::svg().path(icon).size(px(14.)).flex_none().text_color(tint)))
                     .map(|d| match &self.renaming {
                         Some((renamed, field)) if *renamed == id => d.child(
@@ -6768,6 +6974,7 @@ impl Render for Workspace {
             .flex()
             .flex_col()
             .when(!self.tabs_on_left, |d| d.child(self.tab_bar(&theme, cx)))
+            .when_some(self.broadcast_bar(&theme, cx), |d, bar| d.child(bar))
             .child(
                 div()
                     .flex_1()
