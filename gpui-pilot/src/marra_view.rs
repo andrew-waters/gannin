@@ -892,6 +892,7 @@ fn open_floating(cx: &mut App) {
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(980.), px(780.)), cx))),
         window_min_size: Some(gpui::size(px(760.), px(520.))),
         titlebar: Some(gpui::TitlebarOptions { title: Some("Marra".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(px(14.), px(13.))) }),
+        app_id: Some(crate::shell::APP_ID.into()),
         // Kept above other apps unless Keep on Top is off.
         kind: if on_top { gpui::WindowKind::Floating } else { gpui::WindowKind::Normal },
         ..Default::default()

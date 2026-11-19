@@ -230,12 +230,17 @@ fn sections() -> Vec<Section> {
 /// The orgs being synced now, by any window.
 static SYNCING: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
 
+/// The Wayland app ID / X11 WM_CLASS. Desktop environments match it to
+/// `gannin-gpui-pilot.desktop` for the window's icon (`task install-desktop`).
+pub const APP_ID: &str = "gannin-gpui-pilot";
+
 /// The window every Gannin window opens with: its own title bar, with the
 /// traffic lights over it.
 pub fn window_options(cx: &App) -> gpui::WindowOptions {
     gpui::WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(1440.), px(940.)), cx))),
         titlebar: Some(gpui::TitlebarOptions { title: Some("Gannin".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(px(14.), px(12.))) }),
+        app_id: Some(crate::shell::APP_ID.into()),
         ..Default::default()
     }
 }

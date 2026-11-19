@@ -185,6 +185,7 @@ fn main() {
                     let options = gpui::WindowOptions {
                         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(460.), gpui::px(860.)), cx))),
                         titlebar: Some(gpui::TitlebarOptions { title: Some("Marra".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(gpui::px(14.), gpui::px(13.))) }),
+                        app_id: Some(crate::shell::APP_ID.into()),
                         ..Default::default()
                     };
                     cx.open_window(options, |window, cx| cx.new(|cx| assistant_preview::AssistantPreview::new(window, cx))).expect("open the preview");
