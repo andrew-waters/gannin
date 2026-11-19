@@ -159,59 +159,19 @@ impl ChangesView {
         self.counts.clear();
         let files = found.trees.iter().enumerate().flat_map(|(t, tree)| tree.files.iter().enumerate().map(move |(f, file)| (t, f, tree, file)));
         for (tree_index, index, tree, file) in files {
-            let Ok(rel) = RelPath::new(Path::new(&file.path), PathStyle::local()) else { continue };
-            let rel: Arc<RelPath> = rel.into_arc();
-            let named = Arc::new(ChangedFile {
-                path: rel.clone(),
-                root: tree.path.clone(),
-                label: tree.label.clone(),
-                deleted: file.status == Status::Deleted,
-            });
-            let buffer = cx.new(|cx| {
-                let mut buffer = Buffer::local(file.current.clone(), cx);
-                buffer.file_updated(named, cx);
-                buffer.set_capability(Capability::ReadOnly, cx);
-                buffer
-            });
-            let base = cx.new(|cx| {
-                let mut base = Buffer::local(file.base.clone(), cx);
-                base.set_capability(Capability::ReadOnly, cx);
-                base
-            });
-            let snapshot = buffer.read(cx).text_snapshot();
-            let diff = cx.new(|cx| BufferDiff::new_with_base_text_buffer(&snapshot, base.clone(), cx));
-            let base_snapshot = base.read(cx).snapshot();
-            let update = diff.read(cx).update_diff(snapshot.clone(), &base_snapshot, Some(Arc::from(file.base.as_str())), cx);
             let (added, removed) = line_counts(&file.base, &file.current);
             self.counts.push(Count { tree: tree.label.clone(), path: file.path.clone(), status: file.status, added, removed });
-            let multibuffer = self.multibuffer.clone();
-            let key = PathKey::with_sort_prefix(((tree_index as u64) << 32) | index as u64, rel);
-            cx.spawn(async move |_, cx| {
-                let update = update.await;
-                cx.update(|cx| {
-                    diff.update(cx, |diff, cx| {
-                        diff.set_snapshot(update, cx);
-                    });
-                    let buffer_snapshot = buffer.read(cx).snapshot();
-                    let ranges: Vec<std::ops::Range<Point>> = diff
-                        .read(cx)
-                        .snapshot(cx)
-                        .hunks_intersecting_range(
-                            text::Anchor::min_max_range_for_buffer(buffer_snapshot.remote_id()),
-                            &buffer_snapshot,
-                        )
-                        .map(|hunk| {
-                            use text::ToPoint;
-                            hunk.buffer_range.start.to_point(&buffer_snapshot)..hunk.buffer_range.end.to_point(&buffer_snapshot)
-                        })
-                        .collect();
-                    multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.set_excerpts_for_path(key, buffer, ranges, 3, cx);
-                        multibuffer.add_diff(diff, cx);
-                    });
-                });
-            })
-            .detach();
+            add_file_diff(
+                &self.multibuffer,
+                ((tree_index as u64) << 32) | index as u64,
+                &file.path,
+                tree.path.clone(),
+                tree.label.clone(),
+                file.status == Status::Deleted,
+                &file.base,
+                &file.current,
+                cx,
+            );
         }
     }
 
@@ -484,6 +444,59 @@ fn line_counts(base: &str, current: &str) -> (usize, usize) {
     }
     let removed = (old_end - start) - (new_end - start - added);
     (added, removed)
+}
+
+/// Puts one file's change in `multibuffer`: an excerpt of its hunks with
+/// three lines around each, and its diff against `base`, shown inline.
+/// `sort` orders the excerpts; `label` and `root` name it in the header.
+/// Shared by a session's Changes and a review's file diff.
+#[allow(clippy::too_many_arguments)]
+pub fn add_file_diff(multibuffer: &Entity<MultiBuffer>, sort: u64, path: &str, root: PathBuf, label: String, deleted: bool, base: &str, current: &str, cx: &mut App) {
+    let Ok(rel) = RelPath::new(Path::new(path), PathStyle::local()) else { return };
+    let rel: Arc<RelPath> = rel.into_arc();
+    let named = Arc::new(ChangedFile { path: rel.clone(), root, label, deleted });
+    let current = current.to_string();
+    let base_text = base.to_string();
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(current, cx);
+        buffer.file_updated(named, cx);
+        buffer.set_capability(Capability::ReadOnly, cx);
+        buffer
+    });
+    let base = cx.new(|cx| {
+        let mut base = Buffer::local(base_text.clone(), cx);
+        base.set_capability(Capability::ReadOnly, cx);
+        base
+    });
+    let snapshot = buffer.read(cx).text_snapshot();
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text_buffer(&snapshot, base.clone(), cx));
+    let base_snapshot = base.read(cx).snapshot();
+    let update = diff.read(cx).update_diff(snapshot.clone(), &base_snapshot, Some(Arc::from(base_text.as_str())), cx);
+    let multibuffer = multibuffer.clone();
+    let key = PathKey::with_sort_prefix(sort, rel);
+    cx.spawn(async move |cx| {
+        let update = update.await;
+        cx.update(|cx| {
+            diff.update(cx, |diff, cx| {
+                diff.set_snapshot(update, cx);
+            });
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let ranges: Vec<std::ops::Range<Point>> = diff
+                .read(cx)
+                .snapshot(cx)
+                .hunks_intersecting_range(text::Anchor::min_max_range_for_buffer(buffer_snapshot.remote_id()), &buffer_snapshot)
+                .map(|hunk| {
+                    use text::ToPoint;
+                    hunk.buffer_range.start.to_point(&buffer_snapshot)..hunk.buffer_range.end.to_point(&buffer_snapshot)
+                })
+                .collect();
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.set_excerpts_for_path(key, buffer, ranges, 3, cx);
+                multibuffer.add_diff(diff, cx);
+            });
+        });
+    })
+    .detach();
 }
 
 // MARK: - A file for the editor's headers

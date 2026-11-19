@@ -147,6 +147,8 @@ pub struct ReviewPanel {
     /// acceptance criteria that need nothing doing.
     show_grading: bool,
     show_criteria: bool,
+    /// Each changed file's diff from GitHub, made when it's first shown.
+    diffs: HashMap<String, Entity<crate::pr_diff::PrDiff>>,
     _poll: Option<Task<()>>,
     /// Redraws the relative times now and then.
     _clock: Task<()>,
@@ -331,6 +333,7 @@ impl ReviewPanel {
             detail_width: Default::default(),
             show_grading: false,
             show_criteria: false,
+            diffs: HashMap::new(),
             _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
             sensitive,
@@ -384,6 +387,7 @@ impl ReviewPanel {
             detail_width: Default::default(),
             show_grading: false,
             show_criteria: false,
+            diffs: HashMap::new(),
             _clock: Self::clock(cx),
             source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, working, snapshot: Arc::new(snapshot) },
             result,
@@ -2339,6 +2343,19 @@ impl Render for ReviewPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
         let draft = self.post.as_ref().and_then(|post| self.post_draft(post, &theme, cx)).map(|d| d.into_any_element());
+        // A file's diff, read from GitHub the first time it's picked.
+        let diff = match (&self.selected, &self.source, draft.is_some()) {
+            (Selected::File(path), Source::Live { .. }, false) => {
+                if !self.diffs.contains_key(path) {
+                    let (repo, number) = self.subject();
+                    let (file, key) = (path.clone(), path.clone());
+                    let view = cx.new(|cx| crate::pr_diff::PrDiff::new(repo, number, file, window, cx));
+                    self.diffs.insert(key, view);
+                }
+                self.diffs.get(path).cloned()
+            }
+            _ => None,
+        };
         // Room for the Overview beside a risk sidebar, from the width the
         // detail area had when last laid out.
         let wide = self.detail_width.get() >= 980.;
@@ -2408,7 +2425,20 @@ impl Render for ReviewPanel {
                                 .w_full()
                                 .h(px(0.))
                             })
-                            .child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail))
+                            .map(|d| match diff {
+                                // A file: its findings above, its diff filling the rest.
+                                Some(diff) => d.child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h_full()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().id("review-detail").flex_none().max_h(gpui::relative(0.45)).overflow_y_scroll().p_5().child(detail))
+                                        .child(div().flex_1().min_h_0().border_t_1().border_color(theme.border).child(diff)),
+                                ),
+                                None => d.child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail)),
+                            })
                             .when_some(risk_side, |d, side| {
                                 d.child(div().id("review-risk").flex_none().w(px(340.)).h_full().overflow_y_scroll().p_5().border_l_1().border_color(theme.border).bg(theme.sidebar).child(side))
                             }),

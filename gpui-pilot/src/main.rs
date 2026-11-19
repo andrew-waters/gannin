@@ -64,6 +64,7 @@ mod work_panel;
 mod workflows;
 mod workflows_page;
 mod scorecard;
+mod pr_diff;
 mod pr_picker;
 mod prs;
 mod pull_page;
