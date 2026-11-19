@@ -73,7 +73,7 @@ struct StorageSettings: View {
             case .projects: ProjectStore.cacheDirectory
             case .actions: ActionsStore.cacheDirectory
             case .releases: ReleaseStore.cacheDirectory
-            case .details: DetailStore.cacheFile
+            case .details: DetailStore.cacheDirectory
             case .bankHolidays: BankHolidayStore.cacheDirectory
             }
         }

@@ -137,7 +137,7 @@ struct InboxView: View {
             // ones after a couple of minutes.
             .task(id: (inbox.reviews.map(\.pr) + inbox.changed.map(\.pr) + inbox.pullRequests).map(\.id)) {
                 for pr in inbox.reviews.map(\.pr) + inbox.changed.map(\.pr) + inbox.pullRequests where pr.checks == nil || pr.checks == .pending || pr.checks == .expected {
-                    await details.load(pr.id, updatedAt: pr.updatedAt)
+                    await details.load(pr.id, org: org, updatedAt: pr.updatedAt)
                 }
             }
         } else {
