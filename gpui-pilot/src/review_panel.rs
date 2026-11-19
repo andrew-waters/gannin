@@ -2,7 +2,8 @@
 //! verdict, how ready it is to merge and the effort; the files in the
 //! walkthrough's areas down the side, with Overview, findings not on a
 //! changed file and learnings above them; the selected one's detail beside
-//! it; and the conversation with claude (its terminal and a box to tell it
+//! it (the Overview leads with the verdict, with the merge risk in a sidebar
+//! on its right when there's room); and the conversation with claude (its terminal and a box to tell it
 //! something) in a pane along the bottom, shown while claude works.
 //!
 //! Post Review's sheet shows exactly what would go to GitHub and posts only
@@ -137,6 +138,13 @@ pub struct ReviewPanel {
     author: Option<review::Author>,
     /// Record it in the harness when posting (the app-wide setting).
     record_with_post: bool,
+    /// The detail area's width as last laid out: wide enough, the Overview
+    /// puts the merge risk in a sidebar on its right.
+    detail_width: std::rc::Rc<std::cell::Cell<f32>>,
+    /// Whether the risk sidebar shows how the grade was reached, and the
+    /// acceptance criteria that need nothing doing.
+    show_grading: bool,
+    show_criteria: bool,
     _poll: Option<Task<()>>,
     /// Redraws the relative times now and then.
     _clock: Task<()>,
@@ -297,6 +305,9 @@ impl ReviewPanel {
             plans: Vec::new(),
             author: None,
             record_with_post: crate::review_record::recording(),
+            detail_width: Default::default(),
+            show_grading: false,
+            show_criteria: false,
             _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
             sensitive,
@@ -346,6 +357,9 @@ impl ReviewPanel {
             plans: Vec::new(),
             author: None,
             record_with_post: crate::review_record::recording(),
+            detail_width: Default::default(),
+            show_grading: false,
+            show_criteria: false,
             _clock: Self::clock(cx),
             source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, working, snapshot: Arc::new(snapshot) },
             result,
@@ -1505,13 +1519,121 @@ impl ReviewPanel {
         }))
     }
 
-    /// The merge risk: each signal with its mark, reason and verdict, and
-    /// the overall grade with what to look at; then the gaps, the sensitive
-    /// paths it touches and the acceptance criteria.
-    fn risk_card(risk: &crate::risk::Risk, theme: &Theme) -> impl IntoElement {
-        use crate::risk::Level;
+    /// The verdict as a word and its colour, once there's a result.
+    fn verdict_word(&self, theme: &Theme) -> Option<(&'static str, Hsla)> {
+        Some(match self.result.as_ref()?.verdict.as_deref() {
+            Some("approve") => ("Approve", theme.good()),
+            Some("request_changes") => ("Request changes", theme.critical()),
+            _ => ("Comment", theme.secondary),
+        })
+    }
+
+    /// A heading that opens and closes what's under it.
+    fn disclosure(id: &'static str, title: String, open: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1p5()
+            .text_sm()
+            .text_color(theme.secondary)
+            .cursor_pointer()
+            .hover(|s| s.text_color(theme.fg))
+            .child(div().flex_none().w(px(10.)).child(if open { "▾" } else { "▸" }))
+            .child(title)
+    }
+
+    /// A small caps caption over a group in the risk panel.
+    fn caption(text: &str, theme: &Theme) -> impl IntoElement {
+        div().text_xs().text_color(theme.tertiary).child(text.to_uppercase())
+    }
+
+    /// One acceptance criterion: its status, what it asks, the evidence
+    /// and the issue it's from.
+    fn criterion_row(c: &crate::risk::Criterion, theme: &Theme) -> gpui::AnyElement {
+        let (label, tint) = match c.status.as_str() {
+            "met" => ("Met", theme.good()),
+            "partial" => ("Partly", theme.orange()),
+            "missing" => ("Missing", theme.critical()),
+            // Another PR's, or checked by people after merge.
+            "later" => ("Later", theme.tertiary),
+            _ => ("Can't tell", theme.secondary),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .text_sm()
+            .child(div().flex().flex_row().gap_2().child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(tint).child(label)).child(div().flex_1().min_w_0().child(c.criterion.clone())))
+            .when_some(c.evidence.clone(), |d, e| d.child(div().text_color(theme.secondary).child(e)))
+            .when_some(c.issue.clone(), |d, i| d.child(div().text_xs().text_color(theme.tertiary).child(i)))
+            .into_any_element()
+    }
+
+    /// The merge risk, actionable first: the grade and the one thing to
+    /// look at, then what to do before merging (criteria not met, what
+    /// would raise confidence, sensitive paths touched). How the grade was
+    /// reached and the criteria needing nothing are a click away.
+    fn risk_panel(&self, risk: &crate::risk::Risk, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        use crate::risk::{Group, Level};
         let level = risk.level();
         let tint = level.map(|l| risk_tint(l, theme)).unwrap_or(theme.secondary);
+        let grade = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(Self::caption("Merge risk", theme))
+            .child(div().text_3xl().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(level.map(Level::title).unwrap_or("ungraded")))
+            .when_some(level, |d, level| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(Self::risk_meter(level, 60., theme))
+                        .child(div().flex().flex_row().gap(px(2.)).text_xs().children([Level::Low, Level::Medium, Level::High].into_iter().map(move |l| {
+                            div().w(px(60.)).text_color(if l == level { tint } else { theme.tertiary }).child(l.title())
+                        }))),
+                )
+            })
+            .child(div().pt_1().font_weight(FontWeight::MEDIUM).child(risk.next_step()));
+
+        let unmet: Vec<gpui::AnyElement> = risk.criteria.iter().filter(|c| c.status == "missing" || c.status == "partial").map(|c| Self::criterion_row(c, theme)).collect();
+        let rest: Vec<&crate::risk::Criterion> = risk.criteria.iter().filter(|c| c.status != "missing" && c.status != "partial").collect();
+        let gaps: Vec<gpui::AnyElement> = risk
+            .gaps
+            .iter()
+            .enumerate()
+            .map(|(i, g)| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .text_sm()
+                    .child(div().flex_none().pt(px(5.)).child(div().size(px(6.)).rounded_full().border_1().border_color(theme.selected)))
+                    .child(div().flex_1().min_w_0().child(markdown(&format!("risk-gap-{i}"), g, theme)))
+                    .into_any_element()
+            })
+            .collect();
+        let sensitive: Vec<gpui::AnyElement> = risk
+            .sensitive
+            .iter()
+            .map(|(path, why)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .text_sm()
+                    .child(div().font_family(crate::zed::MONO).text_xs().text_color(theme.orange()).child(path.clone()))
+                    .when_some(why.clone(), |d, why| d.child(div().text_color(theme.secondary).child(why)))
+                    .into_any_element()
+            })
+            .collect();
+        let group = |caption: &str, items: Vec<gpui::AnyElement>| div().flex().flex_col().gap_2().child(Self::caption(caption, theme)).children(items);
+        let actionable = !(unmet.is_empty() && gaps.is_empty() && sensitive.is_empty());
+
+        // How it was graded: exposure (what it touches) above confidence
+        // (whether we can tell it works), each signal with its mark.
         let signal_row = |signal: &crate::risk::Signal| {
             let (mark, mark_tint) = match signal.score() {
                 Some(1) => ("✓", theme.good()),
@@ -1523,133 +1645,90 @@ impl ReviewPanel {
                 .flex()
                 .flex_row()
                 .gap_2()
-                .child(div().flex_none().w(px(14.)).font_weight(FontWeight::SEMIBOLD).text_color(mark_tint).child(mark))
+                .text_sm()
+                .child(div().flex_none().w(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(mark_tint).child(mark))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .child(div().font_weight(FontWeight::MEDIUM).child(signal.title))
-                        .when_some(signal.reason.clone(), |d, r| d.child(div().text_sm().text_color(theme.secondary).child(r)))
-                        .when_some(signal.raised.clone(), |d, r| d.child(div().text_sm().text_color(theme.orange()).child(format!("Raised: {r}")))),
+                        .child(div().flex().flex_row().gap_2().child(div().flex_1().font_weight(FontWeight::MEDIUM).child(signal.title)).child(div().flex_none().text_color(theme.secondary).child(signal.verdict.clone().unwrap_or_else(|| "unknown".into()))))
+                        .when_some(signal.reason.clone(), |d, r| d.child(div().text_color(theme.secondary).child(r)))
+                        .when_some(signal.raised.clone(), |d, r| d.child(div().text_color(theme.orange()).child(format!("Raised: {r}")))),
                 )
-                .child(div().flex_none().text_sm().text_color(theme.secondary).child(signal.verdict.clone().unwrap_or_else(|| "unknown".into())))
                 .into_any_element()
         };
-        // Exposure (what it touches) above confidence (whether we can tell
-        // it works), each with its own grade.
-        let rows: Vec<gpui::AnyElement> = [crate::risk::Group::Exposure, crate::risk::Group::Confidence]
+        let grading: Vec<gpui::AnyElement> = [Group::Exposure, Group::Confidence]
             .into_iter()
-            .flat_map(|group| {
-                let grade = risk.group_score(group).map(|s| group.word(s)).unwrap_or("unknown");
-                let heading = div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .text_xs()
-                    .child(div().text_color(theme.tertiary).child(group.title().to_uppercase()))
-                    .child(div().text_color(theme.secondary).child(grade))
-                    .into_any_element();
-                std::iter::once(heading).chain(risk.signals.iter().filter(move |s| s.group() == group).map(signal_row)).collect::<Vec<_>>()
-            })
-            .collect();
-        let overall = div()
-            .flex_none()
-            .w(px(220.))
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(div().text_xs().text_color(theme.tertiary).child("MERGE RISK"))
-            .child(div().text_3xl().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(level.map(Level::title).unwrap_or("ungraded")))
-            .child(div().text_sm().text_color(theme.secondary).child(risk.next_step()))
-            .when_some(level, |d, level| {
-                d.child(
-                    div()
-                        .mt_2()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(Self::risk_meter(level, 68., theme))
-                        .child(div().flex().flex_row().gap(px(2.)).text_xs().children([Level::Low, Level::Medium, Level::High].into_iter().map(move |l| {
-                            div().w(px(68.)).text_color(if l == level { tint } else { theme.tertiary }).child(l.title())
-                        }))),
-                )
-            });
-        let list = |title: &str, items: Vec<gpui::AnyElement>| {
-            div().flex().flex_col().gap_1().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title.to_string())).children(items)
-        };
-        let gaps: Vec<gpui::AnyElement> = risk.gaps.iter().enumerate().map(|(i, g)| markdown(&format!("risk-gap-{i}"), &format!("- {g}"), theme)).collect();
-        let sensitive: Vec<gpui::AnyElement> = risk
-            .sensitive
-            .iter()
-            .map(|(path, why)| {
+            .map(|g| {
+                let word = risk.group_score(g).map(|s| g.word(s)).unwrap_or("unknown");
                 div()
                     .flex()
-                    .flex_row()
+                    .flex_col()
                     .gap_2()
-                    .text_sm()
-                    .child(div().text_color(theme.orange()).child(path.clone()))
-                    .when_some(why.clone(), |d, why| d.child(div().text_color(theme.secondary).child(why)))
+                    .child(div().flex().flex_row().gap_2().text_xs().child(div().text_color(theme.tertiary).child(g.title().to_uppercase())).child(div().text_color(theme.secondary).child(word)))
+                    .children(risk.signals.iter().filter(|s| s.group() == g).map(signal_row))
                     .into_any_element()
             })
             .collect();
-        let criteria: Vec<gpui::AnyElement> = risk
-            .criteria
-            .iter()
-            .map(|c| {
-                let (label, tint) = match c.status.as_str() {
-                    "met" => ("Met", theme.good()),
-                    "partial" => ("Partly", theme.orange()),
-                    "missing" => ("Missing", theme.critical()),
-                    // Another PR's, or checked by people after merge.
-                    "later" => ("Later", theme.tertiary),
-                    _ => ("Can't tell", theme.secondary),
-                };
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .text_sm()
-                    .child(div().flex_none().w(px(64.)).font_weight(FontWeight::MEDIUM).text_color(tint).child(label))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(div().child(c.criterion.clone()))
-                            .when_some(c.evidence.clone(), |d, e| d.child(div().text_color(theme.secondary).child(e)))
-                            .when_some(c.issue.clone(), |d, i| d.child(div().text_xs().text_color(theme.tertiary).child(i))),
-                    )
-                    .into_any_element()
-            })
-            .collect();
+        let (show_grading, show_criteria) = (self.show_grading, self.show_criteria);
+
         div()
             .flex()
             .flex_col()
-            .gap_4()
-            .p_4()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .child(div().flex().flex_row().gap_6().child(div().flex_1().min_w_0().flex().flex_col().gap_3().children(rows)).child(overall))
-            .when(!gaps.is_empty(), |d| d.child(list("What would raise confidence", gaps)))
-            .when(!sensitive.is_empty(), |d| d.child(list("Sensitive paths it touches", sensitive)))
-            .when(!criteria.is_empty(), |d| d.child(list("Acceptance criteria", criteria)))
+            .gap_5()
+            .child(grade)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Before merging"))
+                    .when(!actionable, |d| d.child(div().text_sm().text_color(theme.secondary).child("Nothing beyond the findings.")))
+                    .when(!unmet.is_empty(), |d| d.child(group("Acceptance criteria not met", unmet)))
+                    .when(!gaps.is_empty(), |d| d.child(group("Would raise confidence", gaps)))
+                    .when(!sensitive.is_empty(), |d| d.child(group("Sensitive paths it touches", sensitive))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(Self::disclosure("risk-grading", "How it's graded".into(), show_grading, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.show_grading = !this.show_grading;
+                        cx.notify();
+                    })))
+                    .when(show_grading, |d| d.children(grading))
+                    .when(!rest.is_empty(), |d| {
+                        d.child(Self::disclosure("risk-criteria", format!("Other acceptance criteria ({})", rest.len()), show_criteria, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.show_criteria = !this.show_criteria;
+                            cx.notify();
+                        })))
+                        .when(show_criteria, |d| d.children(rest.iter().map(|c| Self::criterion_row(c, theme))))
+                    }),
+            )
+            .into_any_element()
     }
 
     fn section_heading(text: &str) -> impl IntoElement {
         div().text_base().font_weight(FontWeight::SEMIBOLD).child(text.to_string())
     }
 
-    fn overview(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The review, most decisive first: the verdict and how ready it is,
+    /// why (headline and summary), what happens at run time, what needs
+    /// attention, then the walkthrough. `wide` puts the merge risk in the
+    /// sidebar beside it; otherwise it follows the summary.
+    fn overview(&self, wide: bool, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
         let (ready, ready_tint) = self.readiness(theme);
         let Some(result) = self.result.clone() else {
             return self.waiting(theme, cx).into_any_element();
         };
-        let risk_card = self.risk().map(|risk| Self::risk_card(&risk, theme).into_any_element());
+        let risk = self.risk();
+        let risk_level = risk.as_ref().and_then(|r| r.level());
+        let inline_risk = (!wide).then(|| risk.as_ref().map(|r| div().p_4().rounded_lg().border_1().border_color(theme.border).bg(theme.sidebar).child(self.risk_panel(r, theme, cx)))).flatten();
+        let (verdict, verdict_tint) = self.verdict_word(theme).unwrap_or(("Comment", theme.secondary));
         // Needs attention: the findings still kept, by how much they hold
         // up the merge.
         let mut kept: Vec<Finding> = result.findings.iter().filter(|f| !self.dismissed.contains(&f.key())).cloned().collect();
@@ -1704,35 +1783,86 @@ impl ReviewPanel {
         div()
             .flex()
             .flex_col()
-            .gap(px(22.))
+            .gap(px(24.))
             .max_w(px(860.))
+            // The verdict, then how ready it is, the merge risk and effort.
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_baseline()
+                            .gap_2()
+                            .text_2xl()
+                            .child(div().text_color(theme.secondary).child("Verdict:"))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).text_color(verdict_tint).child(verdict)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_x_4()
+                            .gap_y_1()
+                            .child(div().font_weight(FontWeight::MEDIUM).text_color(ready_tint).child(ready))
+                            .when_some(risk_level, |d, level| {
+                                d.child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .text_sm()
+                                        .child(div().text_color(theme.secondary).child("Merge risk"))
+                                        .child(Self::risk_meter(level, 14., theme))
+                                        .child(div().font_weight(FontWeight::MEDIUM).text_color(risk_tint(level, theme)).child(level.title())),
+                                )
+                            })
+                            .when_some(result.effort, |d, e| d.child(Self::effort_meter(e, theme))),
+                    ),
+            )
+            // Why: the headline and the summary.
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .when_some(result.headline.clone(), |d, h| d.child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(h)))
-                    .child(
+                    .when_some(result.headline.clone(), |d, h| d.child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(h)))
+                    .child(markdown("review-summary", &result.summary, theme)),
+            )
+            .children(inline_risk)
+            // What happens at run time, so a reviewer knows the shape of
+            // the change before reading it.
+            .when(!result.flow.is_empty(), |d| {
+                d.child(
+                    div().flex().flex_col().gap_1p5().child(Self::section_heading("What happens")).children(result.flow.iter().enumerate().map(|(i, step)| {
                         div()
                             .flex()
                             .flex_row()
-                            .items_center()
-                            .gap_3()
-                            .child(div().font_weight(FontWeight::MEDIUM).text_color(ready_tint).child(ready))
-                            .when_some(result.effort, |d, e| d.child(Self::effort_meter(e, theme))),
-                    )
-                    .child(markdown("review-summary", &result.summary, theme)),
-            )
-            .children(risk_card)
+                            .gap_1()
+                            .child(div().w(px(22.)).flex_none().text_color(theme.secondary).child(format!("{}.", i + 1)))
+                            .child(div().flex_1().child(step.clone()))
+                    })),
+                )
+            })
             .when(has_attention, |d| d.child(div().flex().flex_col().gap_3().child(Self::section_heading("Needs attention")).children(attention)))
+            // The walkthrough as prose: its files are the list on the left,
+            // in the same order, so they aren't repeated here.
             .when(!result.walkthrough.is_empty(), |d| {
                 d.child(
                     div()
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .child(div().flex().flex_col().child(Self::section_heading("Walkthrough")).child(quiet("The change in the order to read it. The file list follows it.".into())))
+                        .child(div().flex().flex_col().child(Self::section_heading("Walkthrough")).child(quiet("The change in the order to read it, as the file list on the left.".into())))
                         .children(result.walkthrough.iter().enumerate().map(|(i, area)| {
+                            let first = area.files.first().cloned();
+                            let count = area.files.len();
                             div()
                                 .flex()
                                 .flex_row()
@@ -1745,39 +1875,33 @@ impl ReviewPanel {
                                         .flex()
                                         .flex_col()
                                         .gap_1()
-                                        .child(div().font_weight(FontWeight::SEMIBOLD).child(area.title.clone()))
-                                        .when_some(area.summary.clone(), |d, s| d.child(div().text_color(theme.secondary).child(s)))
-                                        .child(div().flex().flex_row().flex_wrap().gap_1().children(area.files.iter().map(|path| {
-                                            let target = Selected::File(path.clone());
+                                        .child(
                                             div()
-                                                .id(SharedString::from(format!("chip-{path}")))
-                                                .px_1p5()
-                                                .rounded_sm()
-                                                .bg(theme.grid)
-                                                .font_family(crate::zed::MONO)
-                                                .text_xs()
-                                                .cursor_pointer()
-                                                .hover(|s| s.bg(theme.row_selected))
-                                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                                    this.selected = target.clone();
-                                                    cx.notify();
-                                                }))
-                                                .child(path.clone())
-                                        }))),
+                                                .flex()
+                                                .flex_row()
+                                                .items_baseline()
+                                                .gap_2()
+                                                .child(div().font_weight(FontWeight::SEMIBOLD).child(area.title.clone()))
+                                                .when_some(first, |d, path| {
+                                                    d.child(
+                                                        div()
+                                                            .id(SharedString::from(format!("area-files-{i}")))
+                                                            .flex_none()
+                                                            .text_xs()
+                                                            .text_color(theme.tertiary)
+                                                            .cursor_pointer()
+                                                            .hover(|s| s.text_color(theme.selected))
+                                                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                                                this.selected = Selected::File(path.clone());
+                                                                cx.notify();
+                                                            }))
+                                                            .child(format!("{} ›", plural(count, "file", "files"))),
+                                                    )
+                                                }),
+                                        )
+                                        .when_some(area.summary.clone(), |d, s| d.child(div().text_color(theme.secondary).child(s))),
                                 )
-                        }))
-                )
-            })
-            .when(!result.flow.is_empty(), |d| {
-                d.child(
-                    div().flex().flex_col().gap_1p5().child(Self::section_heading("What happens")).children(result.flow.iter().enumerate().map(|(i, step)| {
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_1()
-                            .child(div().w(px(22.)).flex_none().text_color(theme.secondary).child(format!("{}.", i + 1)))
-                            .child(div().flex_1().child(step.clone()))
-                    })),
+                        })),
                 )
             })
             .into_any_element()
@@ -2181,9 +2305,13 @@ impl Render for ReviewPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
         let draft = self.post.as_ref().and_then(|post| self.post_draft(post, &theme, cx)).map(|d| d.into_any_element());
+        // Room for the Overview beside a risk sidebar, from the width the
+        // detail area had when last laid out.
+        let wide = self.detail_width.get() >= 980.;
+        let risk_side = (wide && draft.is_none() && self.selected == Selected::Overview).then(|| self.risk()).flatten().map(|risk| self.risk_panel(&risk, &theme, cx));
         let detail = match self.selected.clone() {
             _ if draft.is_some() => draft.unwrap(),
-            Selected::Overview => self.overview(&theme, cx).into_any_element(),
+            Selected::Overview => self.overview(wide, &theme, cx).into_any_element(),
             Selected::General => self.general_detail(&theme, cx).into_any_element(),
             Selected::Learnings => self.learnings_detail(&theme).into_any_element(),
             Selected::File(path) => self.file_detail(&path, &theme, cx).into_any_element(),
@@ -2218,7 +2346,39 @@ impl Render for ReviewPanel {
                     .flex()
                     .flex_row()
                     .child(self.file_list(&theme, cx))
-                    .child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail)),
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .flex_row()
+                            .child({
+                                // Measures the detail area, so the Overview
+                                // knows whether its risk sidebar fits.
+                                let width = self.detail_width.clone();
+                                gpui::canvas(
+                                    move |bounds, window, _| {
+                                        let now = f32::from(bounds.size.width);
+                                        if (now - width.get()).abs() > 1. {
+                                            width.set(now);
+                                            window.refresh();
+                                        }
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w_full()
+                                .h(px(0.))
+                            })
+                            .child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail))
+                            .when_some(risk_side, |d, side| {
+                                d.child(div().id("review-risk").flex_none().w(px(340.)).h_full().overflow_y_scroll().p_5().border_l_1().border_color(theme.border).bg(theme.sidebar).child(side))
+                            }),
+                    ),
             )
             .when(self.shows_conversation(), |d| d.child(self.conversation_pane(&theme, cx)))
     }
