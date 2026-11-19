@@ -4726,7 +4726,7 @@ impl Workspace {
             .child(self.tab_filter_menu(theme, cx))
             .child(self.tab_search_box(theme, cx))
             .child(self.tabs(false, theme, cx))
-            .child(self.pause_controls(theme, cx))
+            .child(self.pause_controls(false, theme, cx))
             .child(self.new_menu(theme, cx))
     }
 
@@ -4901,10 +4901,11 @@ impl Workspace {
         )
     }
 
-    /// Pause All and Resume All, beside the "+": each shows only when it
-    /// would do something. Message shows while a Claude Code session can
-    /// take one.
-    fn pause_controls(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Pause All and Resume All (as icons with a count) and Message: beside
+    /// the "+" in the tab bar, along the foot of the tab column. Pause and
+    /// Resume show only when they'd do something, Message while a Claude
+    /// Code session can take one.
+    fn pause_controls(&self, vertical: bool, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let working = self.sessions.iter().filter(|s| s.read(cx).state == State::Working).count();
         let can_message = self.sessions.iter().any(|s| self.messageable(s.read(cx).id, cx));
         let messaging = self.broadcast.is_some();
@@ -4923,6 +4924,25 @@ impl Workspace {
                 .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
                 .child(label)
         };
+        let icon_button = |id: &'static str, icon: &'static str, count: usize, tip: String| {
+            div()
+                .id(id)
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .px_1p5()
+                .py_0p5()
+                .rounded_md()
+                .text_sm()
+                .cursor_pointer()
+                .text_color(theme.secondary)
+                .hover(|s| s.bg(theme.row_selected).text_color(theme.fg))
+                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+                .child(gpui::svg().path(icon).size(px(13.)).text_color(theme.secondary))
+                .child(count.to_string())
+        };
         div()
             .flex_none()
             .h_full()
@@ -4930,7 +4950,7 @@ impl Workspace {
             .flex_row()
             .items_center()
             .gap_1()
-            .when(working > 0 || paused > 0 || can_message, |d| d.px_1().border_l_1().border_color(theme.border))
+            .when(!vertical && (working > 0 || paused > 0 || can_message), |d| d.px_1().border_l_1().border_color(theme.border))
             .when(can_message || messaging, |d| {
                 d.child(
                     button("message-sessions", "Message".into(), "Send one message to several Claude Code sessions: tick them in the tabs".into())
@@ -4942,13 +4962,13 @@ impl Workspace {
                 )
             })
             .when(working > 0, |d| {
-                d.child(button("pause-all", format!("Pause All ({working})"), "Stop every working session, as Esc in each".into()).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                d.child(icon_button("pause-all", "icons/debug_pause.svg", working, format!("Pause All: stop the {working} working {}, as Esc in each", if working == 1 { "session" } else { "sessions" })).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.pause_all(cx);
                 })))
             })
             .when(paused > 0, |d| {
-                d.child(button("resume-all", format!("Resume All ({paused})"), "Tell the sessions Pause All stopped to carry on".into()).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                d.child(icon_button("resume-all", "icons/play_filled.svg", paused, format!("Resume All: tell the {paused} {} Pause All stopped to carry on", if paused == 1 { "session" } else { "sessions" })).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.resume_all(cx);
                 })))
@@ -4978,10 +4998,12 @@ impl Workspace {
                     .border_color(theme.border)
                     .child(self.tab_filter_menu(theme, cx))
                     .child(div().flex_1().min_w_0().h_full().child(self.tab_search_box(theme, cx)))
-                    .child(self.pause_controls(theme, cx))
                     .child(self.new_menu(theme, cx)),
             )
             .child(self.tabs(true, theme, cx))
+            // Pause, Resume and Message along the foot of the column, when
+            // any of them would show.
+            .when(self.sessions.iter().any(|p| p.read(cx).state == State::Working || self.messageable(p.read(cx).id, cx)) || !self.paused_sessions.is_empty(), |d| d.child(div().flex_none().h(px(32.)).flex().flex_row().items_center().px_1().border_t_1().border_color(theme.border).child(self.pause_controls(true, theme, cx))))
     }
 
     /// The "+" at the right of the tab bar, as the Claude Code window's in
