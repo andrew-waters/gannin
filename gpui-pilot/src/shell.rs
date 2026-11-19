@@ -270,6 +270,9 @@ const RESUME: &str = "Carry on from where you were interrupted.";
 struct Broadcast {
     field: Entity<editor::Editor>,
     picked: std::collections::HashSet<u32>,
+    /// The team's shortcuts, each sent to the sessions ticked.
+    shortcuts: Entity<crate::shortcuts::ShortcutBar>,
+    _shortcut_sent: gpui::Subscription,
 }
 
 /// What a tab is, for its icon and the tab bar's filter; in the order
@@ -4947,7 +4950,18 @@ impl Workspace {
             field
         });
         window.focus(&field.focus_handle(cx), cx);
-        self.broadcast = Some(Broadcast { field, picked });
+        let org = self.org.clone();
+        let shortcuts = cx.new(|cx| {
+            let mut bar = crate::shortcuts::ShortcutBar::new();
+            if let Some(org) = &org {
+                if let Some(harness) = crate::projects::harness_repos(org).first() {
+                    bar.set_place(org, harness, cx);
+                }
+            }
+            bar
+        });
+        let sent = cx.subscribe_in(&shortcuts, window, |this, _, event: &crate::shortcuts::SendShortcut, window, cx| this.send_to_picked(event.0.clone(), window, cx));
+        self.broadcast = Some(Broadcast { field, picked, shortcuts, _shortcut_sent: sent });
         cx.notify();
     }
 
@@ -4956,6 +4970,12 @@ impl Workspace {
     fn send_broadcast(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(broadcast) = &self.broadcast else { return };
         let text = broadcast.field.read(cx).text(cx).trim().to_string();
+        self.send_to_picked(text, window, cx);
+    }
+
+    /// Sends `text` to each session ticked, then closes Message.
+    fn send_to_picked(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(broadcast) = &self.broadcast else { return };
         let picked: Vec<u32> = broadcast.picked.iter().copied().filter(|id| self.messageable(*id, cx)).collect();
         if text.is_empty() || picked.is_empty() {
             return;
@@ -4984,6 +5004,7 @@ impl Workspace {
             .collect();
         let count = broadcast.picked.iter().filter(|id| all.contains(id)).count();
         let ready = count > 0 && !broadcast.field.read(cx).text(cx).trim().is_empty();
+        broadcast.shortcuts.update(cx, |bar, cx| bar.set_enabled(count > 0, cx));
         let link = |id: &'static str, label: &'static str| {
             div().id(id).flex_none().px_1p5().rounded_sm().text_sm().cursor_pointer().text_color(theme.secondary).hover(|s| s.bg(theme.row_selected).text_color(theme.fg)).child(label)
         };
@@ -5039,6 +5060,8 @@ impl Workspace {
                         }))
                         .child(broadcast.field.clone()),
                 )
+                // A shortcut goes to every session ticked, as Send would.
+                .child(broadcast.shortcuts.clone())
                 .child(link("broadcast-all", "All").on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if let Some(b) = this.broadcast.as_mut() {
                         b.picked = every.iter().copied().collect();
