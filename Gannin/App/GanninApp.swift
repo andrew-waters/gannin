@@ -377,6 +377,9 @@ struct GanninApp: App {
                 .environment(bankHolidays)
         }
         .defaultSize(width: 1280, height: 820)
+        // The window can't be smaller than `SessionsWindow`'s own minimum, so a
+        // saved frame below it isn't grown during layout.
+        .windowResizability(.contentMinSize)
 
         // What you need to act on, from the menu bar.
         MenuBarExtra(isInserted: $showsMenuBar) {

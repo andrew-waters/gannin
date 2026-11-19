@@ -1725,7 +1725,10 @@ struct TerminalHost: View {
                 Color.clear
             }
         }
-        .onAppear {
+        // A task rather than `onAppear`, so the launch isn't inside the layout
+        // pass that showed the tab: swapping the terminal's view in there
+        // re-lays out the window within the same pass.
+        .task {
             view = sessions.open(session)
             sessions.terminal(session.id)?.focus()
         }
