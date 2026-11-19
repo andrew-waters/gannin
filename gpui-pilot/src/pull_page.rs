@@ -354,12 +354,14 @@ pub struct PullPage {
     plans: Vec<(crate::harness::Doc, bool)>,
     /// Open sessions about it, from the workspace.
     related: Vec<Related>,
+    /// The body's width as last laid out, for how many columns it takes.
+    width: std::rc::Rc<std::cell::Cell<f32>>,
     _fetch: Option<Task<()>>,
 }
 
 impl PullPage {
     pub fn new(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { pr, org, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), _fetch: None };
+        let mut page = Self { pr, org, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), width: Default::default(), _fetch: None };
         page.refresh(cx);
         page
     }
@@ -494,7 +496,19 @@ impl PullPage {
                     .flex_row()
                     .items_start()
                     .gap_3()
-                    .child(div().flex_1().min_w_0().text_2xl().child(format!("{title} ")).child(div().text_color(theme.tertiary).child(format!("#{}", self.pr.number))))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .items_baseline()
+                            .gap_x_2()
+                            .text_2xl()
+                            .child(div().child(title))
+                            .child(div().flex_none().text_color(theme.tertiary).child(format!("#{}", self.pr.number))),
+                    )
                     .when(self.loading, |d| d.child(div().pt_2().text_sm().text_color(theme.tertiary).child("Loading")))
                     .child(Self::button("pull-refresh", "Refresh", theme).on_click(cx.listener(|page, _: &ClickEvent, _, cx| page.refresh(cx))))
                     .child(Self::button("pull-github", "Open on GitHub", theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))),
@@ -835,8 +849,7 @@ impl PullPage {
             participants = participants.child(Self::avatar(p, 22., theme, cx));
         }
         div()
-            .w(px(280.))
-            .flex_none()
+            .w_full()
             .flex()
             .flex_col()
             .gap_3()
@@ -846,7 +859,7 @@ impl PullPage {
             .child(labels)
             .child(milestone)
             .child(development)
-            .child(group(&format!("{} participants", data.participants.len())).child(participants))
+            .child(group(&if data.participants.len() == 1 { "1 participant".to_string() } else { format!("{} participants", data.participants.len()) }).child(participants))
     }
 
     // MARK: Other sections
@@ -962,16 +975,48 @@ impl PullPage {
 impl Render for PullPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
+        // Narrow: one column, the sidebar under it. From 900 the sidebar
+        // sits at the right edge and scrolls on its own; from 1500 Checks
+        // and Files changed take a column between them.
+        let width = self.width.get();
+        let (beside, three) = (width >= 900., width >= 1500.);
+        let scroll = |id: &'static str| div().id(id).h_full().min_h_0().overflow_y_scroll();
         let body: AnyElement = match (&self.data, self.section) {
             (None, _) | (_, Section::Overview) => {
                 let overview = self.overview(&theme, cx);
                 let side = self.data.as_ref().map(|d| self.sidebar(d, &theme, cx).into_any_element());
-                div().flex().flex_row().flex_wrap().items_start().gap_6().child(div().flex_1().min_w(px(480.)).max_w(px(960.)).child(overview)).children(side).into_any_element()
+                let middle = self.data.as_ref().filter(|_| three).map(|d| {
+                    let heading = |text: String| div().pb_1().font_weight(FontWeight::SEMIBOLD).child(text);
+                    let checks = self.checks(d, &theme, cx);
+                    let files = self.files(d, &theme, cx);
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(heading(format!("Checks {}", d.checks.len())))
+                        .child(checks)
+                        .child(div().pt_3().child(heading(format!("Files changed {}", d.file_total))))
+                        .child(files)
+                        .into_any_element()
+                });
+                if beside {
+                    div()
+                        .size_full()
+                        .flex()
+                        .flex_row()
+                        .child(scroll("pull-main").flex_1().min_w_0().px_6().py_4().child(div().max_w(px(1100.)).child(overview)))
+                        .when_some(middle, |d, middle| d.child(scroll("pull-middle").flex_1().min_w(px(360.)).max_w(px(640.)).py_4().pr_6().child(middle)))
+                        .when_some(side, |d, side| d.child(scroll("pull-side").flex_none().w(px(312.)).px_4().py_4().border_l_1().border_color(theme.border).bg(theme.sidebar).child(side)))
+                        .into_any_element()
+                } else {
+                    scroll("pull-main").size_full().px_6().py_4().child(div().flex().flex_col().gap_6().child(overview).children(side)).into_any_element()
+                }
             }
-            (Some(data), Section::Commits) => self.commits(data, &theme, cx),
-            (Some(data), Section::Checks) => self.checks(data, &theme, cx),
-            (Some(data), Section::Files) => self.files(data, &theme, cx),
+            (Some(data), Section::Commits) => scroll("pull-list").size_full().px_6().py_4().child(div().max_w(px(1100.)).child(self.commits(data, &theme, cx))).into_any_element(),
+            (Some(data), Section::Checks) => scroll("pull-list").size_full().px_6().py_4().child(div().max_w(px(1100.)).child(self.checks(data, &theme, cx))).into_any_element(),
+            (Some(data), Section::Files) => scroll("pull-list").size_full().px_6().py_4().child(div().max_w(px(1100.)).child(self.files(data, &theme, cx))).into_any_element(),
         };
+        let measured = self.width.clone();
         div()
             .size_full()
             .flex()
@@ -979,6 +1024,29 @@ impl Render for PullPage {
             .bg(theme.bg)
             .child(self.header(&theme, cx))
             .when_some(self.error.clone().filter(|_| self.data.is_some()), |d, e| d.child(div().px_6().py_1().text_sm().text_color(theme.critical()).child(format!("Couldn't refresh: {e}"))))
-            .child(div().id(SharedString::from("pull-body-scroll")).flex_1().min_h_0().overflow_y_scroll().px_6().py_4().child(body))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        gpui::canvas(
+                            move |bounds, window, _| {
+                                let now = f32::from(bounds.size.width);
+                                if (now - measured.get()).abs() > 1. {
+                                    measured.set(now);
+                                    window.refresh();
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(px(0.)),
+                    )
+                    .child(body),
+            )
     }
 }
