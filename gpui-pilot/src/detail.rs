@@ -42,8 +42,7 @@ const CHECK_STATES: [&str; 5] = ["SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPE
 
 /// Dates as Gannin's `.iso8601` coding strategy writes them: UTC, whole
 /// seconds, `Z`. chrono's own serialisation adds fractional seconds
-/// whenever they are nonzero. `ISO8601DateFormatter`, which backs that
-/// strategy on older macOS releases, rejects them.
+/// whenever they are nonzero, so this writes the whole-second form.
 mod iso8601 {
     use chrono::{DateTime, SecondsFormat, Utc};
     use serde::{Deserialize, Deserializer, Serializer};
