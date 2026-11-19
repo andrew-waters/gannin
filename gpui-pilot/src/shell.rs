@@ -4965,7 +4965,7 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Message's composer, under the tabs: who it goes to, the text, and
+    /// Message's composer, along the bottom: who it goes to, the text, and
     /// Send. Enter sends, Shift-Enter starts a new line, Escape closes.
     fn broadcast_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let broadcast = self.broadcast.as_ref()?;
@@ -5005,9 +5005,9 @@ impl Workspace {
                 .gap_2()
                 .px_3()
                 .py_2()
-                .bg(theme.sidebar)
-                .border_b_1()
-                .border_color(theme.border)
+                .bg(theme.selected.opacity(0.16))
+                .border_t_1()
+                .border_color(theme.selected.opacity(0.6))
                 .child(div().flex_none().pt_0p5().text_sm().font_weight(FontWeight::MEDIUM).child(format!("Message {count} of {}", all.len())))
                 .child(
                     div()
@@ -7162,7 +7162,6 @@ impl Render for Workspace {
             .flex()
             .flex_col()
             .when(!self.tabs_on_left, |d| d.child(self.tab_bar(&theme, cx)))
-            .when_some(self.broadcast_bar(&theme, cx), |d, bar| d.child(bar))
             .child(
                 div()
                     .flex_1()
@@ -7174,6 +7173,8 @@ impl Render for Workspace {
                     // as they were for Back.
                     .when_some(self.new_issue_showing(), |d, form| d.child(div().absolute().top_0().left_0().right_0().bottom_0().occlude().child(form))),
             )
+            // Message's composer along the bottom, where messages are typed.
+            .when_some(self.broadcast_bar(&theme, cx), |d, bar| d.child(bar))
 ;
         div()
             .id("workspace")
