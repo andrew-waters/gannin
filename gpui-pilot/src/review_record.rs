@@ -313,12 +313,12 @@ pub fn record(token: &str, input: &Input) -> Result<Option<String>, String> {
             }
         };
         let headline = format!("Gannin: review of {}#{} by {reviewer}, {what}", input.repo, input.number);
-        let contents = base64(encode(&built).as_bytes());
-        match commit(token, &input.harness, &branch, &oid, &headline, &path, &contents) {
+        let changes = json!({ "additions": [{ "path": path, "contents": base64(encode(&built).as_bytes()) }] });
+        match commit(token, &input.harness, &branch, &oid, &headline, &changes) {
             Ok(()) => return Ok(None),
             Err(error) if attempt == 0 && (error.contains("expected") || error.contains("Expected")) => continue,
             Err(error) if error.to_lowercase().contains("pull request") || error.to_lowercase().contains("rule violation") => {
-                return via_pull_request(token, &input.harness, &repo_id, &branch, &oid, &headline, &path, &contents);
+                return via_pull_request(token, &input.harness, &repo_id, &branch, &oid, &headline, &changes);
             }
             Err(error) => return Err(error),
         }
@@ -348,12 +348,12 @@ pub fn commit_file(token: &str, harness: &str, path: &str, headline: &str, build
             json!({ "owner": owner, "name": name, "expr": format!("{oid}:{path}") }),
         )?;
         let Some(text) = build(file["repository"]["object"]["text"].as_str()) else { return Ok(None) };
-        let contents = base64(text.as_bytes());
-        match commit(token, harness, &branch, &oid, headline, path, &contents) {
+        let changes = json!({ "additions": [{ "path": path, "contents": base64(text.as_bytes()) }] });
+        match commit(token, harness, &branch, &oid, headline, &changes) {
             Ok(()) => return Ok(None),
             Err(error) if attempt == 0 && (error.contains("expected") || error.contains("Expected")) => continue,
             Err(error) if error.to_lowercase().contains("pull request") || error.to_lowercase().contains("rule violation") => {
-                return via_pull_request(token, harness, &repo_id, &branch, &oid, headline, path, &contents);
+                return via_pull_request(token, harness, &repo_id, &branch, &oid, headline, &changes);
             }
             Err(error) => return Err(error),
         }
@@ -361,7 +361,34 @@ pub fn commit_file(token: &str, harness: &str, path: &str, headline: &str, build
     Err("The harness kept moving while committing.".into())
 }
 
-fn commit(token: &str, repo: &str, branch: &str, oid: &str, headline: &str, path: &str, contents: &str) -> Result<(), String> {
+/// Removes `path` from the harness's default branch, as `commit_file`
+/// writes one (a pull request merged at once when the branch needs one).
+/// A note to show when it's left in an open pull request.
+pub fn delete_file(token: &str, harness: &str, path: &str, headline: &str) -> Result<Option<String>, String> {
+    let (owner, name) = harness.split_once('/').ok_or("Not a harness repository")?;
+    let changes = json!({ "deletions": [{ "path": path }] });
+    for attempt in 0..2 {
+        let head = gql(
+            token,
+            "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id defaultBranchRef { name target { oid } } } }",
+            json!({ "owner": owner, "name": name }),
+        )?;
+        let repo_id = head["repository"]["id"].as_str().unwrap_or_default().to_string();
+        let branch = head["repository"]["defaultBranchRef"]["name"].as_str().ok_or("The harness has no default branch")?.to_string();
+        let oid = head["repository"]["defaultBranchRef"]["target"]["oid"].as_str().ok_or("The harness has no head")?.to_string();
+        match commit(token, harness, &branch, &oid, headline, &changes) {
+            Ok(()) => return Ok(None),
+            Err(error) if attempt == 0 && (error.contains("expected") || error.contains("Expected")) => continue,
+            Err(error) if error.to_lowercase().contains("pull request") || error.to_lowercase().contains("rule violation") => {
+                return via_pull_request(token, harness, &repo_id, &branch, &oid, headline, &changes);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err("The harness kept moving while committing.".into())
+}
+
+fn commit(token: &str, repo: &str, branch: &str, oid: &str, headline: &str, changes: &Value) -> Result<(), String> {
     gql(
         token,
         "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
@@ -369,7 +396,7 @@ fn commit(token: &str, repo: &str, branch: &str, oid: &str, headline: &str, path
             "branch": { "repositoryNameWithOwner": repo, "branchName": branch },
             "message": { "headline": headline },
             "expectedHeadOid": oid,
-            "fileChanges": { "additions": [{ "path": path, "contents": contents }] },
+            "fileChanges": changes,
         }}),
     )
     .map(|_| ())
@@ -378,7 +405,7 @@ fn commit(token: &str, repo: &str, branch: &str, oid: &str, headline: &str, path
 /// A branch that only takes pull requests: commit on a branch of its own,
 /// open one, and merge it at once; if it won't merge, leave it open.
 #[allow(clippy::too_many_arguments)]
-fn via_pull_request(token: &str, repo: &str, repo_id: &str, base: &str, oid: &str, headline: &str, path: &str, contents: &str) -> Result<Option<String>, String> {
+fn via_pull_request(token: &str, repo: &str, repo_id: &str, base: &str, oid: &str, headline: &str, changes: &Value) -> Result<Option<String>, String> {
     let slug: String = crate::launch::slug(headline, 32);
     let hex: String = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
     let branch = format!("gannin-{slug}-{hex}");
@@ -388,7 +415,7 @@ fn via_pull_request(token: &str, repo: &str, repo_id: &str, base: &str, oid: &st
         json!({ "repo": repo_id, "name": format!("refs/heads/{branch}"), "oid": oid }),
     )?;
     let ref_id = made["createRef"]["ref"]["id"].as_str().unwrap_or_default().to_string();
-    commit(token, repo, &branch, oid, headline, path, contents)?;
+    commit(token, repo, &branch, oid, headline, changes)?;
     let opened = gql(
         token,
         "mutation($repo: ID!, $base: String!, $head: String!, $title: String!) { createPullRequest(input: { repositoryId: $repo, baseRefName: $base, headRefName: $head, title: $title }) { pullRequest { id url } } }",
@@ -401,6 +428,6 @@ fn via_pull_request(token: &str, repo: &str, repo_id: &str, base: &str, oid: &st
             let _ = gql(token, "mutation($id: ID!) { deleteRef(input: { refId: $id }) { clientMutationId } }", json!({ "id": ref_id }));
             Ok(None)
         }
-        Err(error) => Ok(Some(format!("The review's record is in a pull request on the harness that couldn't merge ({error}): {url}"))),
+        Err(error) => Ok(Some(format!("The change is in a pull request on the harness that couldn't merge ({error}): {url}"))),
     }
 }

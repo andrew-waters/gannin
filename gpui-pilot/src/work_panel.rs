@@ -244,6 +244,8 @@ pub struct WorkPanel {
     uncommitted: bool,
     file: Option<String>,
     composer: Entity<editor::Editor>,
+    /// The team's prompt shortcuts beside the composer.
+    shortcuts: Entity<crate::shortcuts::ShortcutBar>,
     /// The question card, put away to answer in the terminal.
     ask_away: bool,
     /// Options picked per question.
@@ -302,6 +304,8 @@ impl WorkPanel {
             editor.set_placeholder_text("Tell claude something", window, cx);
             editor
         });
+        let shortcuts = cx.new(|_| crate::shortcuts::ShortcutBar::new());
+        cx.subscribe(&shortcuts, |this, _, event: &crate::shortcuts::SendShortcut, cx| this.send(event.0.clone(), false, cx)).detach();
         let file = data.worktrees.iter().flat_map(|w| w.files.first()).next().map(|f| f.path.clone());
         let picked = match &data.ask {
             Some(Ask::Questions(qs)) => vec![Vec::new(); qs.len()],
@@ -323,6 +327,7 @@ impl WorkPanel {
             uncommitted: false,
             file,
             composer,
+            shortcuts,
             ask_away: false,
             picked,
             ticked: Vec::new(),
@@ -371,6 +376,7 @@ impl WorkPanel {
         // what's on them now isn't new.
         panel.feedback_seeding = record.is_none() && !launch.pull_requests().is_empty();
         panel.feedback_sent = record.unwrap_or_default();
+        panel.shortcuts.update(cx, |bar, cx| bar.set_place(&launch.org, &launch.harness_repo, cx));
         panel.live = Some(Live { launch, terminal });
         panel._poll = Some(cx.spawn(async move |this, cx| {
             let mut tick = 0u32;
@@ -1243,6 +1249,7 @@ impl WorkPanel {
     fn composer_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.data.state;
         let running = state.running();
+        self.shortcuts.update(cx, |bar, cx| bar.set_enabled(running && self.live.is_some(), cx));
         let gauge_tint = if self.data.context > 0.85 {
             theme.critical()
         } else if self.data.context > 0.7 {
@@ -1280,6 +1287,7 @@ impl WorkPanel {
                     }))
                     .child(self.composer.clone()),
             )
+            .child(self.shortcuts.clone())
             .child(Self::button("work-send", "Send", false, running, theme).when(running, |b| b.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_composer(window, cx)))))
             .child(Self::button("work-stop", "Stop", false, state == WorkState::Working, theme).when(state == WorkState::Working, |b| {
                 // Esc stops claude mid-turn, to say something else.

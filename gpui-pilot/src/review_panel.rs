@@ -109,6 +109,8 @@ pub struct ReviewPanel {
     conversation_height: f32,
     resizing: Option<(f32, f32)>,
     composer: Entity<editor::Editor>,
+    /// The team's prompt shortcuts beside the composer.
+    shortcuts: Entity<crate::shortcuts::ShortcutBar>,
     post: Option<Post>,
     posted: Option<Posted>,
     /// The last Check for Changes: when, and what it found or why it failed.
@@ -191,6 +193,26 @@ impl ReviewPanel {
                 return;
             }
         })
+    }
+
+    /// The shortcuts beside the composer: from the session's harness, and
+    /// sent as if typed.
+    fn shortcut_bar(place: Option<(&str, &str)>, window: &mut Window, cx: &mut Context<Self>) -> Entity<crate::shortcuts::ShortcutBar> {
+        let bar = cx.new(|cx| {
+            let mut bar = crate::shortcuts::ShortcutBar::new();
+            if let Some((org, harness)) = place {
+                bar.set_place(org, harness, cx);
+            }
+            bar
+        });
+        cx.subscribe_in(&bar, window, |this, _, event: &crate::shortcuts::SendShortcut, window, cx| {
+            if this.takes_input() {
+                this.conversation = Some(true);
+                this.tell(event.0.clone(), window, cx);
+            }
+        })
+        .detach();
+        bar
     }
 
     fn composer(window: &mut Window, cx: &mut Context<Self>) -> Entity<editor::Editor> {
@@ -291,6 +313,7 @@ impl ReviewPanel {
             })
             .detach();
         }
+        let shortcuts = Self::shortcut_bar(Some((&launch.org, &launch.harness_repo)), window, cx);
         Self {
             focus: cx.focus_handle(),
             posted,
@@ -321,6 +344,7 @@ impl ReviewPanel {
             conversation_height: 260.,
             resizing: None,
             composer: Self::composer(window, cx),
+            shortcuts,
             post: None,
             _poll: Some(poll),
         }
@@ -372,6 +396,7 @@ impl ReviewPanel {
             conversation_height: 260.,
             resizing: None,
             composer: Self::composer(window, cx),
+            shortcuts: Self::shortcut_bar(None, window, cx),
             post,
             _poll: None,
         }
@@ -2021,6 +2046,8 @@ impl ReviewPanel {
     /// The conversation with claude: its terminal and a box to tell it
     /// something. A preview has no claude, so says so.
     fn conversation_pane(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let ready = self.takes_input();
+        self.shortcuts.update(cx, |bar, cx| bar.set_enabled(ready, cx));
         let live = match &self.source {
             Source::Live { view, .. } => Some(view.clone()),
             Source::Preview { .. } => None,
@@ -2071,8 +2098,14 @@ impl ReviewPanel {
                     .py_2()
                     .border_t_1()
                     .border_color(theme.border)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .px_2()
                             .py_1()
                             .rounded_md()
@@ -2091,7 +2124,8 @@ impl ReviewPanel {
                                     d.flex().flex_row().items_center().gap_2().text_sm().text_color(theme.secondary).child(Self::spinner("composer-starting", 12., theme)).child("Claude Code is starting")
                                 }
                             }),
-                    ),
+                    )
+                    .child(self.shortcuts.clone()),
             )
     }
 

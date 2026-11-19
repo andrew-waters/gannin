@@ -51,7 +51,7 @@ impl Snapshot {
 }
 
 /// The documents' top folders, as `HarnessKind(path:)` reads them.
-const DOC_FOLDERS: [&str; 10] = ["plans", "requirements", "decisions", "findings", "skills", "prompts", "learnings", "research", "refines", "specialists"];
+const DOC_FOLDERS: [&str; 11] = ["plans", "requirements", "decisions", "findings", "skills", "prompts", "learnings", "research", "refines", "specialists", "shortcuts"];
 
 /// What a snapshot keeps: Markdown in the documents' folders, and JSON
 /// under `.gannin/` (`HarnessDataFile.isData`).
