@@ -336,6 +336,11 @@ impl Risk {
     /// and why, the acceptance criteria not met and the sensitive paths
     /// touched. None when there's nothing graded to say.
     pub fn markdown(&self) -> Option<String> {
+        Some(self.alert(&self.lines()?))
+    }
+
+    /// The body's lines, before they go in the alert.
+    fn lines(&self) -> Option<Vec<String>> {
         let graded: Vec<&Signal> = self.signals.iter().filter(|s| s.verdict.as_deref().is_some_and(|v| v != "n/a")).collect();
         if graded.is_empty() && self.criteria.is_empty() {
             return None;
@@ -391,8 +396,12 @@ impl Risk {
         // The gaps stay out of the body: a list there can't be resolved
         // point by point. Those claude can place in the code come as
         // findings, so inline threads; the rest show only in the panel.
-        // A GitHub alert, so it's marked off from the review beneath: its
-        // colour follows the grade.
+        Some(out)
+    }
+
+    /// A GitHub alert, so it's marked off from the review beneath: its
+    /// colour follows the grade.
+    fn alert(&self, out: &[String]) -> String {
         let kind = match self.level() {
             Some(Level::Low) => "TIP",
             Some(Level::Medium) => "WARNING",
@@ -401,7 +410,154 @@ impl Risk {
         };
         let mut alert = vec![format!("> [!{kind}]")];
         alert.extend(out.iter().map(|line| if line.is_empty() { ">".to_string() } else { format!("> {line}") }));
-        Some(alert.join("\n"))
+        alert.join("\n")
+    }
+
+    /// The merge risk for a review after an earlier one posted its own
+    /// (`previous`, that review's body): only what changed, so the same
+    /// large block isn't repeated each time. Unchanged, it's one line;
+    /// changed, the grade's move and the signals, criteria and sensitive
+    /// paths that moved. The whole of it follows, collapsed, which is
+    /// also what the next review compares against. Falls back to the full
+    /// block when `previous` holds none to compare.
+    pub fn markdown_since(&self, previous: &str) -> Option<String> {
+        let lines = self.lines()?;
+        let Some(before) = Prior::read(previous) else { return Some(self.alert(&lines)) };
+        let level = self.level().map(Level::title);
+        let mut changes: Vec<String> = Vec::new();
+        for s in self.signals.iter().filter(|s| s.verdict.as_deref().is_some_and(|v| v != "n/a")) {
+            let now = s.verdict.clone().unwrap_or_default();
+            match before.signals.get(s.title) {
+                Some(was) if *was == now => {}
+                Some(was) => changes.push(format!("- {}: {now} (was {was}){}", s.title, s.reason.as_ref().map(|r| format!(". {}", r.trim_end_matches('.'))).unwrap_or_default())),
+                None => changes.push(format!("- {}: {now}, newly graded", s.title)),
+            }
+        }
+        let unmet: Vec<(String, &str)> = self.criteria.iter().filter(|c| c.status == "missing" || c.status == "partial").map(|c| (c.key(), if c.status == "missing" { "missing" } else { "partly met" })).collect();
+        for (key, status) in &unmet {
+            match before.unmet.iter().find(|(k, _)| k == key) {
+                Some((_, was)) if was == status => {}
+                Some((_, was)) => changes.push(format!("- Acceptance criterion {key}: {status} (was {was})")),
+                None => changes.push(format!("- Acceptance criterion {key}: {status}")),
+            }
+        }
+        for (key, _) in before.unmet.iter().filter(|(k, _)| !unmet.iter().any(|(u, _)| u == k)) {
+            changes.push(format!("- Acceptance criterion {key}: now met"));
+        }
+        for (path, _) in self.sensitive.iter().filter(|(p, _)| !before.sensitive.contains(p)) {
+            changes.push(format!("- Now touches {path}, which the team marks sensitive"));
+        }
+        let emoji = self.level().map(Level::emoji).unwrap_or("⚪");
+        let same_level = level.map(str::to_string) == before.level;
+        let head = match (level, same_level, changes.is_empty()) {
+            (None, _, _) => "**Merge risk:** not enough to grade it.".to_string(),
+            (Some(l), true, true) => format!("{emoji} **Merge risk: {l}, unchanged since the last review.** {}", self.next_step()),
+            (Some(l), true, false) => format!("{emoji} **Merge risk: still {l}.** {}", self.next_step()),
+            (Some(l), false, _) => format!(
+                "{emoji} **Merge risk: {l}{}.** {}",
+                before.level.as_ref().map(|was| format!(" (was {was})")).unwrap_or_default(),
+                self.next_step()
+            ),
+        };
+        let mut out = vec![head];
+        if !changes.is_empty() {
+            out.push(String::new());
+            out.push("Since the last review:".into());
+            out.extend(changes);
+        }
+        let mut body = self.alert(&out);
+        body.push_str("\n\n");
+        body.push_str(&details("The whole merge risk", &lines).join("\n"));
+        Some(body)
+    }
+}
+
+impl Criterion {
+    /// How it's named in a posted review: the criterion, and its issue.
+    fn key(&self) -> String {
+        format!("{}{}", self.criterion, self.issue.as_ref().map(|i| format!(" ({i})")).unwrap_or_default())
+    }
+}
+
+/// What an earlier review's merge risk said, read back from its body.
+struct Prior {
+    level: Option<String>,
+    /// Signal title -> verdict.
+    signals: HashMap<String, String>,
+    /// Criterion (as `Criterion::key`) and "missing" or "partly met".
+    unmet: Vec<(String, String)>,
+    sensitive: Vec<String>,
+}
+
+impl Prior {
+    /// None when the body has no graded merge risk to compare with. Reads
+    /// the lines `Risk::lines` writes, in or out of an alert or a
+    /// collapsed section.
+    fn read(body: &str) -> Option<Prior> {
+        #[derive(PartialEq)]
+        enum Section {
+            None,
+            Signals,
+            Unmet,
+            Sensitive,
+        }
+        let mut prior = Prior { level: None, signals: HashMap::new(), unmet: Vec::new(), sensitive: Vec::new() };
+        let mut section = Section::None;
+        for raw in body.lines() {
+            let line = raw.trim_start_matches('>').trim();
+            if let Some(rest) = line.split("**Merge risk: ").nth(1) {
+                let word: String = rest.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+                // "still medium", "low, unchanged": the grade's word.
+                let word = if word == "still" { rest.trim_start_matches("still ").chars().take_while(|c| c.is_ascii_alphabetic()).collect() } else { word };
+                if prior.level.is_none() && Level::parse(&word).is_some() {
+                    prior.level = Some(word);
+                }
+                continue;
+            }
+            if line.starts_with("**") {
+                section = if line.starts_with("**Exposure") || line.starts_with("**Confidence") {
+                    Section::Signals
+                } else if line.starts_with("**Acceptance criteria not met") {
+                    Section::Unmet
+                } else if line.starts_with("**Touches paths") {
+                    Section::Sensitive
+                } else {
+                    Section::None
+                };
+                continue;
+            }
+            if line.starts_with('<') {
+                // A collapsed section's working, never signals.
+                if line.starts_with("<details") {
+                    section = Section::None;
+                }
+                continue;
+            }
+            let Some(item) = line.strip_prefix("- ") else { continue };
+            match section {
+                Section::Signals => {
+                    if let Some((title, rest)) = item.split_once(": ") {
+                        if SIGNALS.iter().any(|s| s.1 == title) && !prior.signals.contains_key(title) {
+                            let verdict: String = rest.split(['.', '(']).next().unwrap_or("").trim().to_string();
+                            prior.signals.insert(title.to_string(), verdict);
+                        }
+                    }
+                }
+                Section::Unmet => {
+                    for status in ["missing", "partly met"] {
+                        if let Some((key, _)) = item.rsplit_once(&format!(": {status}")) {
+                            if !prior.unmet.iter().any(|(k, _)| k == key) {
+                                prior.unmet.push((key.to_string(), status.to_string()));
+                            }
+                            break;
+                        }
+                    }
+                }
+                Section::Sensitive => prior.sensitive.push(item.split(": ").next().unwrap_or(item).to_string()),
+                Section::None => {}
+            }
+        }
+        (prior.level.is_some() || !prior.signals.is_empty()).then_some(prior)
     }
 }
 
@@ -558,6 +714,30 @@ mod tests {
         assert!(matches("**/*.sql", "a/b/c.sql"));
         assert!(matches("infra/*.tf", "infra/main.tf"));
         assert!(!matches("infra/*.tf", "infra/mod/main.tf"));
+    }
+
+    #[test]
+    fn deltas() {
+        let graded = |verification: &str| {
+            parse(&serde_json::json!({ "risk": {
+                "impact": { "verdict": "small", "reason": "One page." }, "rollback": "low", "detection": "good",
+                "verification": { "verdict": verification, "reason": "Unit tests." }, "alignment": "good"
+            }}))
+            .unwrap()
+        };
+        let first = graded("decent").markdown().unwrap();
+        // Nothing moved: one line, and the whole of it collapsed.
+        let same = graded("decent").markdown_since(&first).unwrap();
+        assert!(same.contains("**Merge risk: low, unchanged since the last review.**"));
+        assert!(!same.contains("Since the last review:"));
+        assert!(same.contains("<details><summary>The whole merge risk</summary>"));
+        // Read back from a delta review too, through its collapsed copy.
+        let moved = graded("poor").markdown_since(&same).unwrap();
+        assert!(moved.contains("**Merge risk: medium (was low).**"));
+        assert!(moved.contains("- Verification: poor (was decent). Unit tests"));
+        assert!(!moved.contains("- Impact:  "));
+        // No earlier merge risk: the full block.
+        assert_eq!(graded("decent").markdown_since("Looks good."), Some(first));
     }
 
     #[test]

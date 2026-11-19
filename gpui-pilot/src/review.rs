@@ -521,7 +521,12 @@ pub fn draft(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: &Snap
     // are read back line by line ("- `path:line`: ..."), so the risk's lines
     // never start that way.
     let mut body = String::new();
-    if let Some(risk) = risk.and_then(|r| r.markdown()) {
+    // After an earlier review posted a merge risk, only what's changed.
+    let previous = snapshot.reviews.iter().rev().map(|r| r.3.as_str()).find(|body| body.contains("**Merge risk"));
+    if let Some(risk) = risk.and_then(|r| match previous {
+        Some(previous) => r.markdown_since(previous),
+        None => r.markdown(),
+    }) {
         body.push_str(&risk);
         body.push_str("\n\n---\n\n");
     }
