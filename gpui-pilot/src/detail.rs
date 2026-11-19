@@ -4,9 +4,10 @@
 //!
 //! Text is fetched from GitHub when a drawer opens (`sync::refresh_item`)
 //! and kept in the pilot's own `Details.json` beside the org's caches, in
-//! Gannin's shape: the description and the last 20 comments with their
-//! dates. Until that answers, or when signed out, the drawer shows the
-//! pilot's copy.
+//! the shape Gannin's `DetailStore` reads: the description, the last 20
+//! comments with their dates, a PR's branches and checks, the item's
+//! `updatedAt` and when it was fetched. Until that answers, or when signed
+//! out, the drawer shows the pilot's copy.
 //!
 //! Timing follows the org's issue workflow (`IssueWorkflow`), read with
 //! its projects from the home harness's `workflow.json` (`projects.rs`).
@@ -35,11 +36,57 @@ pub struct IssueText {
     pub comments: Vec<Comment>,
 }
 
-#[derive(Deserialize, serde::Serialize, Clone)]
-struct Cached {
-    detail: Detail,
+/// The values `ItemDetail.CheckState` decodes. Gannin fails to read the
+/// whole file on any other value.
+const CHECK_STATES: [&str; 5] = ["SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"];
+
+/// Dates as Gannin's `.iso8601` coding strategy writes them: UTC, whole
+/// seconds, `Z`. chrono's own serialisation adds fractional seconds
+/// whenever they are nonzero. `ISO8601DateFormatter`, which backs that
+/// strategy on older macOS releases, rejects them.
+mod iso8601 {
+    use chrono::{DateTime, SecondsFormat, Utc};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(at: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&at.to_rfc3339_opts(SecondsFormat::Secs, true))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<DateTime<Utc>, D::Error> {
+        DateTime::<Utc>::deserialize(deserializer)
+    }
+
+    pub mod option {
+        use chrono::{DateTime, Utc};
+        use serde::{Deserialize, Deserializer, Serializer};
+
+        pub fn serialize<S: Serializer>(at: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error> {
+            match at {
+                Some(at) => super::serialize(at, serializer),
+                None => serializer.serialize_none(),
+            }
+        }
+
+        pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error> {
+            Option::<DateTime<Utc>>::deserialize(deserializer)
+        }
+    }
 }
 
+/// One entry of `Details.json`, as Gannin's `DetailStore.Cached`.
+#[derive(Deserialize, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Cached {
+    detail: Detail,
+    /// An entry without one reads as the Unix epoch, so Gannin treats it as
+    /// stale and fetches it again.
+    #[serde(default, with = "iso8601")]
+    fetched_at: DateTime<Utc>,
+}
+
+/// Gannin's `ItemDetail`. The optional fields are left out when empty, as
+/// Swift's encoder does, and default when absent so older entries still
+/// read.
 #[derive(Deserialize, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Detail {
@@ -47,6 +94,17 @@ struct Detail {
     comment_count: usize,
     #[serde(default)]
     recent_comments: Vec<CachedComment>,
+    /// A PR's branch names. Issues have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base_ref: Option<String>,
+    /// The last commit's check rollup, one of `CHECK_STATES`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    checks: Option<String>,
+    /// The item's `updatedAt` when this was fetched.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "iso8601::option")]
+    updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Deserialize, serde::Serialize, Clone)]
@@ -55,12 +113,19 @@ struct CachedComment {
     url: String,
     author: Option<CachedPerson>,
     body: String,
+    #[serde(with = "iso8601")]
     created_at: DateTime<Utc>,
 }
 
+/// Gannin's `Person`.
 #[derive(Deserialize, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct CachedPerson {
     login: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    avatar_url: Option<String>,
 }
 
 fn own_path(org: &str) -> PathBuf {
@@ -103,9 +168,11 @@ pub fn load_text(org: &str, id: &str) -> Option<IssueText> {
     Some(text_of(&cached.detail))
 }
 
-/// Keeps what GitHub sent for an issue or PR (its `body` and
-/// `comments(last: 20) { totalCount nodes { url body createdAt author { login } } }`)
-/// in the pilot's copy, and returns it as the drawer shows it.
+/// Keeps what GitHub sent for an issue or PR in the pilot's copy, and
+/// returns it as the drawer shows it. The node has its `body`, `updatedAt`
+/// and `comments(last: 20) { totalCount nodes { url body createdAt author { login avatarUrl ... on User { name } } } }`;
+/// a PR's also has `headRefName`, `baseRefName` and
+/// `commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`.
 pub fn remember(org: &str, id: &str, node: &serde_json::Value) -> Option<IssueText> {
     let detail = detail_of(node)?;
     let text = text_of(&detail);
@@ -143,7 +210,8 @@ pub fn search_texts(org: &str) -> HashMap<String, String> {
 fn store(org: &str, found: Vec<(String, Detail)>) {
     if let Ok(mut all) = own().lock() {
         let own = own_for(&mut all, org);
-        own.extend(found.into_iter().map(|(id, detail)| (id, Cached { detail })));
+        let fetched_at = Utc::now();
+        own.extend(found.into_iter().map(|(id, detail)| (id, Cached { detail, fetched_at })));
         if let Ok(bytes) = serde_json::to_vec(&*own) {
             let path = own_path(org);
             if let Some(folder) = path.parent() {
@@ -168,14 +236,28 @@ fn detail_of(node: &serde_json::Value) -> Option<Detail> {
             .into_iter()
             .flatten()
             .filter_map(|c| {
+                let author = &c["author"];
                 Some(CachedComment {
                     url: c["url"].as_str()?.to_string(),
-                    author: c["author"]["login"].as_str().map(|login| CachedPerson { login: login.to_string() }),
+                    author: author["login"].as_str().map(|login| CachedPerson {
+                        login: login.to_string(),
+                        name: author["name"].as_str().map(str::to_string),
+                        avatar_url: author["avatarUrl"].as_str().map(str::to_string),
+                    }),
                     body: c["body"].as_str().unwrap_or("").to_string(),
                     created_at: c["createdAt"].as_str()?.parse().ok()?,
                 })
             })
             .collect(),
+        head_ref: node["headRefName"].as_str().map(str::to_string),
+        base_ref: node["baseRefName"].as_str().map(str::to_string),
+        checks: node["commits"]["nodes"]
+            .as_array()
+            .and_then(|n| n.last())
+            .and_then(|c| c["commit"]["statusCheckRollup"]["state"].as_str())
+            .filter(|s| CHECK_STATES.contains(s))
+            .map(str::to_string),
+        updated_at: node["updatedAt"].as_str().and_then(|s| s.parse().ok()),
     })
 }
 
@@ -331,4 +413,181 @@ pub fn timeline(issue: &IssueItem, text: Option<&IssueText>) -> Vec<(NaiveDate, 
         days.entry(moment.at.with_timezone(&Local).date_naive()).or_default().push(moment);
     }
     days.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    // Gannin's `DetailStore.Cached`, `ItemDetail`, `Comment` and `Person`.
+    // Swift's required fields are plain here and its optional ones `Option`,
+    // so a missing required field fails to decode as it would in Gannin.
+    // Dates stay strings so the tests can check their exact form.
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SwiftCached {
+        detail: SwiftDetail,
+        fetched_at: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SwiftDetail {
+        body: String,
+        comment_count: i64,
+        recent_comments: Vec<SwiftComment>,
+        head_ref: Option<String>,
+        base_ref: Option<String>,
+        checks: Option<String>,
+        updated_at: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SwiftComment {
+        url: String,
+        author: Option<SwiftPerson>,
+        body: String,
+        created_at: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SwiftPerson {
+        login: String,
+        name: Option<String>,
+        avatar_url: Option<String>,
+    }
+
+    /// `YYYY-MM-DDTHH:MM:SSZ`, the form Swift's `.iso8601` strategy writes.
+    fn is_swift_date(s: &str) -> bool {
+        s.len() == 20
+            && s.bytes().enumerate().all(|(i, c)| match i {
+                4 | 7 => c == b'-',
+                10 => c == b'T',
+                13 | 16 => c == b':',
+                19 => c == b'Z',
+                _ => c.is_ascii_digit(),
+            })
+            && s.parse::<DateTime<Utc>>().is_ok()
+    }
+
+    fn pr_node(state: &str) -> Value {
+        json!({
+            "__typename": "PullRequest",
+            "body": "Adds the thing.",
+            "updatedAt": "2026-11-18T09:15:00Z",
+            "headRefName": "feature/thing",
+            "baseRefName": "main",
+            "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": state } } }] },
+            "comments": {
+                "totalCount": 3,
+                "nodes": [
+                    {
+                        "url": "https://github.com/o/r/pull/1#issuecomment-1",
+                        "body": "Looks good.",
+                        "createdAt": "2026-11-18T08:00:00Z",
+                        "author": { "login": "octocat", "name": "The Octocat", "avatarUrl": "https://avatars.githubusercontent.com/u/1" }
+                    },
+                    {
+                        "url": "https://github.com/o/r/pull/1#issuecomment-2",
+                        "body": "Deployed.",
+                        "createdAt": "2026-11-18T08:30:00Z",
+                        "author": { "login": "deploy-bot", "avatarUrl": "https://avatars.githubusercontent.com/u/2" }
+                    }
+                ]
+            }
+        })
+    }
+
+    fn issue_node() -> Value {
+        json!({
+            "__typename": "Issue",
+            "body": "It breaks.",
+            "updatedAt": "2026-11-17T12:00:00Z",
+            "comments": { "totalCount": 0, "nodes": [] }
+        })
+    }
+
+    #[test]
+    fn detail_of_reads_a_pull_requests_branches_checks_and_update() {
+        let detail = detail_of(&pr_node("SUCCESS")).expect("detail");
+        assert_eq!(detail.head_ref.as_deref(), Some("feature/thing"));
+        assert_eq!(detail.base_ref.as_deref(), Some("main"));
+        assert_eq!(detail.checks.as_deref(), Some("SUCCESS"));
+        assert_eq!(detail.updated_at, Some("2026-11-18T09:15:00Z".parse().unwrap()));
+        assert_eq!(detail.comment_count, 3);
+        let octocat = detail.recent_comments[0].author.as_ref().expect("author");
+        assert_eq!(octocat.name.as_deref(), Some("The Octocat"));
+        assert_eq!(octocat.avatar_url.as_deref(), Some("https://avatars.githubusercontent.com/u/1"));
+        let bot = detail.recent_comments[1].author.as_ref().expect("author");
+        assert_eq!(bot.name, None);
+    }
+
+    #[test]
+    fn detail_of_drops_check_states_gannin_cannot_decode() {
+        assert_eq!(detail_of(&pr_node("NEUTRAL")).expect("detail").checks, None);
+    }
+
+    #[test]
+    fn detail_of_gives_an_issue_no_branches_or_checks() {
+        let detail = detail_of(&issue_node()).expect("detail");
+        assert_eq!((detail.head_ref, detail.base_ref, detail.checks), (None, None, None));
+        assert_eq!(detail.updated_at, Some("2026-11-17T12:00:00Z".parse().unwrap()));
+    }
+
+    #[test]
+    fn details_json_decodes_as_gannin_reads_it() {
+        // Fractional seconds, as `Utc::now()` has, must not reach the file.
+        let fetched_at: DateTime<Utc> = "2026-11-19T10:20:30.123456789Z".parse().unwrap();
+        let file: HashMap<String, Cached> = HashMap::from([
+            ("PR_1".to_string(), Cached { detail: detail_of(&pr_node("PENDING")).unwrap(), fetched_at }),
+            ("I_1".to_string(), Cached { detail: detail_of(&issue_node()).unwrap(), fetched_at }),
+        ]);
+        let bytes = serde_json::to_vec(&file).unwrap();
+
+        let decoded: HashMap<String, SwiftCached> = serde_json::from_slice(&bytes).expect("decodes as Gannin's Cached");
+        let pr = &decoded["PR_1"];
+        assert_eq!(pr.fetched_at, "2026-11-19T10:20:30Z");
+        assert!(is_swift_date(&pr.fetched_at));
+        assert_eq!(pr.detail.body, "Adds the thing.");
+        assert_eq!(pr.detail.comment_count, 3);
+        assert_eq!(pr.detail.head_ref.as_deref(), Some("feature/thing"));
+        assert_eq!(pr.detail.base_ref.as_deref(), Some("main"));
+        assert!(pr.detail.checks.as_deref().is_some_and(|c| CHECK_STATES.contains(&c)));
+        assert!(pr.detail.updated_at.as_deref().is_some_and(is_swift_date));
+        let comment = &pr.detail.recent_comments[0];
+        assert!(comment.url.starts_with("https://"));
+        assert_eq!(comment.body, "Looks good.");
+        assert!(is_swift_date(&comment.created_at));
+        let author = comment.author.as_ref().expect("author");
+        assert_eq!(author.login, "octocat");
+        assert_eq!(author.name.as_deref(), Some("The Octocat"));
+        assert_eq!(author.avatar_url.as_deref(), Some("https://avatars.githubusercontent.com/u/1"));
+
+        // An issue's missing branches and checks are left out, not null.
+        let raw: Value = serde_json::from_slice(&bytes).unwrap();
+        let issue = raw["I_1"]["detail"].as_object().unwrap();
+        for key in ["headRef", "baseRef", "checks"] {
+            assert!(!issue.contains_key(key), "{key} written for an issue");
+        }
+        assert!(decoded["I_1"].detail.recent_comments.is_empty());
+
+        // The pilot reads its own file back.
+        let back: HashMap<String, Cached> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back["PR_1"].fetched_at, "2026-11-19T10:20:30Z".parse::<DateTime<Utc>>().unwrap());
+        assert_eq!(back["PR_1"].detail.checks.as_deref(), Some("PENDING"));
+    }
+
+    #[test]
+    fn entries_without_the_newer_fields_still_read() {
+        let older = r#"{"I_1":{"detail":{"body":"b","commentCount":1,"recentComments":[{"url":"https://github.com/o/r/issues/1#issuecomment-1","author":{"login":"a"},"body":"c","createdAt":"2026-01-02T03:04:05Z"}]}}}"#;
+        let file: HashMap<String, Cached> = serde_json::from_str(older).expect("reads");
+        let cached = &file["I_1"];
+        assert_eq!(cached.fetched_at.timestamp(), 0);
+        assert!(cached.detail.head_ref.is_none() && cached.detail.checks.is_none() && cached.detail.updated_at.is_none());
+        assert!(cached.detail.recent_comments[0].author.as_ref().is_some_and(|a| a.name.is_none() && a.avatar_url.is_none()));
+    }
 }
