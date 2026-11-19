@@ -66,6 +66,7 @@ mod workflows_page;
 mod scorecard;
 mod pr_picker;
 mod prs;
+mod pull_page;
 mod servers;
 mod remotes;
 mod session;

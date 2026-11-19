@@ -97,6 +97,9 @@ pub enum Nav {
     /// A session's tab, by the pilot's own number for it. Not restored at
     /// launch: its terminal ended with the last run.
     Session(u32),
+    /// A pull request as a page (the drawer's Open in Page), by the
+    /// pilot's own number for it. Not restored at launch.
+    Pull(u32),
     /// A kind of document in the team's harness.
     Harness(crate::harness::HarnessKind),
     /// The review panel in each state, from a made-up PR (the pilot's own).
@@ -142,6 +145,7 @@ impl Nav {
             Nav::Queue => "Queue",
             Nav::Settings => "Settings",
             Nav::Session(_) => "Session",
+            Nav::Pull(_) => "Pull Request",
             Nav::Harness(kind) => kind.title(),
             Nav::ReviewPreview => "Review Preview",
             Nav::SchedulePreview => "Schedule",
@@ -393,6 +397,7 @@ enum Page {
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
     AgentMetrics(Entity<crate::agent_metrics::AgentMetricsPage>),
+    Pull(Entity<crate::pull_page::PullPage>),
     None,
 }
 
@@ -563,7 +568,7 @@ impl Workspace {
             views: self
                 .tabs
                 .iter()
-                .filter(|tab| !matches!(tab.nav, Nav::Session(_)))
+                .filter(|tab| !matches!(tab.nav, Nav::Session(_) | Nav::Pull(_)))
                 .map(|tab| SavedTab {
                     nav: tab.nav,
                     name: tab.name.clone(),
@@ -606,7 +611,7 @@ impl Workspace {
                 _ => None,
             },
             // Sessions open after the views, so the index counts the views.
-            active: self.tabs.iter().take(self.active).filter(|tab| !matches!(tab.nav, Nav::Session(_))).count(),
+            active: self.tabs.iter().take(self.active).filter(|tab| !matches!(tab.nav, Nav::Session(_) | Nav::Pull(_))).count(),
             sidebar_open: self.sidebar_open,
             tabs_on_left: self.tabs_on_left,
             harness_open: self.harness_open,
@@ -739,7 +744,7 @@ impl Workspace {
         saved
             .tabs
             .iter()
-            .filter(|nav| !matches!(nav, Nav::Session(_)))
+            .filter(|nav| !matches!(nav, Nav::Session(_) | Nav::Pull(_)))
             .map(|&nav| SavedTab {
                 nav,
                 name: saved.tab_names.iter().find(|(n, _)| *n == nav).map(|(_, name)| name.clone()),
@@ -1073,6 +1078,25 @@ impl Workspace {
                 let id = event.0.path.clone();
                 this.open_drawer(DrawerItem::Doc(event.0.clone()), id, cx);
             })],
+            Page::Pull(page) => vec![
+                cx.subscribe_in(page, window, |this, _, event: &crate::pull_page::PullAction, window, cx| match event {
+                    crate::pull_page::PullAction::Review(pr) => this.review_pr(pr.clone(), window, cx),
+                    crate::pull_page::PullAction::Explain(pr) => this.explain_pr(pr.clone(), window, cx),
+                }),
+                cx.subscribe(page, |this, _, event: &crate::pull_page::OpenLinked, cx| match this.issues.read(cx).issue(&event.id) {
+                    Some(issue) => {
+                        this.drawers.clear();
+                        this.push_drawer(issue, cx);
+                    }
+                    None => cx.open_url(&event.url),
+                }),
+                cx.subscribe_in(page, window, |this, _, event: &crate::issues::ShowSession, window, cx| this.show_session_tab(event.0, window, cx)),
+                cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
+                    this.drawers.clear();
+                    let id = event.0.path.clone();
+                    this.open_drawer(DrawerItem::Doc(event.0.clone()), id, cx);
+                }),
+            ],
             _ => Vec::new(),
         }
     }
@@ -1457,6 +1481,11 @@ impl Workspace {
                     let related = related.clone();
                     page.update(cx, |page, cx| page.set_related(related, cx));
                 }
+                Page::Pull(page) => {
+                    let key = page.read(cx).key();
+                    let mine = related.get(&key).cloned().unwrap_or_default();
+                    page.update(cx, |page, cx| page.set_related(mine, cx));
+                }
                 _ => {}
             }
         }
@@ -1501,6 +1530,32 @@ impl Workspace {
             }
         }
         map
+    }
+
+    /// A PR's page in a tab after the current one, or its tab when it's
+    /// open already.
+    fn open_pull_page(&mut self, pr: PrItem, window: &mut Window, cx: &mut Context<Self>) {
+        self.drawers.clear();
+        if let Some(index) = self.tabs.iter().position(|t| matches!(&t.page, Page::Pull(p) if p.read(cx).pr_id() == pr.id)) {
+            self.activate(index, window, cx);
+            return;
+        }
+        let Some(org) = self.org.clone() else { return };
+        let key = crate::issues::related_key(&pr.repo, pr.number);
+        let related = self.related_sessions(cx).remove(&key).unwrap_or_default();
+        let page = cx.new(|cx| crate::pull_page::PullPage::new(pr, org, cx));
+        page.update(cx, |p, cx| p.set_related(related, cx));
+        let number = self.tabs.iter().filter_map(|t| match t.nav {
+            Nav::Pull(n) => Some(n),
+            _ => None,
+        }).max().map_or(0, |n| n + 1);
+        let tab = Tab { id: self.next_tab, nav: Nav::Pull(number), name: None, page: Page::Pull(page) };
+        self.next_tab += 1;
+        let at = if self.tabs.is_empty() { 0 } else { self.active + 1 };
+        let subscriptions = Self::watch(&tab.page, window, cx);
+        self._subscriptions.extend(subscriptions);
+        self.tabs.insert(at, tab);
+        self.activate(at, window, cx);
     }
 
     /// Switches to the tab of a session in this window.
@@ -3882,6 +3937,12 @@ impl Workspace {
             }
             DrawerItem::Pull(pr) => {
                 let url = pr.url.clone();
+                let paged = pr.clone();
+                actions.push(
+                    action("pr-page", "Open in Page".into(), "Open this pull request as a page of its own, with everything GitHub shows and what the harness knows".into())
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_pull_page(paged.clone(), window, cx)))
+                        .into_any_element(),
+                );
                 actions.push(
                     action("pr-github", "Open on GitHub".into(), "Open this pull request on GitHub".into())
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
@@ -4733,6 +4794,9 @@ impl Workspace {
         }
         if let Some(name) = &tab.name {
             return name.clone();
+        }
+        if let Page::Pull(page) = &tab.page {
+            return page.read(cx).tab_title();
         }
         Self::page_name(self, tab.nav, cx)
     }
@@ -5761,6 +5825,7 @@ impl Workspace {
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
                 Page::AgentMetrics(page) => page.into_any_element(),
+                Page::Pull(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()
