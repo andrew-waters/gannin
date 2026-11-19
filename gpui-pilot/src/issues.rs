@@ -798,6 +798,61 @@ pub struct ScheduleIssues(pub Vec<IssueItem>);
 
 impl EventEmitter<ScheduleIssues> for IssuesPage {}
 
+/// A related session's chip was clicked: switch to its tab.
+pub struct ShowSession(pub u32);
+
+impl EventEmitter<ShowSession> for IssuesPage {}
+
+/// An open session about an issue or PR (its subject), or that opened the
+/// PR, for the chip on its row. Keyed by `related_key`.
+#[derive(Clone, PartialEq)]
+pub struct Related {
+    pub session: u32,
+    /// What it's doing there: "Working on it", "Reviewing", "PR opened".
+    pub label: &'static str,
+    /// The tab's name, for the tooltip.
+    pub name: String,
+    pub running: bool,
+    /// A review session, which the PR list shows its own way.
+    pub review: bool,
+}
+
+/// "owner/repo#123": an issue's and a PR's numbers share a repo's range.
+pub fn related_key(repo: &str, number: i64) -> String {
+    format!("{repo}#{number}")
+}
+
+/// A related session's chip: its label, green while it runs; a click
+/// switches to its tab.
+pub fn related_chip<V: EventEmitter<ShowSession> + 'static>(id: String, related: &Related, theme: &Theme, cx: &mut Context<V>) -> gpui::AnyElement {
+    let session = related.session;
+    let tint = if related.running { theme.good() } else { theme.secondary };
+    let tip = format!("{} in {}{}", related.label, related.name, if related.running { "" } else { " (ended)" });
+    div()
+        .id(SharedString::from(id))
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .px_1p5()
+        .rounded_md()
+        .border_1()
+        .border_color(tint.opacity(0.5))
+        .text_xs()
+        .text_color(tint)
+        .cursor_pointer()
+        .hover(|s| s.bg(tint.opacity(0.15)))
+        .tooltip(move |_, cx| cx.new(|_| Tooltip(tip.clone())).into())
+        .child(div().size(px(6.)).rounded_full().bg(tint))
+        .child(related.label)
+        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            cx.emit(ShowSession(session));
+        }))
+        .into_any_element()
+}
+
 pub struct IssuesPage {
     org: Option<String>,
     issues: Arc<Vec<IssueItem>>,
@@ -839,6 +894,8 @@ pub struct IssuesPage {
     /// The board field opened in the Field menu.
     expanded_field: Option<String>,
     search_focus: FocusHandle,
+    /// Open sessions by the issue they're about, from the workspace.
+    related: HashMap<String, Vec<Related>>,
     error: Option<String>,
     loading: bool,
     timings: String,
@@ -888,6 +945,7 @@ impl IssuesPage {
             closed_menu: None,
             expanded_field: None,
             search_focus,
+            related: HashMap::new(),
             error: None,
             loading: false,
             timings: String::new(),
@@ -896,6 +954,14 @@ impl IssuesPage {
         };
         page.load(cx);
         page
+    }
+
+    /// The open sessions related to issues, keyed by `related_key`.
+    pub fn set_related(&mut self, related: HashMap<String, Vec<Related>>, cx: &mut Context<Self>) {
+        if self.related != related {
+            self.related = related;
+            cx.notify();
+        }
     }
 
     /// The window's Filter box, narrowing the list with the page's own
@@ -1989,7 +2055,7 @@ impl IssuesPage {
         let quiet = |value: String| text(value).text_color(theme.secondary);
         let when = |date: Option<DateTime<Utc>>| quiet(date.map(crate::format::table_date).unwrap_or_default());
         match column {
-            Column::Title => self.title_cell(index, theme).into_any_element(),
+            Column::Title => self.title_cell(index, theme, cx).into_any_element(),
             Column::State => div().w(px(width)).flex_none().flex().overflow_hidden().child(state_pill(issue, theme)).into_any_element(),
             Column::Status => div()
                 .w(px(width))
@@ -2089,9 +2155,17 @@ impl IssuesPage {
 
     /// The title, with the tree's indent and triangle, the sub-issue chip
     /// and where it belongs.
-    fn title_cell(&self, index: usize, theme: &Theme) -> impl IntoElement {
+    fn title_cell(&self, index: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let row = &self.rows[index];
         let issue = &self.issues[row.index];
+        let chips: Vec<gpui::AnyElement> = self
+            .related
+            .get(&related_key(&issue.repo, issue.number))
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(i, r)| related_chip(format!("related-{}-{i}", issue.id), r, theme, cx))
+            .collect();
         div()
             .flex_1()
             .min_w(px(220.))
@@ -2102,6 +2176,7 @@ impl IssuesPage {
             .gap_1p5()
             .pl(px(row.depth as f32 * 18.))
             .child(div().flex_shrink(1.).min_w(px(60.)).truncate().child(issue.title.clone()))
+            .children(chips)
             .when_some(row.context.clone(), |d, context| {
                 d.child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.tertiary).child(context))
             })

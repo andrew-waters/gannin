@@ -972,7 +972,10 @@ impl Workspace {
         let page = match nav {
             Nav::Issues => {
                 let state = saved.and_then(|s| s.issues.clone()).unwrap_or_else(|| self.template_issues(cx).fresh());
-                Page::Issues(cx.new(|cx| IssuesPage::new(org, &state, window, cx)))
+                let page = cx.new(|cx| IssuesPage::new(org, &state, window, cx));
+                let related = self.related_sessions(cx);
+                page.update(cx, |page, cx| page.set_related(related, cx));
+                Page::Issues(page)
             }
             Nav::PullRequests => {
                 let state = saved.and_then(|s| s.prs.clone()).unwrap_or_else(|| self.template_prs(cx).fresh());
@@ -981,6 +984,8 @@ impl Workspace {
                 page.update(cx, |page, cx| page.set_me(me, cx));
                 let reviewing = self.reviewing(cx);
                 page.update(cx, |page, cx| page.set_reviewing(reviewing, cx));
+                let related = self.related_sessions(cx);
+                page.update(cx, |page, cx| page.set_related(related, cx));
                 Page::Prs(page)
             }
             Nav::Ci => {
@@ -1013,6 +1018,7 @@ impl Workspace {
     fn watch(page: &Page, window: &mut Window, cx: &mut Context<Self>) -> Vec<Subscription> {
         match page {
             Page::Issues(page) => vec![
+                cx.subscribe_in(page, window, |this, _, event: &crate::issues::ShowSession, window, cx| this.show_session_tab(event.0, window, cx)),
                 // A row picked in a list replaces the stack.
                 cx.subscribe(page, |this, _, event: &OpenIssue, cx| {
                     this.drawers.clear();
@@ -1028,6 +1034,7 @@ impl Workspace {
                 }),
             ],
             Page::Prs(page) => vec![
+                cx.subscribe_in(page, window, |this, _, event: &crate::issues::ShowSession, window, cx| this.show_session_tab(event.0, window, cx)),
                 cx.subscribe(page, |this, _, event: &OpenPr, cx| {
                     this.drawers.clear();
                     this.push_pr_drawer(event.0.clone(), cx);
@@ -1432,14 +1439,75 @@ impl Workspace {
             })
     }
 
-    /// Tells the PR tables which PRs have a review session open.
+    /// Tells the PR tables which PRs have a review session open, and the
+    /// Issues and PR tables which rows other sessions relate to.
     fn sync_reviewing(&mut self, cx: &mut Context<Self>) {
         let reviewing = self.reviewing(cx);
+        let related = self.related_sessions(cx);
         for tab in &self.tabs {
-            if let Page::Prs(page) = &tab.page {
-                let reviewing = reviewing.clone();
-                page.update(cx, |page, cx| page.set_reviewing(reviewing, cx));
+            match &tab.page {
+                Page::Prs(page) => {
+                    let (reviewing, related) = (reviewing.clone(), related.clone());
+                    page.update(cx, |page, cx| {
+                        page.set_reviewing(reviewing, cx);
+                        page.set_related(related, cx);
+                    });
+                }
+                Page::Issues(page) => {
+                    let related = related.clone();
+                    page.update(cx, |page, cx| page.set_related(related, cx));
+                }
+                _ => {}
             }
+        }
+    }
+
+    /// The sessions open in this window by the issue or PR they relate to,
+    /// keyed "owner/repo#123": each launched session's subject, and the
+    /// PRs it opened (from its `pr` hook file).
+    fn related_sessions(&self, cx: &App) -> HashMap<String, Vec<crate::issues::Related>> {
+        use crate::launch::Flow;
+        let mut map: HashMap<String, Vec<crate::issues::Related>> = HashMap::new();
+        for session in &self.sessions {
+            let page = session.read(cx);
+            let Some(launch) = page.launch.as_ref() else { continue };
+            let base = crate::issues::Related {
+                session: page.id,
+                label: "",
+                name: page.title(cx),
+                running: page.state != State::Ended,
+                review: launch.flow == Flow::Review,
+            };
+            if let Some(subject) = &launch.subject {
+                let label = match launch.flow {
+                    Flow::Work => "Working on it",
+                    Flow::Review => "Reviewing",
+                    Flow::Plan => "Planning",
+                    Flow::QuickChange => "Quick change",
+                    Flow::Ask => "Asking",
+                };
+                map.entry(crate::issues::related_key(&subject.repo, subject.number)).or_default().push(crate::issues::Related { label, ..base.clone() });
+            }
+            // "https://github.com/owner/repo/pull/12" for each PR it opened.
+            for url in launch.pull_requests() {
+                let Some(rest) = url.trim().split("github.com/").nth(1) else { continue };
+                let Some((repo, number)) = rest.split_once("/pull/") else { continue };
+                let Some(number) = number.split(|c: char| !c.is_ascii_digit()).next().and_then(|n| n.parse::<i64>().ok()) else { continue };
+                let key = crate::issues::related_key(repo, number);
+                let list = map.entry(key).or_default();
+                if !list.iter().any(|r| r.session == page.id) {
+                    list.push(crate::issues::Related { label: "PR opened", review: false, ..base.clone() });
+                }
+            }
+        }
+        map
+    }
+
+    /// Switches to the tab of a session in this window.
+    fn show_session_tab(&mut self, id: u32, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
+            self.drawers.clear();
+            self.activate(index, window, cx);
         }
     }
 

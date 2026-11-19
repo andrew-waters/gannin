@@ -15,7 +15,7 @@
 use crate::avatars::{avatar, stack};
 use crate::charts::Theme;
 use crate::format::thousands;
-use crate::issues::{check_row, menu_action, menu_action_owned, menu_heading, mode_switch, pill, separator, summary, ColumnDrag, Tooltip};
+use crate::issues::{check_row, menu_action, menu_action_owned, menu_heading, mode_switch, pill, related_chip, related_key, separator, summary, ColumnDrag, Related, ShowSession, Tooltip};
 use chrono::{DateTime, Utc};
 use gpui::{
     anchored, deferred, div, prelude::*, px, uniform_list, ClickEvent, Context, EventEmitter, FocusHandle, FontWeight, Hsla,
@@ -789,6 +789,8 @@ pub struct OpenPr(pub PrItem);
 
 impl EventEmitter<OpenPr> for PrsPage {}
 
+impl EventEmitter<ShowSession> for PrsPage {}
+
 /// Review with Claude for each of these, picked together in the table.
 pub struct ReviewPrs(pub Vec<PrItem>);
 
@@ -827,6 +829,9 @@ pub struct PrsPage {
     generation: u64,
     /// PRs with a review session in a tab, by id: whether it's running.
     reviewing: HashMap<String, bool>,
+    /// Other open sessions by the PR they're about or opened (reviews
+    /// show as `reviewing`).
+    related: HashMap<String, Vec<Related>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -863,6 +868,7 @@ impl PrsPage {
             timings: String::new(),
             generation: 0,
             reviewing: HashMap::new(),
+            related: HashMap::new(),
             _subscriptions: subscriptions,
         };
         page.load(cx);
@@ -898,6 +904,14 @@ impl PrsPage {
     }
 
     /// The PRs with a review session open, from the window's tabs.
+    /// The open sessions related to PRs, keyed by `related_key`.
+    pub fn set_related(&mut self, related: HashMap<String, Vec<Related>>, cx: &mut Context<Self>) {
+        if self.related != related {
+            self.related = related;
+            cx.notify();
+        }
+    }
+
     pub fn set_reviewing(&mut self, reviewing: HashMap<String, bool>, cx: &mut Context<Self>) {
         if self.reviewing != reviewing {
             self.reviewing = reviewing;
@@ -1482,6 +1496,17 @@ impl PrsPage {
                             })),
                     )
                 })
+                // Other sessions about it, or that opened it.
+                .children(
+                    self.related
+                        .get(&related_key(&pr.repo, pr.number))
+                        .into_iter()
+                        .flatten()
+                        .filter(|r| !r.review)
+                        .enumerate()
+                        .map(|(i, r)| related_chip(format!("related-{}-{i}", pr.id), r, theme, cx))
+                        .collect::<Vec<_>>(),
+                )
                 .into_any_element(),
             Column::State => div().w(px(width)).flex_none().flex().overflow_hidden().child(state_pill(pr, theme)).into_any_element(),
             Column::Status => div()
