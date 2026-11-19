@@ -5100,16 +5100,20 @@ impl Workspace {
                 .child(count.to_string())
         };
         div()
-            .flex_none()
             .h_full()
             .flex()
             .flex_row()
             .items_center()
             .gap_1()
+            // Along the column's foot it takes the width, Pause and Resume
+            // at the right.
+            .map(|d| if vertical { d.flex_1().min_w_0() } else { d.flex_none() })
             .when(!vertical && (working > 0 || paused > 0 || can_message), |d| d.px_1().border_l_1().border_color(theme.border))
             .when(can_message || messaging, |d| {
                 d.child(
                     button("message-sessions", "Message".into(), "Send one message to several Claude Code sessions: tick them in the tabs".into())
+                        .border_1()
+                        .border_color(theme.border)
                         .when(messaging, |b| b.bg(theme.row_selected).text_color(theme.fg))
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
@@ -5117,6 +5121,7 @@ impl Workspace {
                         })),
                 )
             })
+            .when(vertical, |d| d.child(div().flex_1()))
             .when(working > 0, |d| {
                 d.child(icon_button("pause-all", "icons/debug_pause.svg", working, format!("Pause All: stop the {working} working {}, as Esc in each", if working == 1 { "session" } else { "sessions" })).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
@@ -5159,7 +5164,7 @@ impl Workspace {
             .child(self.tabs(true, theme, cx))
             // Pause, Resume and Message along the foot of the column, when
             // any of them would show.
-            .when(self.sessions.iter().any(|p| p.read(cx).state == State::Working || self.messageable(p.read(cx).id, cx)) || !self.paused_sessions.is_empty(), |d| d.child(div().flex_none().h(px(32.)).flex().flex_row().items_center().px_1().border_t_1().border_color(theme.border).child(self.pause_controls(true, theme, cx))))
+            .when(self.sessions.iter().any(|p| p.read(cx).state == State::Working || self.messageable(p.read(cx).id, cx)) || !self.paused_sessions.is_empty(), |d| d.child(div().flex_none().h(px(32.)).flex().flex_row().items_center().px_2().border_t_1().border_color(theme.border).child(self.pause_controls(true, theme, cx))))
     }
 
     /// The "+" at the right of the tab bar, as the Claude Code window's in
