@@ -235,6 +235,9 @@ pub struct IssueItem {
     pub statuses: Vec<(String, i64)>,
     /// The issue history has fetched it, so `boards` is known.
     pub has_history: bool,
+    /// Its description and recent comments, lowercased, for the search:
+    /// empty until the sync or its drawer has fetched them.
+    pub text: String,
 }
 
 impl IssueItem {
@@ -305,6 +308,7 @@ impl IssueItem {
             closed_at: core.closed_at,
             sub_issues_done: 0,
             sub_issues: 0,
+            text: String::new(),
         }
     }
 }
@@ -430,6 +434,9 @@ pub struct Filters {
     /// Menus whose picks leave issues out rather than keep them, by
     /// title ("Field" for board fields).
     excluding: BTreeSet<String>,
+    /// The window's Filter box, matched as the search is: never saved.
+    #[serde(skip)]
+    outer: String,
 }
 
 impl Filters {
@@ -438,7 +445,7 @@ impl Filters {
     }
 
     fn is_narrowed(&self) -> bool {
-        !self.search.is_empty() || Key::all().iter().any(|k| !self.values(*k).is_empty()) || !self.fields.is_empty()
+        !self.search.is_empty() || !self.outer.trim().is_empty() || Key::all().iter().any(|k| !self.values(*k).is_empty()) || !self.fields.is_empty()
     }
 
     fn values(&self, key: Key) -> &BTreeSet<String> {
@@ -510,10 +517,11 @@ impl Filters {
         self.matches_search(issue)
     }
 
-    /// Every word typed is in the title, the repo, `#123`, a person's login
-    /// or name, or a label (`IssueSearch`).
+    /// Every word typed, here or in the window's Filter box, is in the
+    /// title, the repo, `#123`, a person's login or name, a label, or the
+    /// description or a recent comment (`IssueSearch`, with the text).
     fn matches_search(&self, issue: &IssueItem) -> bool {
-        let words: Vec<String> = self.search.split_whitespace().map(str::to_lowercase).collect();
+        let words: Vec<String> = self.search.split_whitespace().chain(self.outer.split_whitespace()).map(str::to_lowercase).collect();
         if words.is_empty() {
             return true;
         }
@@ -526,7 +534,7 @@ impl Filters {
         fields.extend(issue.author_login.as_deref());
         fields.extend(issue.labels.iter().map(String::as_str));
         let fields: Vec<String> = fields.iter().map(|f| f.to_lowercase()).collect();
-        words.iter().all(|word| fields.iter().any(|f| f.contains(word.as_str())))
+        words.iter().all(|word| fields.iter().any(|f| f.contains(word.as_str())) || issue.text.contains(word.as_str()))
     }
 }
 
@@ -890,12 +898,22 @@ impl IssuesPage {
         page
     }
 
+    /// The window's Filter box, narrowing the list with the page's own
+    /// search.
+    pub fn set_outer(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.filters.outer != text {
+            self.filters.outer = text.to_string();
+            self.refilter();
+            cx.notify();
+        }
+    }
+
     pub fn set_org(&mut self, org: Option<String>, cx: &mut Context<Self>) {
         if org != self.org {
             self.org = org;
             self.selected = None;
             // Another org's repos, people and boards differ.
-            self.filters = Filters::default();
+            self.filters = Filters { outer: std::mem::take(&mut self.filters.outer), ..Filters::default() };
             self.load(cx);
         }
     }
@@ -926,7 +944,15 @@ impl IssuesPage {
                 .background_executor()
                 .spawn(async move {
                     let started = Instant::now();
-                    load(&org).map(|issues| (issues, started.elapsed()))
+                    let texts = crate::detail::search_texts(&org);
+                    load(&org).map(|mut issues| {
+                        for issue in &mut issues {
+                            if let Some(text) = texts.get(&issue.id) {
+                                issue.text = text.clone();
+                            }
+                        }
+                        (issues, started.elapsed())
+                    })
                 })
                 .await;
             this.update(cx, |page, cx| {
@@ -1721,7 +1747,7 @@ impl IssuesPage {
             .child(
                 div().flex_1().min_w_0().truncate().map(|d| {
                     if text.is_empty() {
-                        d.text_color(theme.tertiary).child(if focused { "|".to_string() } else { "Title, number, person or label".to_string() })
+                        d.text_color(theme.tertiary).child(if focused { "|".to_string() } else { "Title, number, person, label or text".to_string() })
                     } else {
                         d.child(if focused { format!("{text}|") } else { text.clone() })
                     }

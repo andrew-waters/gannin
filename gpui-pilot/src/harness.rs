@@ -129,6 +129,8 @@ pub struct HarnessPage {
     docs: Arc<Vec<Doc>>,
     rows: Vec<usize>,
     search: Entity<editor::Editor>,
+    /// The window's Filter box, narrowing the list with the search.
+    outer: String,
     loading: bool,
     generation: u64,
     _subscription: gpui::Subscription,
@@ -147,7 +149,7 @@ impl HarnessPage {
                 cx.notify();
             }
         });
-        let mut page = Self { org, kind, docs: Arc::new(Vec::new()), rows: Vec::new(), search, loading: true, generation: 0, _subscription: subscription };
+        let mut page = Self { org, kind, docs: Arc::new(Vec::new()), rows: Vec::new(), search, outer: String::new(), loading: true, generation: 0, _subscription: subscription };
         page.load(cx);
         page
     }
@@ -156,6 +158,15 @@ impl HarnessPage {
         if org != self.org {
             self.org = org;
             self.load(cx);
+        }
+    }
+
+    /// The window's Filter box.
+    pub fn set_outer(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.outer != text {
+            self.outer = text.to_string();
+            self.refilter(cx);
+            cx.notify();
         }
     }
 
@@ -189,7 +200,8 @@ impl HarnessPage {
 
     /// Every word typed is in the title, summary, area, status or path.
     fn refilter(&mut self, cx: &mut Context<Self>) {
-        let words: Vec<String> = self.search.read(cx).text(cx).split_whitespace().map(str::to_lowercase).collect();
+        let typed = self.search.read(cx).text(cx);
+        let words: Vec<String> = typed.split_whitespace().chain(self.outer.split_whitespace()).map(str::to_lowercase).collect();
         self.rows = self
             .docs
             .iter()

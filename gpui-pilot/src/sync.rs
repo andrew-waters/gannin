@@ -19,6 +19,10 @@ use std::collections::{BTreeMap, HashSet};
 
 const PR_FIELDS: &str = "... on PullRequest { id number title url isDraft state createdAt updatedAt mergedAt reviewDecision additions deletions changedFiles commits(last: 1) { nodes { commit { statusCheckRollup { state } committedDate } } } repository { nameWithOwner } author { login avatarUrl } assignees(first: 10) { nodes { login avatarUrl } } reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login avatarUrl } ... on Team { combinedSlug } } } } latestReviews(first: 10) { nodes { state submittedAt author { login avatarUrl } } } closingIssuesReferences(first: 10) { nodes { id number title url state repository { nameWithOwner } } } timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } } } } } comments(last: 10) { nodes { createdAt author { login avatarUrl } } } }";
 
+/// An issue's description and recent comments, fetched with each synced
+/// issue so the Issues search can match them (kept in `Details.json`).
+const ISSUE_TEXT: &str = "... on Issue { body comments(last: 20) { totalCount nodes { url body createdAt author { login } } } }";
+
 const ISSUE_FIELDS: &str = "... on Issue { id number title url state createdAt updatedAt closedAt repository { nameWithOwner } author { login avatarUrl } assignees(first: 10) { nodes { login avatarUrl } } labels(first: 10) { nodes { name color } } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { id number title url state repository { nameWithOwner } } } }";
 
 /// When an org was last synced, kept beside its caches.
@@ -160,6 +164,7 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, 
     if let (Some(since), false) = (since, full_due) {
         let stamp = search_stamp(since);
         begin(progress, &["Changed pull requests", "Changed issues"]);
+        let issue_fields = format!("{ISSUE_FIELDS} {ISSUE_TEXT}");
         let (prs, issues) = std::thread::scope(|scope_| {
             let prs = scope_.spawn(|| {
                 let found = github::search_reporting(token, &format!("{scope} is:pr updated:>={stamp}"), 50, PR_FIELDS, &|f, t| advance(progress, "Changed pull requests", f, t));
@@ -167,7 +172,7 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, 
                 found
             });
             let issues = scope_.spawn(|| {
-                let found = github::search_reporting(token, &format!("{scope} is:issue updated:>={stamp}"), 100, ISSUE_FIELDS, &|f, t| advance(progress, "Changed issues", f, t));
+                let found = github::search_reporting(token, &format!("{scope} is:issue updated:>={stamp}"), 100, &issue_fields, &|f, t| advance(progress, "Changed issues", f, t));
                 finish(progress, "Changed issues", found.as_ref().ok().map(|f| f.0.len()));
                 found
             });
@@ -197,7 +202,8 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, 
             let (open, merged, issues) = std::thread::scope(|scope_| {
                 let open = scope_.spawn(|| search("Open pull requests", &open_query, 50, PR_FIELDS));
                 let merged = scope_.spawn(|| search(&merged_title, &merged_query, 50, PR_FIELDS));
-                let issues = scope_.spawn(|| search("Open issues", &issues_query, 100, ISSUE_FIELDS));
+                let issue_fields = format!("{ISSUE_FIELDS} {ISSUE_TEXT}");
+                let issues = scope_.spawn(move || search("Open issues", &issues_query, 100, &issue_fields));
                 (open.join().expect("search thread"), merged.join().expect("search thread"), issues.join().expect("search thread"))
             });
             let mut prs = open?.0;
@@ -212,6 +218,7 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, 
     begin(progress, &["Saving"]);
     merge_pull_requests(org, &prs, report.full, cutoff).map_err(|e| Error::Other(format!("Couldn't save pull requests: {e}")))?;
     merge_issues(org, &issues, report.full).map_err(|e| Error::Other(format!("Couldn't save issues: {e}")))?;
+    crate::detail::remember_all(org, &issues);
 
     write_synced(org, &Synced { at: Some(now), full_at: if report.full { Some(now) } else { previous.full_at }, lookback_days: lookback });
     finish(progress, "Saving", None);

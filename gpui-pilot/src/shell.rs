@@ -819,7 +819,7 @@ impl Workspace {
         let issues = cx.new(|cx| IssuesPage::new(org.clone(), &IssuesSaved::default(), window, cx));
         let tab_search = cx.new(|cx| {
             let mut editor = editor::Editor::single_line(window, cx);
-            editor.set_placeholder_text("Find PR #", window, cx);
+            editor.set_placeholder_text("Filter", window, cx);
             editor
         });
         let subscriptions = vec![
@@ -827,8 +827,9 @@ impl Workspace {
                 crate::zed::follow_appearance(window, cx);
                 cx.notify();
             }),
-            cx.subscribe(&tab_search, |_, _, event: &editor::EditorEvent, cx| {
+            cx.subscribe(&tab_search, |this, _, event: &editor::EditorEvent, cx| {
                 if matches!(event, editor::EditorEvent::BufferEdited) {
+                    this.feed_filter(cx);
                     cx.notify();
                 }
             }),
@@ -938,8 +939,30 @@ impl Workspace {
             self.tabs.insert(self.active + 1, tab);
             self.active += 1;
         }
+        self.feed_filter(cx);
         self.focus_current(window, cx);
         cx.notify();
+    }
+
+    /// The Filter box's text into every page with a search of its own
+    /// (Issues, Pull Requests, the harness's kinds), narrowing each with
+    /// its own search; the tabs it filters are in `tab_matches_search`.
+    fn feed_filter(&mut self, cx: &mut Context<Self>) {
+        let text = self.tab_search.read(cx).text(cx).trim().to_string();
+        for tab in &self.tabs {
+            match &tab.page {
+                Page::Issues(page) => page.update(cx, |p, cx| p.set_outer(&text, cx)),
+                Page::Prs(page) => page.update(cx, |p, cx| p.set_outer(&text, cx)),
+                Page::Harness(page) => page.update(cx, |p, cx| p.set_outer(&text, cx)),
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether a tab's page takes the Filter box's text, so it stays while
+    /// filtering.
+    fn takes_filter(tab: &Tab) -> bool {
+        matches!(tab.page, Page::Issues(_) | Page::Prs(_) | Page::Harness(_))
     }
 
     /// A tab for `nav`, with a page of its own made from `saved` (a saved
@@ -1118,6 +1141,7 @@ impl Workspace {
         if !self.tab_query(cx).is_empty() && self.tabs.get(self.active).is_some_and(|t| !self.tab_matches_search(t, cx)) {
             self.tab_search.update(cx, |e, cx| e.set_text("", window, cx));
         }
+        self.feed_filter(cx);
         self.focus_current(window, cx);
         cx.notify();
     }
@@ -5347,7 +5371,7 @@ impl Workspace {
     /// it; words match a tab's name and a session's subject.
     fn tab_matches_search(&self, tab: &Tab, cx: &App) -> bool {
         let query = self.tab_query(cx);
-        if query.is_empty() {
+        if query.is_empty() || Self::takes_filter(tab) {
             return true;
         }
         let launch = match tab.nav {

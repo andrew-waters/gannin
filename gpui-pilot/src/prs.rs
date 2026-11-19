@@ -540,6 +540,9 @@ pub struct Filters {
     repositories: BTreeSet<String>,
     /// Menus whose picks leave PRs out rather than keep them, by title.
     excluding: BTreeSet<String>,
+    /// The window's Filter box, matched as the search is: never saved.
+    #[serde(skip)]
+    outer: String,
 }
 
 impl Filters {
@@ -548,7 +551,7 @@ impl Filters {
     }
 
     fn is_narrowed(&self) -> bool {
-        !self.search.is_empty() || Key::ALL.iter().any(|k| !self.values(*k).is_empty())
+        !self.search.is_empty() || !self.outer.trim().is_empty() || Key::ALL.iter().any(|k| !self.values(*k).is_empty())
     }
 
     fn values(&self, key: Key) -> &BTreeSet<String> {
@@ -617,7 +620,7 @@ fn matches(filters: &Filters, pr: &PrItem, except: Option<Key>, me: Option<&str>
             return false;
         }
     }
-    matches_search(&filters.search, pr)
+    matches_search(&filters.search, pr) && matches_search(&filters.outer, pr)
 }
 
 /// Every word typed is in the title, the repo, `#123`, the branch or a
@@ -864,6 +867,16 @@ impl PrsPage {
         };
         page.load(cx);
         page
+    }
+
+    /// The window's Filter box, narrowing the list with the page's own
+    /// search.
+    pub fn set_outer(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.filters.outer != text {
+            self.filters.outer = text.to_string();
+            self.refilter();
+            cx.notify();
+        }
     }
 
     pub fn set_org(&mut self, org: Option<String>, cx: &mut Context<Self>) {

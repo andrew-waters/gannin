@@ -107,9 +107,60 @@ pub fn load_text(org: &str, id: &str) -> Option<IssueText> {
 /// `comments(last: 20) { totalCount nodes { url body createdAt author { login } } }`)
 /// in the pilot's copy, and returns it as the drawer shows it.
 pub fn remember(org: &str, id: &str, node: &serde_json::Value) -> Option<IssueText> {
+    let detail = detail_of(node)?;
+    let text = text_of(&detail);
+    store(org, vec![(id.to_string(), detail)]);
+    Some(text)
+}
+
+/// Keeps the text of every node the sync fetched (each with its `id`),
+/// writing the file once.
+pub fn remember_all(org: &str, nodes: &[serde_json::Value]) {
+    let found: Vec<(String, Detail)> = nodes.iter().filter_map(|n| Some((n["id"].as_str()?.to_string(), detail_of(n)?))).collect();
+    if !found.is_empty() {
+        store(org, found);
+    }
+}
+
+/// Each issue's description and comments as one lowercased string, by
+/// node ID, for the Issues search. Runs off the main thread.
+pub fn search_texts(org: &str) -> HashMap<String, String> {
+    let Ok(mut all) = own().lock() else { return HashMap::new() };
+    own_for(&mut all, org)
+        .iter()
+        .map(|(id, cached)| {
+            let d = &cached.detail;
+            let mut text = d.body.to_lowercase();
+            for c in &d.recent_comments {
+                text.push('\n');
+                text.push_str(&c.body.to_lowercase());
+            }
+            (id.clone(), text)
+        })
+        .collect()
+}
+
+fn store(org: &str, found: Vec<(String, Detail)>) {
+    if let Ok(mut all) = own().lock() {
+        let own = own_for(&mut all, org);
+        own.extend(found.into_iter().map(|(id, detail)| (id, Cached { detail })));
+        if let Ok(bytes) = serde_json::to_vec(&*own) {
+            let path = own_path(org);
+            if let Some(folder) = path.parent() {
+                let _ = std::fs::create_dir_all(folder);
+            }
+            let partial = path.with_extension("json.part");
+            if std::fs::write(&partial, bytes).is_ok() {
+                let _ = std::fs::rename(&partial, &path);
+            }
+        }
+    }
+}
+
+fn detail_of(node: &serde_json::Value) -> Option<Detail> {
     let body = node["body"].as_str()?.to_string();
     let comments = &node["comments"];
-    let detail = Detail {
+    Some(Detail {
         body,
         comment_count: comments["totalCount"].as_u64().unwrap_or(0) as usize,
         recent_comments: comments["nodes"]
@@ -125,23 +176,7 @@ pub fn remember(org: &str, id: &str, node: &serde_json::Value) -> Option<IssueTe
                 })
             })
             .collect(),
-    };
-    let text = text_of(&detail);
-    if let Ok(mut all) = own().lock() {
-        let own = own_for(&mut all, org);
-        own.insert(id.to_string(), Cached { detail });
-        if let Ok(bytes) = serde_json::to_vec(&*own) {
-            let path = own_path(org);
-            if let Some(folder) = path.parent() {
-                let _ = std::fs::create_dir_all(folder);
-            }
-            let partial = path.with_extension("json.part");
-            if std::fs::write(&partial, bytes).is_ok() {
-                let _ = std::fs::rename(&partial, &path);
-            }
-        }
-    }
-    Some(text)
+    })
 }
 
 // MARK: - Timing
