@@ -49,7 +49,7 @@ paths:
 - Drive progress through `SyncRun.track`, one `SyncStep` per GitHub query.
 
 ## Storage
-- Never encode, decode or write `PullRequestStore`'s or `SharedIssueStore`'s files on the main actor if an async entry point can do it first (`prepare`, `AsyncFileWriter`): a whole org's file is megabytes and froze the app after each sync. Never make the writer's task wait on the main actor: `flush` takes the same lock from the main thread at quit.
+- Never encode, decode or write `PullRequestStore`'s or `SharedIssueStore`'s files on the main actor if an async entry point can do it first (`prepare`, `AsyncFileWriter`): a whole org's file is megabytes and froze the app after each sync. Never make the writer's task wait on the main actor: `flush` blocks the main thread for that task at quit and would run into its timeout.
 - Never set `loaded[org]` except from a read of the org's file (or a merge that began from one): a store that saved a placeholder would overwrite the file with less.
 - Clear a store through `AsyncFileWriter.reset`, never `OrgJSONCache.clear`: a write queued before the clear would bring the folder back.
 - Never root a file at `URL.applicationSupportDirectory`; use `AppPaths.support` (or `AppPaths.own`). The demo build points `AppPaths` at its own folder, and a store that bypassed it would show or overwrite the real app's data (`AppPathsTests` fails on it).

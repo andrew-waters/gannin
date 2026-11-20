@@ -1850,15 +1850,15 @@ final class SessionStore {
     /// Hands the file to the writer now, for a session added, removed or
     /// started: one a kill a moment later must not lose, as the relaunch
     /// script's `kill -9` can. The write lands within milliseconds, off the
-    /// main actor; `flushSave` writes it here if it hasn't.
+    /// main actor; `flushSave` waits for it.
     func saveNow() {
         pendingSave?.cancel()
         pendingSave = nil
         writeSessions()
     }
 
-    /// Writes now if a save is waiting, then writes whatever the writer still
-    /// holds, here and now; at quit, so nothing is lost.
+    /// Hands over a save that is waiting, then blocks until the writer has
+    /// written everything handed to it; at quit, so nothing is lost.
     func flushSave() {
         if pendingSave != nil { saveNow() }
         files.flush()

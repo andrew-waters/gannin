@@ -6,28 +6,27 @@ import os
 ///
 /// Work is handed over from synchronous code, in order, through an
 /// `AsyncStream` that one task consumes, so a removal queued after a write
-/// runs after it. The newest value for a key replaces one the task hasn't
-/// started, so a burst of saves costs one write.
+/// runs after it and nothing else writes: a stale write can't land over a
+/// newer one. The newest value for a key replaces one the task hasn't started,
+/// so a burst of saves costs one write.
 ///
-/// Nothing can wait for that task from synchronous code, so quit calls
-/// `flush()`, which does the pending work itself. Both take `writeLock` for a
-/// whole write, so `flush()` waits for one already running and nothing is
-/// written twice or out of order. `settle()` is the async wait, for tests.
+/// `flush()` is for quit, where nothing can `await`: it blocks the calling
+/// thread until the task has run everything handed over before it, for at most
+/// a few seconds. That is a synchronous wait on Swift concurrency, which can
+/// deadlock if the task cannot get a thread, and the timeout turns that into a
+/// delay at quit and possibly a lost save. `settle()` is the async wait.
 ///
 /// `reset()` drops every save still waiting and asks for the folder to be
 /// removed. Each save belongs to the generation it was made in, and a write
 /// takes only a save from its own generation, so a save made after a reset is
 /// written after the removal. While a removal is still asked for but not done,
 /// `isResetting` is true, and a read must treat the folder as empty.
-///
-/// Take `writeLock` before `state`, never the reverse, and never wait on the
-/// main actor from the consumer.
 nonisolated final class AsyncFileWriter: Sendable {
     private enum Operation: Sendable {
         case write(key: String, generation: Int)
         case reset
         case removeFolder(URL)
-        case barrier(CheckedContinuation<Void, Never>)
+        case barrier(@Sendable () -> Void)
     }
 
     private struct Waiting {
@@ -37,8 +36,8 @@ nonisolated final class AsyncFileWriter: Sendable {
 
     private struct State {
         var generation = 0
-        /// Removals of `directory` that `reset()` has asked for and no one has
-        /// done yet.
+        /// Removals of `directory` that `reset()` has asked for and the task
+        /// has not done yet.
         var pendingRemovals = 0
         var waiting: [String: Waiting] = [:]
     }
@@ -48,15 +47,9 @@ nonisolated final class AsyncFileWriter: Sendable {
     private final class Core: Sendable {
         let directory: URL
         let fileURL: @Sendable (String) -> URL
-        /// The waiting saves and counters. Held only to move them, never across
-        /// the disk, because the main actor takes it on every `save` and `reset`.
+        /// The waiting saves and counters. Held only to move them, because the
+        /// main actor takes it on every `save` and `reset`.
         let state = OSAllocatedUnfairLock(initialState: State())
-        /// Held by the consumer task and by `flush()` for a whole take, encode
-        /// and write. Without it `flush()` could write a newer save and then
-        /// have an older one the task had already taken land over it, or return
-        /// while the task still held the only waiting save. Only `flush()` takes
-        /// it from another thread, so the main actor never waits on it elsewhere.
-        let writeLock = NSLock()
 
         init(directory: URL, fileURL: @escaping @Sendable (String) -> URL) {
             self.directory = directory
@@ -66,48 +59,25 @@ nonisolated final class AsyncFileWriter: Sendable {
         func perform(_ operation: Operation) {
             switch operation {
             case .write(let key, let generation):
-                writeLock.withLock {
-                    let job = state.withLock { state -> Waiting? in
-                        guard let waiting = state.waiting[key], waiting.generation == generation else { return nil }
-                        state.waiting[key] = nil
-                        return waiting
-                    }
-                    if let job { write(job, key: key) }
+                let job = state.withLock { state -> Waiting? in
+                    guard let waiting = state.waiting[key], waiting.generation == generation else { return nil }
+                    state.waiting[key] = nil
+                    return waiting
                 }
+                if let job { write(job, key: key) }
             case .reset:
-                writeLock.withLock { removeDirectoryIfAsked(all: false) }
+                try? FileManager.default.removeItem(at: directory)
+                // Counted done only now. `isResetting` stays true until the
+                // files are gone, so a read in the meantime isn't served from them.
+                state.withLock { $0.pendingRemovals -= 1 }
             case .removeFolder(let folder):
                 // Not awaited, so a large folder doesn't hold up later writes.
                 Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: folder) }
-            case .barrier(let continuation):
-                continuation.resume()
+            case .barrier(let done):
+                done()
             }
         }
 
-        func flush() {
-            writeLock.withLock {
-                removeDirectoryIfAsked(all: true)
-                let jobs = state.withLock { state -> [String: Waiting] in
-                    defer { state.waiting = [:] }
-                    return state.waiting
-                }
-                for (key, job) in jobs { write(job, key: key) }
-            }
-        }
-
-        /// Removes `directory` if a `reset()` has asked for it and it has not
-        /// been done. One removal answers one request, or all of them when
-        /// `all` is set: a second removal would find nothing to remove.
-        /// Called with `writeLock` held.
-        private func removeDirectoryIfAsked(all: Bool) {
-            guard state.withLock({ $0.pendingRemovals > 0 }) else { return }
-            try? FileManager.default.removeItem(at: directory)
-            // Counted done only now. `isResetting` stays true until the files
-            // are gone, so a read in the meantime isn't served from them.
-            state.withLock { $0.pendingRemovals = all ? 0 : $0.pendingRemovals - 1 }
-        }
-
-        /// Called with `writeLock` held.
         private func write(_ job: Waiting, key: String) {
             guard let data = job.encode() else { return }
             let url = fileURL(key)
@@ -138,8 +108,8 @@ nonisolated final class AsyncFileWriter: Sendable {
         continuation.finish()
     }
 
-    /// Whether a `reset()` has asked for the folder to be removed and it has
-    /// not been removed yet.
+    /// Whether a `reset()` has asked for the folder to be removed and the task
+    /// has not removed it yet.
     var isResetting: Bool { core.state.withLock { $0.pendingRemovals > 0 } }
 
     /// Writes what `encode` returns as `key`'s file, on the writer's task, so
@@ -155,8 +125,7 @@ nonisolated final class AsyncFileWriter: Sendable {
 
     /// Drops every save not yet written and asks for the folder to be
     /// removed. The task does the removal, so it may not have happened when
-    /// this returns; `isResetting` is true until it has, and `flush()` does it
-    /// at once.
+    /// this returns; `isResetting` is true until it has.
     func reset() {
         core.state.withLock { state in
             state.generation += 1
@@ -172,18 +141,19 @@ nonisolated final class AsyncFileWriter: Sendable {
         continuation.yield(.removeFolder(folder))
     }
 
-    /// Does the requested removal and the waiting writes now, on the calling
-    /// thread, after any write already running. For quit, where nothing can
-    /// await.
-    func flush() {
-        core.flush()
+    /// Blocks the calling thread until the task has run everything handed over
+    /// before this call, or `timeout` has passed. For quit, where nothing can
+    /// await. Never call it from the writer's own task.
+    func flush(timeout: DispatchTimeInterval = .seconds(3)) {
+        let done = DispatchSemaphore(value: 0)
+        guard case .enqueued = continuation.yield(.barrier { done.signal() }) else { return }
+        _ = done.wait(timeout: .now() + timeout)
     }
 
-    /// Returns once the work handed over before the call has run. Never call it
-    /// on a quit path.
+    /// Returns once the task has run everything handed over before the call.
     func settle() async {
         await withCheckedContinuation { barrier in
-            if case .terminated = continuation.yield(.barrier(barrier)) { barrier.resume() }
+            if case .terminated = continuation.yield(.barrier { barrier.resume() }) { barrier.resume() }
         }
     }
 }

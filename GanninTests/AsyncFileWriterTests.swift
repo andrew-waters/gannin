@@ -4,8 +4,7 @@ import Testing
 
 /// `AsyncFileWriter` keeps the newest save for a key, runs a removal after the
 /// writes before it, and lets a clear drop what came before it without
-/// dropping what came after, whether the consumer task or `flush()` gets there
-/// first.
+/// dropping what came after.
 @MainActor
 struct AsyncFileWriterTests {
     private let folder = FileManager.default.temporaryDirectory.appending(path: "AsyncFileWriterTests-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -64,12 +63,12 @@ struct AsyncFileWriterTests {
         #expect(text("a") == "1")
     }
 
-    @Test func flushWritesWhatTheTaskHasNotReached() {
+    @Test func flushReturnsOnceTheTaskHasWritten() {
         defer { clean() }
         let writer = writer()
-        save(writer, "a", "1")
+        for number in 1...50 { save(writer, "a", "\(number)") }
         writer.flush()
-        #expect(text("a") == "1")
+        #expect(text("a") == "50")
     }
 
     @Test func aFolderGoesAfterTheWritesBeforeIt() async {
@@ -112,25 +111,20 @@ struct AsyncFileWriterTests {
         }
     }
 
-    @Test func aFlushAfterAResetDropsTheOldFilesAndKeepsTheNewSave() async {
+    @Test func aFlushAfterAResetDropsTheOldFilesAndKeepsTheNewSave() {
         defer { clean() }
         let writer = writer()
         save(writer, "old", "1")
         writer.flush()
         #expect(text("old") == "1")
 
+        // As at quit: a clear and a save, then straight to the flush.
         writer.reset()
         save(writer, "new", "2")
         writer.flush()
-        // As at quit: the old file is gone before the task has run.
         #expect(text("old") == nil)
         #expect(text("new") == "2")
-
-        // The reset the task finds later has been done already, so it must not
-        // remove what the flush wrote.
-        await writer.settle()
-        #expect(text("old") == nil)
-        #expect(text("new") == "2")
+        #expect(!writer.isResetting)
     }
 
     @Test func settleReturnsOnceEarlierWorkHasRun() async {

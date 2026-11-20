@@ -34,11 +34,11 @@ paths:
 - New PR feedback is pasted now if claude awaits a prompt, else queued in `pendingFeedback` until its turn ends. Mark it sent only once pasted, and drop it if claude exits first; never mark it sent early.
 
 ## Saving
-- Never write `Sessions.json` or delete a session's folder on the main actor: the folder of a sandboxed session holds its claude home and transcripts, and removing it froze the app. Both go through `AsyncFileWriter`, which keeps them in order, so the folder goes only after the save without its session has landed. Never wait on it from the main actor except through `flushSave`, which writes what is pending itself at quit.
+- Never write `Sessions.json` or delete a session's folder on the main actor: the folder of a sandboxed session holds its claude home and transcripts, and removing it froze the app. Both go through `AsyncFileWriter`, which keeps them in order, so the folder goes only after the save without its session has landed. Never wait on it from the main actor except through `flushSave`, which blocks for its task at quit, for a few seconds at most.
 
 ## Quit
 - Sandboxes stop only after the quit question is answered (`stopSandboxesForQuit`).
-- Call `flushSave` on every way out (`applicationWillTerminate` and the SIGTERM handler): `saveNow` only hands the file to the writer, and nothing can await its task there.
+- Call `flushSave` on every way out (`applicationWillTerminate` and the SIGTERM handler): `saveNow` only hands the file to the writer, and `flushSave` is what waits for it.
 
 ## One-off questions
 - `ClaudeCodeProvider.ask` runs `claude -p` locally if installed, else on the Connect with server with only the tools given; follow-ups use `--resume` in the same folder. `ScriptRunner` runs the script on its box and strips inherited `CLAUDE_CODE_*` variables.

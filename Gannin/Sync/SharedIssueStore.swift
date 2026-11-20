@@ -213,8 +213,8 @@ final class SharedIssueStore {
         saveSoon(org)
     }
 
-    /// Writes any save still waiting, here and now, after any write already
-    /// running; at quit, where nothing can await.
+    /// Hands any save still waiting to the writer and blocks until it has
+    /// written everything handed over; at quit, where nothing can await.
     func flush() {
         delayedSaves.values.forEach { $0.flush() }
         writer.flush()
