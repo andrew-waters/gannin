@@ -52,7 +52,7 @@ struct IssueRecord: Codable, Hashable, Identifiable {
     var isNotPlanned: Bool { closedAt != nil && (stateReason == "NOT_PLANNED" || stateReason == "DUPLICATE") }
 }
 
-nonisolated struct IssueStatusChange: Codable, Hashable {
+struct IssueStatusChange: Codable, Hashable, Sendable {
     let at: Date
     let status: String
     let projectNumber: Int?
@@ -60,7 +60,7 @@ nonisolated struct IssueStatusChange: Codable, Hashable {
 }
 
 /// An issue's values on one project board, by field name.
-nonisolated struct IssueProjectFields: Codable, Hashable {
+struct IssueProjectFields: Codable, Hashable, Sendable {
     let projectNumber: Int
     let projectTitle: String
     var values: [String: IssueFieldValue]
@@ -100,7 +100,7 @@ nonisolated enum IssueFieldValue: Codable, Hashable {
     }
 }
 
-nonisolated struct IssueLinkedPullRequest: Codable, Hashable {
+struct IssueLinkedPullRequest: Codable, Hashable, Sendable {
     let number: Int
     let url: URL
     let createdAt: Date

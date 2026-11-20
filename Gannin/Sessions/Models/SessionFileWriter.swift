@@ -10,7 +10,7 @@ import os
 /// reappears from a `Sessions.json` older than its folder's removal.
 ///
 /// Never put slow work on `queue`: `drain()` waits for it, and runs at quit.
-nonisolated final class SessionFileWriter: Sendable {
+final class SessionFileWriter: Sendable {
     private let queue = DispatchQueue(label: "dev.andon.gannin.session-files")
     private let pending = OSAllocatedUnfairLock<(data: Data, url: URL)?>(initialState: nil)
 
@@ -29,7 +29,8 @@ nonisolated final class SessionFileWriter: Sendable {
 
     /// Removes `folder` once the writes queued so far have landed. The
     /// removal itself runs on another queue, so a large folder doesn't hold
-    /// up `drain()`.
+    /// up `drain()`. Nothing waits for it: quitting right after leaves the
+    /// folder behind, which no session refers to, and nothing sweeps it.
     func removeFolder(_ folder: URL) {
         queue.async {
             DispatchQueue.global(qos: .utility).async {

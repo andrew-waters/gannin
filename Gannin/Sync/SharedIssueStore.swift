@@ -1,13 +1,13 @@
 import Foundation
 
-nonisolated struct StoredLabel: Codable, Hashable {
+struct StoredLabel: Codable, Hashable, Sendable {
     let name: String
     /// Nil when the label came from a fetch that reads names only.
     var color: String?
 }
 
 /// What every store that fetches an issue shares, so an issue is kept once.
-nonisolated struct IssueCore: Codable, Hashable, Identifiable {
+struct IssueCore: Codable, Hashable, Identifiable, Sendable {
     let id: String
     let number: Int
     let title: String
@@ -56,14 +56,14 @@ nonisolated struct IssueCore: Codable, Hashable, Identifiable {
 }
 
 /// What only the workload fetch reads, kept beside the core.
-nonisolated struct WorkloadIssueExtras: Codable, Hashable {
+struct WorkloadIssueExtras: Codable, Hashable, Sendable {
     /// The issue's `updatedAt` when this was fetched (see `HistoryIssueExtras`).
     var updatedAt: Date?
     let linkedPullRequests: [LinkedItem]
 }
 
 /// What only the issue history fetch reads, kept beside the core.
-nonisolated struct HistoryIssueExtras: Codable, Hashable {
+struct HistoryIssueExtras: Codable, Hashable, Sendable {
     /// The issue's `updatedAt` when this was fetched. The core's is the newest
     /// any store has seen, so it can't say whether these are current.
     var updatedAt: Date?
@@ -81,7 +81,7 @@ nonisolated struct HistoryIssueExtras: Codable, Hashable {
 }
 
 /// What only the work log fetch reads, kept beside the core.
-nonisolated struct WorkLogIssueExtras: Codable, Hashable {
+struct WorkLogIssueExtras: Codable, Hashable, Sendable {
     /// The issue's `updatedAt` when this was fetched (see `HistoryIssueExtras`).
     /// Nil on an issue carried over from an old cache, which is fetched once
     /// when the change feed next reports it changed.
@@ -90,7 +90,7 @@ nonisolated struct WorkLogIssueExtras: Codable, Hashable {
     let comments: [WorkLogIssueComment]
 }
 
-nonisolated struct StoredIssue: Codable, Hashable, Identifiable {
+struct StoredIssue: Codable, Hashable, Identifiable, Sendable {
     /// The part of a stored issue one store owns.
     enum Slot { case workload, history, workLog }
 
@@ -226,6 +226,11 @@ final class SharedIssueStore {
     /// cleared.
     func prepare(_ org: String) async {
         guard loaded[org] == nil else { return }
+        // A clear still removing the folder leaves nothing to read.
+        if writer.isResetting {
+            loaded[org] = [:]
+            return
+        }
         let started = epoch
         let cache = cache
         let held = await Task.detached { Self.read(cache, org) }.value
@@ -259,9 +264,12 @@ final class SharedIssueStore {
     }
 
     /// Reads the file here if `prepare` hasn't, for callers that can't wait.
+    /// The sync entry points of the issue history, work log and workload
+    /// stores call `prepare` first; a reader with no async entry still
+    /// decodes on the main actor if it comes first.
     private func load(_ org: String) -> [String: StoredIssue] {
         if let held = loaded[org] { return held }
-        let held = Self.read(cache, org)
+        let held = writer.isResetting ? [:] : Self.read(cache, org)
         loaded[org] = held
         return held
     }

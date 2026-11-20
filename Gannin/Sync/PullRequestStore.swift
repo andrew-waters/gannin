@@ -1,7 +1,7 @@
 import Foundation
 
 /// What every store that fetches a PR shares, so a PR is kept once.
-nonisolated struct PullRequestCore: Codable, Hashable, Identifiable {
+struct PullRequestCore: Codable, Hashable, Identifiable, Sendable {
     let id: String
     let number: Int
     let title: String
@@ -44,7 +44,7 @@ nonisolated struct PullRequestCore: Codable, Hashable, Identifiable {
 }
 
 /// What only the metrics fetch reads, kept beside the core.
-nonisolated struct MetricsExtras: Codable, Hashable {
+struct MetricsExtras: Codable, Hashable, Sendable {
     /// The PR's `updatedAt` when this was fetched. The core's is the newest
     /// any store has seen, so it can't say whether these are current.
     var updatedAt: Date?
@@ -57,7 +57,7 @@ nonisolated struct MetricsExtras: Codable, Hashable {
 }
 
 /// What only the work log fetch reads, kept beside the core.
-nonisolated struct WorkLogExtras: Codable, Hashable {
+struct WorkLogExtras: Codable, Hashable, Sendable {
     /// The PR's `updatedAt` when this was fetched (see `MetricsExtras`).
     var updatedAt: Date?
     let closedAt: Date?
@@ -69,7 +69,7 @@ nonisolated struct WorkLogExtras: Codable, Hashable {
 }
 
 /// What only the workload fetch reads, kept beside the core.
-nonisolated struct WorkloadExtras: Codable, Hashable {
+struct WorkloadExtras: Codable, Hashable, Sendable {
     /// The PR's `updatedAt` when this was fetched. Open PRs are fetched again
     /// at the same `updatedAt` (their checks change without it moving), and
     /// the newer fetch wins.
@@ -90,7 +90,7 @@ nonisolated struct WorkloadExtras: Codable, Hashable {
     var requestedTeams: [String]?
 }
 
-nonisolated struct StoredPullRequest: Codable, Hashable, Identifiable {
+struct StoredPullRequest: Codable, Hashable, Identifiable, Sendable {
     /// The part of a stored PR one store owns.
     enum Slot { case metrics, workLog, workload }
 
@@ -191,6 +191,11 @@ final class PullRequestStore {
     /// cleared.
     func prepare(_ org: String) async {
         guard loaded[org] == nil else { return }
+        // A clear still removing the folder leaves nothing to read.
+        if writer.isResetting {
+            loaded[org] = [:]
+            return
+        }
         let started = epoch
         let cache = cache
         let held = await Task.detached { Self.read(cache, org) }.value
@@ -232,9 +237,12 @@ final class PullRequestStore {
     }
 
     /// Reads the file here if `prepare` hasn't, for callers that can't wait.
+    /// The sync entry points of the metrics, work log and workload stores
+    /// call `prepare` first; readers with no async entry (the approval queue,
+    /// the command palette) still decode on the main actor if they come first.
     private func load(_ org: String) -> [String: StoredPullRequest] {
         if let held = loaded[org] { return held }
-        let held = Self.read(cache, org)
+        let held = writer.isResetting ? [:] : Self.read(cache, org)
         loaded[org] = held
         return held
     }

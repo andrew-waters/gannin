@@ -61,16 +61,17 @@ nonisolated struct OrgJSONCache: Sendable {
 
 /// Writes a store's per-org files, encoding them too, away from the main
 /// actor. The newest value for an org replaces one still waiting, so a burst
-/// of saves costs one write, and writes to the same file never overtake each
-/// other: they share a serial queue.
+/// of saves costs one write, and writes and removals share one serial queue,
+/// so none overtakes another.
 ///
-/// `reset()` removes the folder at once and drops every write waiting or
-/// begun before it, so a write that was queued ahead of a clear can't bring
-/// the folder back. It waits for a write already running, as the lock covers
-/// the write itself.
+/// `reset()` drops every write waiting or encoded before it and queues the
+/// removal of the folder behind a write already running, so a write begun
+/// before a clear can't bring the folder back. Until the removal has run,
+/// `isResetting` is true: a read then must treat the folder as empty.
 ///
-/// Never hop to the main actor from here: `drain()` waits on the queue from
-/// the main thread at quit.
+/// The lock is held only to move state, never across the disk, because the
+/// main actor takes it on every save. Never hop to the main actor from the
+/// queue: `drain()` waits on it from the main thread at quit.
 nonisolated final class OrgFileWriter: Sendable {
     private struct Waiting {
         let generation: Int
@@ -79,6 +80,7 @@ nonisolated final class OrgFileWriter: Sendable {
 
     private struct State {
         var generation = 0
+        var resets = 0
         var waiting: [String: Waiting] = [:]
     }
 
@@ -90,6 +92,9 @@ nonisolated final class OrgFileWriter: Sendable {
         self.cache = cache
     }
 
+    /// Whether a `reset()` has not finished removing the folder.
+    var isResetting: Bool { state.withLock { $0.resets > 0 } }
+
     /// Writes `value` as `org`'s file, soon.
     func save<Value: Encodable & Sendable>(_ value: Value, org: String) {
         let encode: @Sendable () -> Data? = { try? OrgJSONCache.makeEncoder().encode(value) }
@@ -97,28 +102,31 @@ nonisolated final class OrgFileWriter: Sendable {
         queue.async { [self] in write(org) }
     }
 
-    /// Removes every org's file and forgets writes not yet made.
+    /// Forgets writes not yet made and removes every org's file, soon.
     func reset() {
         state.withLock { state in
             state.generation += 1
+            state.resets += 1
             state.waiting = [:]
+        }
+        queue.async { [self] in
             cache.clear()
+            state.withLock { $0.resets -= 1 }
         }
     }
 
-    /// Waits for the writes handed over so far, for quit.
+    /// Waits for the writes and removals handed over so far, for quit.
     func drain() {
         queue.sync {}
     }
 
     private func write(_ org: String) {
         guard let job = state.withLock({ $0.waiting.removeValue(forKey: org) }) else { return }
-        // Encoding is the slow part, so it runs outside the lock.
         guard let data = job.encode() else { return }
-        state.withLock { state in
-            guard state.generation == job.generation else { return }
-            try? FileManager.default.createDirectory(at: cache.directory, withIntermediateDirectories: true)
-            try? data.write(to: cache.fileURL(org), options: .atomic)
-        }
+        // A reset since the save was made has dropped it. One after this check
+        // queues its removal behind this write, so the write can't outlive it.
+        guard state.withLock({ $0.generation == job.generation }) else { return }
+        try? FileManager.default.createDirectory(at: cache.directory, withIntermediateDirectories: true)
+        try? data.write(to: cache.fileURL(org), options: .atomic)
     }
 }

@@ -48,6 +48,15 @@ struct PullRequestStoreTests {
         #expect(!FileManager.default.fileExists(atPath: store.cacheDirectory.path))
     }
 
+    @Test func aReadRightAfterAClearSeesNothingBeforeTheFolderIsGone() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(metrics: metricPR("a"))], org: "acme")
+        store.flush()
+        store.clear()
+        #expect(store.pullRequests(org: "acme").isEmpty)
+    }
+
     @Test func clearingAPartRightAfterAMergeOfANewOrgDropsThePartFromTheFile() {
         let folder = "PullRequestStoreTests-\(UUID().uuidString)"
         let store = PullRequestStore(folder: folder)

@@ -128,6 +128,7 @@ struct WorkLogIssueStoreTests {
         store(directory, issues: issues).loadCached("acme")
 
         issues.clear()
+        issues.flush()
         let log = store(directory, issues: SharedIssueStore(folder: folder))
         log.loadCached("acme")
         #expect(log.history(for: "acme") == nil)

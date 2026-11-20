@@ -49,9 +49,9 @@ paths:
 - Drive progress through `SyncRun.track`, one `SyncStep` per GitHub query.
 
 ## Storage
-- Never encode or write `PullRequestStore`'s or `SharedIssueStore`'s files on the main actor: a whole org's file is megabytes and froze the app after each sync. Saves go through the store's `OrgFileWriter`, which encodes and writes on its own queue (the newest save for an org replaces one waiting), so the stored model types stay `nonisolated`. Never hop to the main actor from the writer: `flush` waits on its queue at quit.
-- Read those files through `prepare(org)` before the first use, from an async sync entry point; `load` still reads on the main actor for callers that can't wait. Never set `loaded[org]` from anything but a read of the org's file (or a merge that began from one): a store that held an empty copy and then saved would overwrite the file with less. `prepare` drops what it read if the org was loaded or the store cleared meanwhile (`epoch`).
-- Clear a store through `OrgFileWriter.reset`, never `OrgJSONCache.clear`: it removes the folder at once and drops writes begun before it, so a queued write can't bring the folder back. `GanninAppDelegate` flushes both stores on every way out, SIGTERM included.
+- Never encode, decode or write `PullRequestStore`'s or `SharedIssueStore`'s files on the main actor if an async entry point can do it first (`prepare`, `OrgFileWriter`): a whole org's file is megabytes and froze the app after each sync. Never hop to the main actor from the writer's queue: `flush` waits on it at quit.
+- Never set `loaded[org]` except from a read of the org's file (or a merge that began from one): a store that saved a placeholder would overwrite the file with less.
+- Clear a store through `OrgFileWriter.reset`, never `OrgJSONCache.clear`: a write queued before the clear would bring the folder back.
 - Never root a file at `URL.applicationSupportDirectory`; use `AppPaths.support` (or `AppPaths.own`). The demo build points `AppPaths` at its own folder, and a store that bypassed it would show or overwrite the real app's data (`AppPathsTests` fails on it).
 - User-entered data is SwiftData on this device (`UserDatabase.swift`), no iCloud. Records have no unique constraints (the store once synced via CloudKit), so keep merging duplicates on load: newest wins, time off by UUID.
 - Team data belongs in the harness, not here; stars, hidden items and app settings stay local.

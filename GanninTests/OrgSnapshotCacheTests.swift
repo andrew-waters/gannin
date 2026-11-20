@@ -121,6 +121,8 @@ struct OrgSnapshotCacheTests {
         defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
         cache(dir, store).save(snapshot(open: [pr("a")]))
         store.clear()
+        // The folder goes on the writer's queue; a second store reads it.
+        store.flush()
         #expect(cache(dir, PullRequestStore(folder: folder)).load("acme") == nil)
     }
 
@@ -232,8 +234,12 @@ struct OrgSnapshotCacheTests {
         let dir = directory()
         let store = PullRequestStore(folder: uniqueFolder())
         defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
-        cache(dir, store).save(snapshot(issues: [issue("a")]))
-        SharedIssueStore(folder: issueFolder).clear()
+        let writer = cache(dir, store)
+        writer.save(snapshot(issues: [issue("a")]))
+        writer.issues.flush()
+        let cleared = SharedIssueStore(folder: issueFolder)
+        cleared.clear()
+        cleared.flush()
         #expect(cache(dir, store).load("acme") == nil)
     }
 

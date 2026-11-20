@@ -186,6 +186,15 @@ struct SharedIssueStoreTests {
         #expect(!FileManager.default.fileExists(atPath: store.cacheDirectory.path))
     }
 
+    @Test func aReadRightAfterAClearSeesNothingBeforeTheFolderIsGone() {
+        let store = SharedIssueStore(folder: folder)
+        defer { store.clear() }
+        store.merge([StoredIssue(history: record("a"))], org: "acme")
+        store.flush()
+        store.clear()
+        #expect(store.issues(org: "acme").isEmpty)
+    }
+
     @Test func prepareDoesNotReplaceWhatWasLoadedWhileItRead() async {
         let writer = SharedIssueStore(folder: folder)
         defer { writer.clear() }
