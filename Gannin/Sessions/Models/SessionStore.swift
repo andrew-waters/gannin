@@ -1021,7 +1021,9 @@ final class SessionStore {
         if besideTab == id { besideTab = nil }
         closeTab(id)
         saveNow()
-        try? FileManager.default.removeItem(at: Self.directory(for: id))
+        // Queued behind the save above, so a kill before the folder goes
+        // leaves a folder nothing refers to, never a session without one.
+        files.removeFolder(Self.directory(for: id))
     }
 
     func launch(_ session: CodeSession, in terminal: SessionTerminal) {
@@ -1839,32 +1841,37 @@ final class SessionStore {
         pendingSave = Task {
             try? await Task.sleep(for: saveDelay)
             guard !Task.isCancelled else { return }
-            flushSave()
+            // Not `flushSave`: that waits for the disk.
+            saveNow()
         }
     }
 
-    /// Writes now, for a session added, removed or started: one a kill in the
-    /// next half second must not lose, as the relaunch script's `kill -9` can.
+    /// Hands the file to the writer now, for a session added, removed or
+    /// started: one a kill a moment later must not lose, as the relaunch
+    /// script's `kill -9` can. The write lands within milliseconds, off the
+    /// main actor; `flushSave` waits for it.
     func saveNow() {
         pendingSave?.cancel()
         pendingSave = nil
         writeSessions()
     }
 
-    /// Writes now if a save is waiting; at quit, so nothing is lost.
+    /// Writes now if a save is waiting, then waits for every write handed to
+    /// the writer; at quit, so nothing is lost.
     func flushSave() {
-        guard pendingSave != nil else { return }
-        saveNow()
+        if pendingSave != nil { saveNow() }
+        files.drain()
     }
 
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
+    @ObservationIgnored private let files = SessionFileWriter()
 
+    /// Encodes here, as `CodeSession` is main-actor, and leaves the disk to
+    /// the writer.
     private func writeSessions() {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let ordered = sessions.values.sorted { $0.createdAt < $1.createdAt }
-        if let data = try? JSONEncoder().encode(ordered) {
-            try? data.write(to: fileURL, options: .atomic)
-        }
+        guard let data = try? JSONEncoder().encode(ordered) else { return }
+        files.write(data, to: fileURL)
     }
 }
 
