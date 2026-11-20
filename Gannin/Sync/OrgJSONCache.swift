@@ -64,7 +64,7 @@ nonisolated extension AsyncFileWriter {
         self.init(directory: cache.directory, fileURL: { cache.fileURL($0) })
     }
 
-    /// Writes `value` as `org`'s file, soon.
+    /// Writes `value` as `org`'s file, on the writer's task.
     func save<Value: Encodable & Sendable>(_ value: Value, org: String) {
         save(org) { try? OrgJSONCache.makeEncoder().encode(value) }
     }
