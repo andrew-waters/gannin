@@ -64,9 +64,11 @@ nonisolated struct OrgJSONCache: Sendable {
 /// of saves costs one write, and writes and removals share one serial queue,
 /// so none overtakes another.
 ///
-/// `reset()` drops every write waiting or encoded before it and queues the
-/// removal of the folder behind a write already running, so a write begun
-/// before a clear can't bring the folder back. Until the removal has run,
+/// `reset()` drops every write still waiting and queues the removal of the
+/// folder behind a write already running, so a write begun before a clear
+/// can't bring the folder back. Each save belongs to the generation it was
+/// made in, and a job takes only its own generation's save, so a save made
+/// after a reset is written after the removal. Until the removal has run,
 /// `isResetting` is true: a read then must treat the folder as empty.
 ///
 /// The lock is held only to move state, never across the disk, because the
@@ -98,8 +100,11 @@ nonisolated final class OrgFileWriter: Sendable {
     /// Writes `value` as `org`'s file, soon.
     func save<Value: Encodable & Sendable>(_ value: Value, org: String) {
         let encode: @Sendable () -> Data? = { try? OrgJSONCache.makeEncoder().encode(value) }
-        state.withLock { $0.waiting[org] = Waiting(generation: $0.generation, encode: encode) }
-        queue.async { [self] in write(org) }
+        let generation = state.withLock { state -> Int in
+            state.waiting[org] = Waiting(generation: state.generation, encode: encode)
+            return state.generation
+        }
+        queue.async { [self] in write(org, generation: generation) }
     }
 
     /// Forgets writes not yet made and removes every org's file, soon.
@@ -120,12 +125,18 @@ nonisolated final class OrgFileWriter: Sendable {
         queue.sync {}
     }
 
-    private func write(_ org: String) {
-        guard let job = state.withLock({ $0.waiting.removeValue(forKey: org) }) else { return }
-        guard let data = job.encode() else { return }
-        // A reset since the save was made has dropped it. One after this check
-        // queues its removal behind this write, so the write can't outlive it.
-        guard state.withLock({ $0.generation == job.generation }) else { return }
+    private func write(_ org: String, generation: Int) {
+        // Takes only a save made in the generation this job was queued in. A job
+        // queued before a reset would otherwise take a save made after it and
+        // write it ahead of the removal, which would then delete it; that save
+        // has a job of its own, queued behind the removal.
+        let job = state.withLock { state -> Waiting? in
+            guard let waiting = state.waiting[org], waiting.generation == generation else { return nil }
+            state.waiting[org] = nil
+            return waiting
+        }
+        guard let job, let data = job.encode() else { return }
+        // A reset after this point queues its removal behind this write.
         try? FileManager.default.createDirectory(at: cache.directory, withIntermediateDirectories: true)
         try? data.write(to: cache.fileURL(org), options: .atomic)
     }
