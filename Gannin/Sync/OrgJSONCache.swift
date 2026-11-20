@@ -1,5 +1,4 @@
 import Foundation
-import os
 
 /// A store's per-org JSON files in one folder of Application Support:
 /// `<folder>/<org>.json`, dates as ISO 8601. Stores keep their own version
@@ -45,7 +44,7 @@ nonisolated struct OrgJSONCache: Sendable {
     private static let safeOrgCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
 
     /// One per call: a coder is not safe to share between the main actor and
-    /// the writer's queue.
+    /// the writer's task.
     static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -59,85 +58,14 @@ nonisolated struct OrgJSONCache: Sendable {
     }
 }
 
-/// Writes a store's per-org files, encoding them too, away from the main
-/// actor. The newest value for an org replaces one still waiting, so a burst
-/// of saves costs one write, and writes and removals share one serial queue,
-/// so none overtakes another.
-///
-/// `reset()` drops every write still waiting and queues the removal of the
-/// folder behind a write already running, so a write begun before a clear
-/// can't bring the folder back. Each save belongs to the generation it was
-/// made in, and a job takes only its own generation's save, so a save made
-/// after a reset is written after the removal. Until the removal has run,
-/// `isResetting` is true: a read then must treat the folder as empty.
-///
-/// The lock is held only to move state, never across the disk, because the
-/// main actor takes it on every save. Never hop to the main actor from the
-/// queue: `drain()` waits on it from the main thread at quit.
-nonisolated final class OrgFileWriter: Sendable {
-    private struct Waiting {
-        let generation: Int
-        let encode: @Sendable () -> Data?
+nonisolated extension AsyncFileWriter {
+    /// A writer for the files of `cache`, keyed by org.
+    convenience init(cache: OrgJSONCache) {
+        self.init(directory: cache.directory, fileURL: { cache.fileURL($0) })
     }
-
-    private struct State {
-        var generation = 0
-        var resets = 0
-        var waiting: [String: Waiting] = [:]
-    }
-
-    private let cache: OrgJSONCache
-    private let state = OSAllocatedUnfairLock(initialState: State())
-    private let queue = DispatchQueue(label: "dev.andon.gannin.org-files")
-
-    init(cache: OrgJSONCache) {
-        self.cache = cache
-    }
-
-    /// Whether a `reset()` has not finished removing the folder.
-    var isResetting: Bool { state.withLock { $0.resets > 0 } }
 
     /// Writes `value` as `org`'s file, soon.
     func save<Value: Encodable & Sendable>(_ value: Value, org: String) {
-        let encode: @Sendable () -> Data? = { try? OrgJSONCache.makeEncoder().encode(value) }
-        let generation = state.withLock { state -> Int in
-            state.waiting[org] = Waiting(generation: state.generation, encode: encode)
-            return state.generation
-        }
-        queue.async { [self] in write(org, generation: generation) }
-    }
-
-    /// Forgets writes not yet made and removes every org's file, soon.
-    func reset() {
-        state.withLock { state in
-            state.generation += 1
-            state.resets += 1
-            state.waiting = [:]
-        }
-        queue.async { [self] in
-            cache.clear()
-            state.withLock { $0.resets -= 1 }
-        }
-    }
-
-    /// Waits for the writes and removals handed over so far, for quit.
-    func drain() {
-        queue.sync {}
-    }
-
-    private func write(_ org: String, generation: Int) {
-        // Takes only a save made in the generation this job was queued in. A job
-        // queued before a reset would otherwise take a save made after it and
-        // write it ahead of the removal, which would then delete it; that save
-        // has a job of its own, queued behind the removal.
-        let job = state.withLock { state -> Waiting? in
-            guard let waiting = state.waiting[org], waiting.generation == generation else { return nil }
-            state.waiting[org] = nil
-            return waiting
-        }
-        guard let job, let data = job.encode() else { return }
-        // A reset after this point queues its removal behind this write.
-        try? FileManager.default.createDirectory(at: cache.directory, withIntermediateDirectories: true)
-        try? data.write(to: cache.fileURL(org), options: .atomic)
+        save(org) { try? OrgJSONCache.makeEncoder().encode(value) }
     }
 }

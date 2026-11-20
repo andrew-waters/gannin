@@ -120,7 +120,7 @@ final class PullRequestStore {
     }
 
     private let cache: OrgJSONCache
-    private let writer: OrgFileWriter
+    private let writer: AsyncFileWriter
     /// Set only from a read of the org's file, or by a merge that began from
     /// one, never from a placeholder: a store that held an empty copy and then
     /// saved would overwrite the file with less than it held.
@@ -133,7 +133,7 @@ final class PullRequestStore {
 
     init(folder: String = "PullRequests") {
         cache = OrgJSONCache(folder: folder)
-        writer = OrgFileWriter(cache: cache)
+        writer = AsyncFileWriter(cache: cache)
     }
 
     var cacheDirectory: URL { cache.directory }
@@ -178,11 +178,11 @@ final class PullRequestStore {
         save(org)
     }
 
-    /// Writes any save still waiting, and waits for every write handed to the
-    /// writer; at quit.
+    /// Writes any save still waiting, here and now, after any write already
+    /// running; at quit, where nothing can await.
     func flush() {
         delayedSaves.values.forEach { $0.flush() }
-        writer.drain()
+        writer.flush()
     }
 
     /// Reads `org`'s file away from the main actor, so the first use of its
