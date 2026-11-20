@@ -84,6 +84,10 @@ impl Theme {
     pub fn orange(&self) -> Hsla {
         self.pick(0xEB6834, 0xD95926)
     }
+    /// A starred row's star, wash and edge.
+    pub fn star(&self) -> Hsla {
+        self.pick(0xEDA100, 0xC98500)
+    }
     pub fn neutral(&self) -> Hsla {
         self.pick(0xB9B8B2, 0x5A5955)
     }

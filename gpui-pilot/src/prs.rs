@@ -827,6 +827,10 @@ pub struct PrsPage {
     loading: bool,
     timings: String,
     generation: u64,
+    /// The stars' generation `rows` was built from.
+    stars_seen: u64,
+    /// The first rows, this many, are starred.
+    pinned: usize,
     /// PRs with a review session in a tab, by id: whether it's running.
     reviewing: HashMap<String, bool>,
     /// Other open sessions by the PR they're about or opened (reviews
@@ -867,6 +871,8 @@ impl PrsPage {
             loading: false,
             timings: String::new(),
             generation: 0,
+            stars_seen: 0,
+            pinned: 0,
             reviewing: HashMap::new(),
             related: HashMap::new(),
             _subscriptions: subscriptions,
@@ -1022,14 +1028,19 @@ impl PrsPage {
     }
 
     fn refilter(&mut self) {
+        self.stars_seen = crate::stars::generation();
         let prs = self.prs.clone();
         let me = self.me.as_deref();
         self.pool_count = self.pool().count();
+        // Starred PRs stay listed whatever the filter bar says, though still
+        // within the project, and sit at the top in the order picked.
+        let starred: Vec<bool> = prs.iter().map(|p| self.in_focus(p) && crate::stars::is_starred(&p.id)).collect();
         let mut rows: Vec<usize> = (0..prs.len())
-            .filter(|&i| self.in_focus(&prs[i]) && self.in_state(&prs[i]) && matches(&self.filters, &prs[i], None, me))
+            .filter(|&i| starred[i] || (self.in_focus(&prs[i]) && self.in_state(&prs[i]) && matches(&self.filters, &prs[i], None, me)))
             .collect();
         let sort = self.sort.clone();
-        rows.sort_by(|a, b| compare(&prs[*a], &prs[*b], &sort, me));
+        rows.sort_by(|a, b| starred[*b].cmp(&starred[*a]).then_with(|| compare(&prs[*a], &prs[*b], &sort, me)));
+        self.pinned = rows.iter().take_while(|&&i| starred[i]).count();
         self.rows = rows;
     }
 
@@ -1381,8 +1392,13 @@ impl PrsPage {
         let selected = self.selected.as_deref() == Some(pr.id.as_str());
         let picked = self.picked.contains(&pr.id);
         let opened = pr.clone();
+        let star_id = pr.id.clone();
+        let pinned = index < self.pinned;
+        let block_end = pinned && index + 1 == self.pinned && self.rows.len() > self.pinned;
         div()
             .id(("pr", index))
+            .group("row")
+            .when(pinned, |d| d.bg(crate::stars::pinned_tint(theme)))
             .when(picked, |d| d.bg(theme.selected.opacity(0.16)))
             .w_full()
             .h(px(ROW_HEIGHT))
@@ -1392,7 +1408,7 @@ impl PrsPage {
             .items_center()
             .gap_3()
             .border_b_1()
-            .border_color(theme.grid)
+            .border_color(if block_end { crate::stars::pinned_edge(theme) } else { theme.grid })
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.row_selected))
             .when(!selected, |d| d.hover(|s| s.bg(theme.tile)))
@@ -1444,6 +1460,12 @@ impl PrsPage {
                     }))
                     .child(Self::checkbox(Some(picked), theme)),
             )
+            .child(crate::stars::star_button(("star-pr", index).into(), pinned, theme).on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                crate::stars::toggle(&star_id);
+                page.refilter();
+                cx.notify();
+            })))
             .children(self.columns.iter().map(|column| self.cell(column, index, theme, cx)))
     }
 
@@ -1907,6 +1929,10 @@ impl PrsPage {
 
 impl Render for PrsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Starred in another tab or window since the rows were built.
+        if self.stars_seen != crate::stars::generation() && !self.loading {
+            self.refilter();
+        }
         let theme = Theme::for_window(window);
         let (sort, descending) = self.sort.clone();
         let count = self.rows.len();
@@ -1953,6 +1979,7 @@ impl Render for PrsPage {
                     }))
                     .child(Self::checkbox(state, &theme))
             })
+            .child(div().flex_none().w(px(18.)))
             .children(self.columns.clone().into_iter().map(|column| {
                 let marker = if column == sort { if descending { " ↓" } else { " ↑" } } else { "" };
                 let (sorted, onto, title) = (column.clone(), column.clone(), column.title());

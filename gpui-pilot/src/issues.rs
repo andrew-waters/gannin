@@ -900,6 +900,13 @@ pub struct IssuesPage {
     loading: bool,
     timings: String,
     generation: u64,
+    /// The stars' generation `rows` was built from.
+    stars_seen: u64,
+    /// Starred issues in the scope and project, as indexes into `issues`.
+    starred: HashSet<usize>,
+    /// Rows before this are the starred block (with any sub-issues opened
+    /// under them).
+    pinned_end: usize,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -950,6 +957,9 @@ impl IssuesPage {
             loading: false,
             timings: String::new(),
             generation: 0,
+            stars_seen: 0,
+            starred: HashSet::new(),
+            pinned_end: 0,
             _subscriptions: subscriptions,
         };
         page.load(cx);
@@ -1229,15 +1239,40 @@ impl IssuesPage {
     }
 
     fn refilter(&mut self) {
+        self.stars_seen = crate::stars::generation();
+        self.build_rows();
+        // The starred block: every row from the top until a top-level row
+        // that isn't starred.
+        let mut end = 0;
+        let mut in_block = false;
+        for (at, row) in self.rows.iter().enumerate() {
+            if row.depth == 0 {
+                in_block = self.starred.contains(&row.index);
+            }
+            if in_block {
+                end = at + 1;
+            } else if row.depth == 0 {
+                break;
+            }
+        }
+        self.pinned_end = end;
+    }
+
+    fn build_rows(&mut self) {
         let issues = self.issues.clone();
         self.pool_count = self.pool().count();
-        let mut matching: Vec<usize> =
-            (0..issues.len())
-                .filter(|&i| self.in_scope(i) && self.in_focus(&issues[i]) && self.in_state(&issues[i]) && self.filters.matches(&issues[i], None, None))
-                .collect();
+        // Starred issues stay listed whatever the filter bar says, though
+        // still within the project and the parent opened.
+        self.starred = (0..issues.len()).filter(|&i| self.in_scope(i) && self.in_focus(&issues[i]) && crate::stars::is_starred(&issues[i].id)).collect();
+        let starred = self.starred.clone();
+        let mut matching: Vec<usize> = (0..issues.len())
+            .filter(|&i| {
+                starred.contains(&i) || (self.in_scope(i) && self.in_focus(&issues[i]) && self.in_state(&issues[i]) && self.filters.matches(&issues[i], None, None))
+            })
+            .collect();
         self.match_count = matching.len();
         let sort = self.sort.clone();
-        let order = |a: &usize, b: &usize| compare(&issues[*a], &issues[*b], &sort);
+        let order = |a: &usize, b: &usize| starred.contains(b).cmp(&starred.contains(a)).then_with(|| compare(&issues[*a], &issues[*b], &sort));
 
         // Narrowed, every match is its own row, so none hides under a
         // collapsed parent; each says where it belongs instead. One opened
@@ -1248,7 +1283,12 @@ impl IssuesPage {
             let mut rows = Vec::new();
             for index in matching {
                 let children: Vec<usize> = {
-                    let mut c: Vec<usize> = issues.iter().enumerate().filter(|(_, i)| i.parent_id.as_deref() == Some(issues[index].id.as_str())).map(|(i, _)| i).collect();
+                    let mut c: Vec<usize> = issues
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, issue)| !starred.contains(i) && issue.parent_id.as_deref() == Some(issues[index].id.as_str()))
+                        .map(|(i, _)| i)
+                        .collect();
                     c.sort_by(order);
                     c
                 };
@@ -1266,14 +1306,14 @@ impl IssuesPage {
         let listed: std::collections::HashSet<usize> = matching.iter().copied().collect();
         let listed_children = |index: usize| -> Vec<usize> {
             let mut children: Vec<usize> =
-                self.children.get(&issues[index].id).map(|c| c.iter().copied().filter(|c| listed.contains(c)).collect()).unwrap_or_default();
+                self.children.get(&issues[index].id).map(|c| c.iter().copied().filter(|c| listed.contains(c) && !starred.contains(c)).collect()).unwrap_or_default();
             children.sort_by(order);
             children
         };
         let mut roots: Vec<usize> = matching
             .iter()
             .copied()
-            .filter(|&i| issues[i].parent_id.as_ref().and_then(|p| self.by_id.get(p)).is_none_or(|p| !listed.contains(p)))
+            .filter(|&i| starred.contains(&i) || issues[i].parent_id.as_ref().and_then(|p| self.by_id.get(p)).is_none_or(|p| !listed.contains(p)))
             .collect();
         roots.sort_by(order);
         let mut rows = Vec::new();
@@ -1925,8 +1965,14 @@ impl IssuesPage {
         let picked = self.picked.contains(&issue.id);
         let opened = issue.clone();
         let id = issue.id.clone();
+        let star_id = issue.id.clone();
+        let starred = self.starred.contains(&row.index);
+        let pinned = index < self.pinned_end;
+        let block_end = pinned && index + 1 == self.pinned_end && self.rows.len() > self.pinned_end;
         div()
             .id(("issue", index))
+            .group("row")
+            .when(pinned, |d| d.bg(crate::stars::pinned_tint(theme)))
             .when(picked, |d| d.bg(theme.selected.opacity(0.16)))
             // Each row is laid out on its own and would otherwise shrink to
             // its content, pushing the columns out of line with the header.
@@ -1938,7 +1984,7 @@ impl IssuesPage {
             .items_center()
             .gap_3()
             .border_b_1()
-            .border_color(theme.grid)
+            .border_color(if block_end { crate::stars::pinned_edge(theme) } else { theme.grid })
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.row_selected))
             .when(!selected, |d| d.hover(|s| s.bg(theme.tile)))
@@ -1979,6 +2025,12 @@ impl IssuesPage {
                     }))
                     .child(crate::prs::PrsPage::checkbox(Some(picked), theme)),
             )
+            .child(crate::stars::star_button(("star-issue", index).into(), starred, theme).on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                crate::stars::toggle(&star_id);
+                page.refilter();
+                cx.notify();
+            })))
             .children(self.columns.iter().map(|column| self.cell(column, index, theme, cx)))
     }
 
@@ -2429,6 +2481,10 @@ pub fn pill(label: &'static str, color: gpui::Hsla) -> impl IntoElement {
 
 impl Render for IssuesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Starred in another tab or window since the rows were built.
+        if self.stars_seen != crate::stars::generation() && !self.loading {
+            self.refilter();
+        }
         let theme = Theme::for_window(window);
         let (sort, descending) = self.sort.clone();
         let count = self.rows.len();
@@ -2480,6 +2536,7 @@ impl Render for IssuesPage {
                     }))
                     .child(crate::prs::PrsPage::checkbox(state, &theme))
             })
+            .child(div().flex_none().w(px(18.)))
             .children(self.columns.clone().into_iter().map(|column| {
                 let marker = if column == sort { if descending { " ↓" } else { " ↑" } } else { "" };
                 let (sorted, onto, title) = (column.clone(), column.clone(), column.title());

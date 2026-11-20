@@ -74,6 +74,7 @@ mod session;
 mod session_move;
 mod shell;
 mod shortcuts;
+mod stars;
 mod state;
 mod sync;
 mod todos;
