@@ -50,7 +50,7 @@ nonisolated struct IssueLabel: Codable, Hashable {
 }
 
 /// Lightweight pointer from a PR to an issue it closes, or the reverse.
-struct LinkedItem: Codable, Hashable, Identifiable {
+struct LinkedItem: Codable, Hashable, Identifiable, Sendable {
     let id: String
     let number: Int
     let title: String
@@ -97,7 +97,7 @@ struct ReviewerEntry: Hashable, Identifiable {
 }
 
 struct PullRequest: Codable, Hashable, Identifiable {
-    enum ReviewState: String, Codable {
+    enum ReviewState: String, Codable, Sendable {
         case approved = "APPROVED"
         case changesRequested = "CHANGES_REQUESTED"
         case reviewRequired = "REVIEW_REQUIRED"
@@ -275,7 +275,7 @@ struct Comment: Codable, Hashable, Identifiable {
 /// The heavier fields of an issue or PR, fetched when it is opened rather
 /// than for every item in a snapshot.
 struct ItemDetail: Codable, Hashable {
-    enum CheckState: String, Codable {
+    enum CheckState: String, Codable, Sendable {
         case success = "SUCCESS"
         case failure = "FAILURE"
         case error = "ERROR"

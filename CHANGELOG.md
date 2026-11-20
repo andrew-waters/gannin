@@ -20,6 +20,8 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - The work log no longer keeps its own copy of each issue's title, repo and author: it shares the one the rest of the app holds, and takes issue changes from the change feed. Existing work log caches carry over without refetching
 
 ### Fixed
+- Finishing or removing a session no longer freezes Gannin while its folder is deleted and the session list is saved, which could show Gannin as "Not Responding" in the Dock
+- Saving fetched PRs and issues, and reading them back when an org's page first opens, no longer freezes Gannin while a large org's file is encoded or decoded. A save still waiting when Gannin is quit with SIGTERM, as the relaunch script does, is now written first
 - The work log no longer drops issues when a week has more than 1000 updated: that week is searched a day at a time
 - Syncing metrics refetches only PRs merged since the last sync (with an hour of overlap) instead of every PR merged in the last day
 - Syncing Actions no longer refetches a repo's whole window of workflow runs every time because one run is stuck as queued or waiting; only runs started in the last week hold the top-up back

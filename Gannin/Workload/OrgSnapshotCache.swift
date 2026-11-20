@@ -15,6 +15,13 @@ struct OrgSnapshotCache {
         self.issues = issues
     }
 
+    /// Reads the PR and issue stores' files for `login` away from the main
+    /// actor, so `load` finds them held instead of decoding them there.
+    func prepare(_ login: String) async {
+        await pullRequests.prepare(login)
+        await issues.prepare(login)
+    }
+
     /// The saved snapshot with its PRs, or nil when there's none or the store
     /// no longer holds the PRs it lists, which a refresh then fetches again.
     /// A snapshot from before PRs or open issues moved to their stores brings

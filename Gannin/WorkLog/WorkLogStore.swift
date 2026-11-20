@@ -60,6 +60,8 @@ final class WorkLogStore {
     /// the last `keptDays`). Missing weeks are searched a week at a time,
     /// several at once; a stored range only needs what changed since.
     func sync(_ org: String, from requested: Date? = nil, force: Bool = false) async {
+        await pullRequestStore.prepare(org)
+        await issueStore.prepare(org)
         loadCached(org)
         guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.workLog) else { return }
         // Held from here, since the change feed is awaited before the work.

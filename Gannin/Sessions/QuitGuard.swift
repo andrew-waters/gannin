@@ -22,7 +22,7 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         source.setEventHandler {
-            MainActor.assumeIsolated { Self.sessions?.flushSave() }
+            MainActor.assumeIsolated { Self.flushSaves() }
             exit(0)
         }
         source.resume()
@@ -75,7 +75,17 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        Self.sessions?.flushSave()
+        Self.flushSaves()
+    }
+
+    /// Writes what is waiting to be saved and waits for it to land: the
+    /// session list, and the PR and issue stores, whose files are written
+    /// off the main actor. SIGTERM exits without posting
+    /// `applicationWillTerminate`, so both ways out come here.
+    private static func flushSaves() {
+        sessions?.flushSave()
+        PullRequestStore.shared.flush()
+        SharedIssueStore.shared.flush()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

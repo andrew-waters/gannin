@@ -50,14 +50,14 @@ struct MetricPullRequest: Codable, Hashable, Identifiable {
     }
 }
 
-struct MetricReviewRequest: Codable, Hashable {
+struct MetricReviewRequest: Codable, Hashable, Sendable {
     let login: String
     let requestedAt: Date
     /// Set when the request was withdrawn before they reviewed.
     var removedAt: Date?
 }
 
-struct MetricReview: Codable, Hashable {
+struct MetricReview: Codable, Hashable, Sendable {
     let login: String
     let state: String
     let submittedAt: Date

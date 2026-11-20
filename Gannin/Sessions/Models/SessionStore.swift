@@ -585,10 +585,13 @@ final class SessionStore {
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private let saveDelay: Duration
     @ObservationIgnored private let defaults: UserDefaults
+    /// Writes `Sessions.json`, and removes the folders of sessions forgotten.
+    @ObservationIgnored private let files: AsyncFileWriter
 
     init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory, saveDelay: Duration = .milliseconds(500), defaults: UserDefaults = .standard) {
         self.harness = harness
         self.directory = directory
+        files = AsyncFileWriter(directory: directory, fileURL: { _ in directory.appending(path: "Sessions.json") })
         self.saveDelay = saveDelay
         self.defaults = defaults
         if let data = try? Data(contentsOf: directory.appending(path: "Sessions.json")),
@@ -1021,7 +1024,9 @@ final class SessionStore {
         if besideTab == id { besideTab = nil }
         closeTab(id)
         saveNow()
-        try? FileManager.default.removeItem(at: Self.directory(for: id))
+        // Queued behind the save above, so a kill before the folder goes
+        // leaves a folder nothing refers to, never a session without one.
+        files.removeFolder(Self.directory(for: id))
     }
 
     func launch(_ session: CodeSession, in terminal: SessionTerminal) {
@@ -1830,8 +1835,6 @@ final class SessionStore {
         SandboxGitGuard.setRoots(sessions.values.filter { $0.isSandboxed && !$0.isRemote }.compactMap(\.harnessPath))
     }
 
-    private var fileURL: URL { directory.appending(path: "Sessions.json") }
-
     /// Saves every session shortly: calls close together (a poll updating
     /// several sessions, a review's rounds) share one write of the whole file.
     func save() {
@@ -1839,32 +1842,36 @@ final class SessionStore {
         pendingSave = Task {
             try? await Task.sleep(for: saveDelay)
             guard !Task.isCancelled else { return }
-            flushSave()
+            // Not `flushSave`: that waits for the disk.
+            saveNow()
         }
     }
 
-    /// Writes now, for a session added, removed or started: one a kill in the
-    /// next half second must not lose, as the relaunch script's `kill -9` can.
+    /// Hands the file to the writer now, for a session added, removed or
+    /// started: one a kill a moment later must not lose, as the relaunch
+    /// script's `kill -9` can. The write lands within milliseconds, off the
+    /// main actor; `flushSave` waits for it.
     func saveNow() {
         pendingSave?.cancel()
         pendingSave = nil
         writeSessions()
     }
 
-    /// Writes now if a save is waiting; at quit, so nothing is lost.
+    /// Hands over a save that is waiting, then blocks until the writer has
+    /// written everything handed to it; at quit, so nothing is lost.
     func flushSave() {
-        guard pendingSave != nil else { return }
-        saveNow()
+        if pendingSave != nil { saveNow() }
+        files.flush()
     }
 
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
+    /// Encodes here, as `CodeSession` is main-actor, and leaves the disk to
+    /// the writer.
     private func writeSessions() {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let ordered = sessions.values.sorted { $0.createdAt < $1.createdAt }
-        if let data = try? JSONEncoder().encode(ordered) {
-            try? data.write(to: fileURL, options: .atomic)
-        }
+        guard let data = try? JSONEncoder().encode(ordered) else { return }
+        files.save("Sessions") { data }
     }
 }
 

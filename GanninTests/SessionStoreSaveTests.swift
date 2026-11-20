@@ -26,7 +26,10 @@ struct SessionStoreSaveTests {
     @Test func addIsWrittenAtOnce() {
         defer { clean() }
         let first = session(1)
-        store().add(first)
+        let live = store()
+        live.add(first)
+        // The write is handed to the writer's queue; a flush waits for it.
+        live.flushSave()
         #expect(saved().map(\.id) == [first.id])
     }
 
@@ -35,6 +38,7 @@ struct SessionStoreSaveTests {
         let live = store()
         let first = session(1)
         live.add(first)
+        live.flushSave()
         live.update(first.id) { $0.name = "one" }
         live.update(first.id) { $0.name = "two" }
         #expect(saved().first?.name != "two")
@@ -58,6 +62,7 @@ struct SessionStoreSaveTests {
         let live = store(saveDelay: .seconds(1))
         let first = session(1)
         live.add(first)
+        live.flushSave()
         live.update(first.id) { $0.name = "one" }
         live.flushSave()
         try await Task.sleep(for: .milliseconds(600))

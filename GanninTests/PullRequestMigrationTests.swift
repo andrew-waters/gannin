@@ -78,6 +78,7 @@ struct PullRequestMigrationTests {
         metricsStore(cache: cache, store: prs).loadCached("acme")
 
         prs.clear()
+        prs.flush()
         let store = metricsStore(cache: cache, store: PullRequestStore(folder: folder))
         store.loadCached("acme")
         #expect(store.history(for: "acme") == nil)
@@ -127,6 +128,7 @@ struct PullRequestMigrationTests {
         workLogStore(directory: directory, store: prs).loadCached("acme")
 
         prs.clear()
+        prs.flush()
         let store = workLogStore(directory: directory, store: PullRequestStore(folder: folder))
         store.loadCached("acme")
         #expect(store.history(for: "acme") == nil)

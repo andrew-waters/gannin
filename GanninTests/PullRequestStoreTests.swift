@@ -34,8 +34,81 @@ struct PullRequestStoreTests {
         let store = PullRequestStore(folder: folder)
         defer { store.clear() }
         store.merge([StoredPullRequest(metrics: metricPR("a"))], org: "acme")
+        store.flush()
         #expect(PullRequestStore(folder: folder).pullRequests(org: "acme").keys.sorted() == ["a"])
         #expect(PullRequestStore(folder: folder).pullRequests(org: "other").isEmpty)
+    }
+
+    @Test func aClearRightAfterAMergeLeavesNoFolderBehind() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(metrics: metricPR("a"))], org: "acme")
+        store.clear()
+        store.flush()
+        #expect(!FileManager.default.fileExists(atPath: store.cacheDirectory.path))
+    }
+
+    @Test func aReadRightAfterAClearSeesNothingBeforeTheFolderIsGone() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(metrics: metricPR("a"))], org: "acme")
+        store.flush()
+        store.clear()
+        #expect(store.pullRequests(org: "acme").isEmpty)
+    }
+
+    @Test func clearingAPartRightAfterAMergeOfANewOrgDropsThePartFromTheFile() {
+        let folder = "PullRequestStoreTests-\(UUID().uuidString)"
+        let store = PullRequestStore(folder: folder)
+        defer { store.clear() }
+        // No file for the org has landed yet when the part is cleared.
+        store.merge([StoredPullRequest(metrics: metricPR("a"))], org: "fresh")
+        store.clear(.metrics)
+        store.flush()
+        #expect(PullRequestStore(folder: folder).pullRequests(org: "fresh").isEmpty)
+    }
+
+    @Test func prepareHoldsWhatTheFileHolds() async {
+        let folder = "PullRequestStoreTests-\(UUID().uuidString)"
+        let writer = PullRequestStore(folder: folder)
+        defer { writer.clear() }
+        writer.merge([StoredPullRequest(metrics: metricPR("a"))], org: "acme")
+        writer.flush()
+
+        let reader = PullRequestStore(folder: folder)
+        await reader.prepare("acme")
+        #expect(reader.pullRequests(org: "acme").keys.sorted() == ["a"])
+    }
+
+    @Test func prepareDoesNotReplaceWhatWasLoadedWhileItRead() async {
+        let folder = "PullRequestStoreTests-\(UUID().uuidString)"
+        let writer = PullRequestStore(folder: folder)
+        defer { writer.clear() }
+        writer.merge([StoredPullRequest(metrics: metricPR("a"))], org: "acme")
+        writer.flush()
+
+        let store = PullRequestStore(folder: folder)
+        let preparing = Task { await store.prepare("acme") }
+        // Lets `prepare` start its read, then changes the org before it ends.
+        await Task.yield()
+        store.merge([StoredPullRequest(metrics: metricPR("b"))], org: "acme")
+        await preparing.value
+        #expect(store.pullRequests(org: "acme").keys.sorted() == ["a", "b"])
+    }
+
+    @Test func prepareDoesNotBringBackWhatWasClearedWhileItRead() async {
+        let folder = "PullRequestStoreTests-\(UUID().uuidString)"
+        let writer = PullRequestStore(folder: folder)
+        defer { writer.clear() }
+        writer.merge([StoredPullRequest(metrics: metricPR("a"))], org: "acme")
+        writer.flush()
+
+        let store = PullRequestStore(folder: folder)
+        let preparing = Task { await store.prepare("acme") }
+        await Task.yield()
+        store.clear()
+        await preparing.value
+        #expect(store.pullRequests(org: "acme").isEmpty)
     }
 
     @Test func aNewerHeldUpdateIsNotReplacedByAnOlderOne() {

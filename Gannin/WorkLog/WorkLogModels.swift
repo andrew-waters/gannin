@@ -32,7 +32,7 @@ struct WorkLogPullRequest: Codable, Hashable, Identifiable {
     var authorIsBot: Bool? = nil
 }
 
-struct WorkLogCommit: Codable, Hashable {
+struct WorkLogCommit: Codable, Hashable, Sendable {
     let authoredAt: Date
     /// The GitHub user behind the commit, when its email is linked to one.
     let author: String?
@@ -46,7 +46,7 @@ struct WorkLogCommit: Codable, Hashable {
     var url: URL? = nil
 }
 
-struct WorkLogReview: Codable, Hashable {
+struct WorkLogReview: Codable, Hashable, Sendable {
     let submittedAt: Date
     let author: String
     let state: String
@@ -73,7 +73,7 @@ struct WorkLogIssue: Codable, Hashable, Identifiable {
     var labels: [String]? = nil
 }
 
-struct WorkLogIssueComment: Codable, Hashable {
+struct WorkLogIssueComment: Codable, Hashable, Sendable {
     let createdAt: Date
     let author: String
     let url: URL?
