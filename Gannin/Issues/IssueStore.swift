@@ -75,6 +75,7 @@ final class IssueStore {
     /// as a brand new org, a known one trusts a changes search as the
     /// account's own repos do (andrew-waters/gannin#205).
     func sync(_ org: String, windowDays: Int, force: Bool = false, refetchOpen: Bool = false) async {
+        await issueStore.prepare(org)
         loadCached(org)
         guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.issues) else { return }
         // Held from here, since the change feed is awaited before the work.

@@ -135,10 +135,13 @@ struct SharedIssueStoreTests {
         let store = SharedIssueStore(folder: folder)
         defer { store.clear() }
         store.merge([StoredIssue(history: record("a"))], org: "acme")
+        store.flush()
         let file = store.cacheDirectory.appending(path: "acme.json")
         try FileManager.default.removeItem(at: file)
 
         store.prune(.workload, org: "acme", keeping: [])
+        // Waits for any write the prune made, so the absence below means none.
+        store.flush()
         #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
@@ -169,8 +172,47 @@ struct SharedIssueStoreTests {
         let store = SharedIssueStore(folder: folder)
         defer { store.clear() }
         store.merge([StoredIssue(workload: workload()), StoredIssue(history: record("b"))], org: "acme")
+        store.flush()
         let reread = SharedIssueStore(folder: folder)
         #expect(reread.issues(org: "acme") == store.issues(org: "acme"))
+    }
+
+    @Test func aClearRightAfterAMergeLeavesNoFolderBehind() {
+        let store = SharedIssueStore(folder: folder)
+        defer { store.clear() }
+        store.merge([StoredIssue(history: record("a"))], org: "acme")
+        store.clear()
+        store.flush()
+        #expect(!FileManager.default.fileExists(atPath: store.cacheDirectory.path))
+    }
+
+    @Test func prepareDoesNotReplaceWhatWasLoadedWhileItRead() async {
+        let writer = SharedIssueStore(folder: folder)
+        defer { writer.clear() }
+        writer.merge([StoredIssue(history: record("a"))], org: "acme")
+        writer.flush()
+
+        let store = SharedIssueStore(folder: folder)
+        let preparing = Task { await store.prepare("acme") }
+        // Lets `prepare` start its read, then changes the org before it ends.
+        await Task.yield()
+        store.merge([StoredIssue(history: record("b"))], org: "acme")
+        await preparing.value
+        #expect(store.issues(org: "acme").keys.sorted() == ["a", "b"])
+    }
+
+    @Test func prepareDoesNotBringBackWhatWasClearedWhileItRead() async {
+        let writer = SharedIssueStore(folder: folder)
+        defer { writer.clear() }
+        writer.merge([StoredIssue(history: record("a"))], org: "acme")
+        writer.flush()
+
+        let store = SharedIssueStore(folder: folder)
+        let preparing = Task { await store.prepare("acme") }
+        await Task.yield()
+        store.clear()
+        await preparing.value
+        #expect(store.issues(org: "acme").isEmpty)
     }
 
     @Test func aHistoryFileHoldsNoIssuesAndAnOldOneStillDecodes() throws {
@@ -234,6 +276,7 @@ struct SharedIssueStoreTests {
         #expect(rewritten?["issues"] == nil)
 
         // A fresh launch reads the rewritten file and the store.
+        shared.flush()
         let again = issueStore(SharedIssueStore(folder: folder), directory)
         again.loadCached("acme")
         #expect(again.history(for: "acme")?.issues.count == 2)

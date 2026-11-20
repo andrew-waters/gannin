@@ -1,7 +1,7 @@
 import Foundation
 
 /// What every store that fetches a PR shares, so a PR is kept once.
-struct PullRequestCore: Codable, Hashable, Identifiable {
+nonisolated struct PullRequestCore: Codable, Hashable, Identifiable {
     let id: String
     let number: Int
     let title: String
@@ -44,7 +44,7 @@ struct PullRequestCore: Codable, Hashable, Identifiable {
 }
 
 /// What only the metrics fetch reads, kept beside the core.
-struct MetricsExtras: Codable, Hashable {
+nonisolated struct MetricsExtras: Codable, Hashable {
     /// The PR's `updatedAt` when this was fetched. The core's is the newest
     /// any store has seen, so it can't say whether these are current.
     var updatedAt: Date?
@@ -57,7 +57,7 @@ struct MetricsExtras: Codable, Hashable {
 }
 
 /// What only the work log fetch reads, kept beside the core.
-struct WorkLogExtras: Codable, Hashable {
+nonisolated struct WorkLogExtras: Codable, Hashable {
     /// The PR's `updatedAt` when this was fetched (see `MetricsExtras`).
     var updatedAt: Date?
     let closedAt: Date?
@@ -69,7 +69,7 @@ struct WorkLogExtras: Codable, Hashable {
 }
 
 /// What only the workload fetch reads, kept beside the core.
-struct WorkloadExtras: Codable, Hashable {
+nonisolated struct WorkloadExtras: Codable, Hashable {
     /// The PR's `updatedAt` when this was fetched. Open PRs are fetched again
     /// at the same `updatedAt` (their checks change without it moving), and
     /// the newer fetch wins.
@@ -90,7 +90,7 @@ struct WorkloadExtras: Codable, Hashable {
     var requestedTeams: [String]?
 }
 
-struct StoredPullRequest: Codable, Hashable, Identifiable {
+nonisolated struct StoredPullRequest: Codable, Hashable, Identifiable {
     /// The part of a stored PR one store owns.
     enum Slot { case metrics, workLog, workload }
 
@@ -112,20 +112,28 @@ final class PullRequestStore {
     static let shared = PullRequestStore()
     /// Bumped when the stored shape changes, so older files are dropped and
     /// fetched again rather than half-filled.
-    static let currentFormat = 1
+    nonisolated static let currentFormat = 1
 
-    private struct File: Codable {
+    private nonisolated struct File: Codable, Sendable {
         var formatVersion: Int
         var pullRequests: [String: StoredPullRequest]
     }
 
     private let cache: OrgJSONCache
+    private let writer: OrgFileWriter
+    /// Set only from a read of the org's file, or by a merge that began from
+    /// one, never from a placeholder: a store that held an empty copy and then
+    /// saved would overwrite the file with less than it held.
     private var loaded: [String: [String: StoredPullRequest]] = [:]
+    /// Bumped by `clear()`, so a `prepare` that began before it can't bring
+    /// back what was cleared.
+    private var epoch = 0
     /// Saves waiting for a burst of writes to end, by org.
     private var delayedSaves: [String: SaveCoalescer] = [:]
 
     init(folder: String = "PullRequests") {
         cache = OrgJSONCache(folder: folder)
+        writer = OrgFileWriter(cache: cache)
     }
 
     var cacheDirectory: URL { cache.directory }
@@ -170,9 +178,24 @@ final class PullRequestStore {
         save(org)
     }
 
-    /// Writes any save still waiting.
+    /// Writes any save still waiting, and waits for every write handed to the
+    /// writer; at quit.
     func flush() {
         delayedSaves.values.forEach { $0.flush() }
+        writer.drain()
+    }
+
+    /// Reads `org`'s file away from the main actor, so the first use of its
+    /// PRs doesn't decode it there. Does nothing once the org is held, and
+    /// drops what it read if the org was loaded meanwhile or the store was
+    /// cleared.
+    func prepare(_ org: String) async {
+        guard loaded[org] == nil else { return }
+        let started = epoch
+        let cache = cache
+        let held = await Task.detached { Self.read(cache, org) }.value
+        guard epoch == started, loaded[org] == nil else { return }
+        loaded[org] = held
     }
 
     /// Changes a held PR, as after a write to GitHub, so it shows before the
@@ -187,15 +210,17 @@ final class PullRequestStore {
     }
 
     func clear() {
+        epoch += 1
         loaded = [:]
         delayedSaves.values.forEach { $0.cancel() }
-        cache.clear()
+        writer.reset()
     }
 
     /// Removes what one store fetched, in every org, and any PR left with
     /// nothing from a store. The other stores' parts stay.
     func clear(_ slot: StoredPullRequest.Slot) {
-        for org in cache.orgs() {
+        // Orgs held but not yet written have no file to list.
+        for org in Set(cache.orgs()).union(loaded.keys) {
             var held = load(org)
             for (id, var pr) in held {
                 pr.remove(slot)
@@ -206,16 +231,21 @@ final class PullRequestStore {
         }
     }
 
+    /// Reads the file here if `prepare` hasn't, for callers that can't wait.
     private func load(_ org: String) -> [String: StoredPullRequest] {
         if let held = loaded[org] { return held }
-        let file = cache.load(File.self, org: org)
-        let held = file?.formatVersion == Self.currentFormat ? file?.pullRequests ?? [:] : [:]
+        let held = Self.read(cache, org)
         loaded[org] = held
         return held
     }
 
+    private nonisolated static func read(_ cache: OrgJSONCache, _ org: String) -> [String: StoredPullRequest] {
+        let file = cache.load(File.self, org: org)
+        return file?.formatVersion == currentFormat ? file?.pullRequests ?? [:] : [:]
+    }
+
     private func save(_ org: String) {
-        cache.save(File(formatVersion: Self.currentFormat, pullRequests: loaded[org] ?? [:]), org: org)
+        writer.save(File(formatVersion: Self.currentFormat, pullRequests: loaded[org] ?? [:]), org: org)
     }
 
     private func saveSoon(_ org: String) {

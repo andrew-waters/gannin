@@ -128,6 +128,7 @@ final class OrgStore {
     private static let changesOverlap: TimeInterval = 5 * 60
 
     func refresh(_ login: String, mode: RefreshMode = .manual) async {
+        await cache.prepare(login)
         loadCached(login)
         guard let api = auth.api, !refreshing.contains(login) else { return }
         refreshing.insert(login)
@@ -195,6 +196,7 @@ final class OrgStore {
     /// With a cached snapshot, waits out a low rate limit rather than
     /// spending the last of it.
     func refreshIfStale(_ login: String) async {
+        await cache.prepare(login)
         loadCached(login)
         if let snapshot = snapshots[login] {
             if !auth.shouldFetch(.workload, since: snapshot.fetchedAt) { return }

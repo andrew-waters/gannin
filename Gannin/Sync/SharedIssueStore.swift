@@ -1,13 +1,13 @@
 import Foundation
 
-struct StoredLabel: Codable, Hashable {
+nonisolated struct StoredLabel: Codable, Hashable {
     let name: String
     /// Nil when the label came from a fetch that reads names only.
     var color: String?
 }
 
 /// What every store that fetches an issue shares, so an issue is kept once.
-struct IssueCore: Codable, Hashable, Identifiable {
+nonisolated struct IssueCore: Codable, Hashable, Identifiable {
     let id: String
     let number: Int
     let title: String
@@ -56,14 +56,14 @@ struct IssueCore: Codable, Hashable, Identifiable {
 }
 
 /// What only the workload fetch reads, kept beside the core.
-struct WorkloadIssueExtras: Codable, Hashable {
+nonisolated struct WorkloadIssueExtras: Codable, Hashable {
     /// The issue's `updatedAt` when this was fetched (see `HistoryIssueExtras`).
     var updatedAt: Date?
     let linkedPullRequests: [LinkedItem]
 }
 
 /// What only the issue history fetch reads, kept beside the core.
-struct HistoryIssueExtras: Codable, Hashable {
+nonisolated struct HistoryIssueExtras: Codable, Hashable {
     /// The issue's `updatedAt` when this was fetched. The core's is the newest
     /// any store has seen, so it can't say whether these are current.
     var updatedAt: Date?
@@ -81,7 +81,7 @@ struct HistoryIssueExtras: Codable, Hashable {
 }
 
 /// What only the work log fetch reads, kept beside the core.
-struct WorkLogIssueExtras: Codable, Hashable {
+nonisolated struct WorkLogIssueExtras: Codable, Hashable {
     /// The issue's `updatedAt` when this was fetched (see `HistoryIssueExtras`).
     /// Nil on an issue carried over from an old cache, which is fetched once
     /// when the change feed next reports it changed.
@@ -90,7 +90,7 @@ struct WorkLogIssueExtras: Codable, Hashable {
     let comments: [WorkLogIssueComment]
 }
 
-struct StoredIssue: Codable, Hashable, Identifiable {
+nonisolated struct StoredIssue: Codable, Hashable, Identifiable {
     /// The part of a stored issue one store owns.
     enum Slot { case workload, history, workLog }
 
@@ -111,20 +111,28 @@ struct StoredIssue: Codable, Hashable, Identifiable {
 final class SharedIssueStore {
     static let shared = SharedIssueStore()
     /// Bumped when the stored shape changes, so older files are dropped.
-    static let currentFormat = 1
+    nonisolated static let currentFormat = 1
 
-    private struct File: Codable {
+    private nonisolated struct File: Codable, Sendable {
         var formatVersion: Int
         var issues: [String: StoredIssue]
     }
 
     private let cache: OrgJSONCache
+    private let writer: OrgFileWriter
+    /// Set only from a read of the org's file, or by a merge that began from
+    /// one, never from a placeholder: a store that held an empty copy and then
+    /// saved would overwrite the file with less than it held.
     private var loaded: [String: [String: StoredIssue]] = [:]
+    /// Bumped by `clear()`, so a `prepare` that began before it can't bring
+    /// back what was cleared.
+    private var epoch = 0
     /// Saves waiting for a burst of edits to end, by org.
     private var delayedSaves: [String: SaveCoalescer] = [:]
 
     init(folder: String = "StoredIssues") {
         cache = OrgJSONCache(folder: folder)
+        writer = OrgFileWriter(cache: cache)
     }
 
     var cacheDirectory: URL { cache.directory }
@@ -205,21 +213,38 @@ final class SharedIssueStore {
         saveSoon(org)
     }
 
-    /// Writes any save still waiting.
+    /// Writes any save still waiting, and waits for every write handed to the
+    /// writer; at quit.
     func flush() {
         delayedSaves.values.forEach { $0.flush() }
+        writer.drain()
+    }
+
+    /// Reads `org`'s file away from the main actor, so the first use of its
+    /// issues doesn't decode it there. Does nothing once the org is held, and
+    /// drops what it read if the org was loaded meanwhile or the store was
+    /// cleared.
+    func prepare(_ org: String) async {
+        guard loaded[org] == nil else { return }
+        let started = epoch
+        let cache = cache
+        let held = await Task.detached { Self.read(cache, org) }.value
+        guard epoch == started, loaded[org] == nil else { return }
+        loaded[org] = held
     }
 
     func clear() {
+        epoch += 1
         loaded = [:]
         delayedSaves.values.forEach { $0.cancel() }
-        cache.clear()
+        writer.reset()
     }
 
     /// Removes what one store fetched, in every org, and any issue left with
     /// nothing from a store. The other store's part stays.
     func clear(_ slot: StoredIssue.Slot) {
-        for org in cache.orgs() {
+        // Orgs held but not yet written have no file to list.
+        for org in Set(cache.orgs()).union(loaded.keys) {
             var held = load(org)
             var changed = false
             for (id, var issue) in held where issue.has(slot) {
@@ -233,16 +258,21 @@ final class SharedIssueStore {
         }
     }
 
+    /// Reads the file here if `prepare` hasn't, for callers that can't wait.
     private func load(_ org: String) -> [String: StoredIssue] {
         if let held = loaded[org] { return held }
-        let file = cache.load(File.self, org: org)
-        let held = file?.formatVersion == Self.currentFormat ? file?.issues ?? [:] : [:]
+        let held = Self.read(cache, org)
         loaded[org] = held
         return held
     }
 
+    private nonisolated static func read(_ cache: OrgJSONCache, _ org: String) -> [String: StoredIssue] {
+        let file = cache.load(File.self, org: org)
+        return file?.formatVersion == currentFormat ? file?.issues ?? [:] : [:]
+    }
+
     private func save(_ org: String) {
-        cache.save(File(formatVersion: Self.currentFormat, issues: loaded[org] ?? [:]), org: org)
+        writer.save(File(formatVersion: Self.currentFormat, issues: loaded[org] ?? [:]), org: org)
     }
 
     private func saveSoon(_ org: String) {

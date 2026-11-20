@@ -38,6 +38,7 @@ final class MetricsStore {
     }
 
     func sync(_ org: String, windowDays: Int, force: Bool = false) async {
+        await pullRequestStore.prepare(org)
         loadCached(org)
         guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.metrics) else { return }
 

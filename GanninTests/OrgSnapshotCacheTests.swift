@@ -197,7 +197,10 @@ struct OrgSnapshotCacheTests {
         let store = PullRequestStore(folder: uniqueFolder())
         defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
         let saved = snapshot(issues: [issue("b"), issue("a")])
-        cache(dir, store).save(saved)
+        let writer = cache(dir, store)
+        writer.save(saved)
+        // `cache` makes a store per call, and a second one reads the file.
+        writer.issues.flush()
 
         let loaded = cache(dir, store).load("acme")
         #expect(loaded?.issues == saved.issues)
@@ -216,8 +219,10 @@ struct OrgSnapshotCacheTests {
         try encoder.encode(LegacySnapshotFile(fetchedAt: at(30), openPullRequests: [], mergedPullRequests: [], issues: issues))
             .write(to: dir.appending(path: "acme.json"))
 
+        let migrating = cache(dir, store)
+        #expect(migrating.load("acme")?.issues == issues)
+        migrating.issues.flush()
         let issueStore = SharedIssueStore(folder: issueFolder)
-        #expect(cache(dir, store).load("acme")?.issues == issues)
         #expect(issueStore.issues(org: "acme")["a"]?.workload != nil)
         #expect(json(dir.appending(path: "acme.json"))["issues"] == nil)
         #expect(cache(dir, store).load("acme")?.issues == issues)
@@ -236,7 +241,9 @@ struct OrgSnapshotCacheTests {
         let dir = directory()
         let store = PullRequestStore(folder: uniqueFolder())
         defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
-        cache(dir, store).save(snapshot(issues: [issue("a"), issue("b")]))
+        let writer = cache(dir, store)
+        writer.save(snapshot(issues: [issue("a"), issue("b")]))
+        writer.issues.flush()
 
         let issues = SharedIssueStore(folder: issueFolder)
         var closed = issues.issues(org: "acme")["a"]!
@@ -245,6 +252,7 @@ struct OrgSnapshotCacheTests {
             createdAt: at(0), closedAt: at(50), updatedAt: at(60), assignees: closed.core.assignees, labels: closed.core.labels
         )
         issues.merge([closed], org: "acme")
+        issues.flush()
 
         #expect(cache(dir, store).load("acme")?.issues.map(\.id) == ["b"])
     }
