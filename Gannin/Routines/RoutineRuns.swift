@@ -201,7 +201,7 @@ extension SessionStore {
         SandboxPlacement.decide(
             enabled: SandboxCredentials.isEnabled, repos: repos,
             reposNeedingMac: configs.config(for: org).reposNeedingMac, org: org,
-            hasGitHubToken: SandboxCredentials.gitHubToken(org: org) != nil,
+            hasGitHubToken: SandboxCredentials.hasGitHubToken(org: org),
             connectsBySSH: connectCommand.map { Shell.sshArguments($0) != nil } ?? true
         )
     }

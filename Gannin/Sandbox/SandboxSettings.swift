@@ -75,7 +75,7 @@ struct SandboxSettingsSection: View {
                 Button("Sign Out of Claude in Sandboxes") { signingOut = true }
                     .help("Removes the login your sandboxes share, so the next one asks again")
             case .apiKey:
-                if SandboxCredentials.apiKey != nil {
+                if SandboxCredentials.hasAPIKey {
                     LabeledContent("API key") {
                         HStack {
                             Text("Saved in the keychain").foregroundStyle(.secondary)
@@ -256,7 +256,7 @@ struct SandboxSettingsSection: View {
     // MARK: Signing key
 
     @ViewBuilder private var signingKeyRows: some View {
-        if let publicKey = SandboxCredentials.publicSigningKey, SandboxCredentials.signingKey != nil {
+        if let publicKey = SandboxCredentials.publicSigningKey, SandboxCredentials.hasSigningKey {
             LabeledContent("Public key") {
                 Text(publicKey)
                     .font(.caption.monospaced())
@@ -353,7 +353,7 @@ struct SandboxGitHubTokenSection: View {
     var body: some View {
         let _ = revision
         Section {
-            if SandboxCredentials.gitHubToken(org: org) != nil {
+            if SandboxCredentials.hasGitHubToken(org: org) {
                 LabeledContent("Token") {
                     HStack {
                         Text("Saved in the keychain").foregroundStyle(.secondary)

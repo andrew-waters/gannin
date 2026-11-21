@@ -50,6 +50,22 @@ enum Keychain {
         return value
     }
 
+    /// Whether an item is there, without reading its secret: only the
+    /// attributes are asked for, so there's no access prompt to wait on. For
+    /// a check made while drawing or deciding, where `value` could block on
+    /// one.
+    nonisolated static func exists(service: String, account: String) -> Bool {
+        if NetworkGate.isSealed { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
     nonisolated static func setValue(_ value: String, service: String, account: String) {
         if NetworkGate.isSealed { return }
         clear(service: service, account: account)
