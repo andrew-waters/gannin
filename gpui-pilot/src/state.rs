@@ -68,6 +68,9 @@ pub struct SavedState {
     pub expanded_groups: Vec<Nav>,
     /// Names given to tabs, in place of the page's own.
     pub tab_names: Vec<(Nav, String)>,
+    /// Tabs pinned so they can't be closed by accident: a session's by its
+    /// saved key (as in `sessions`), a page's by its `Nav` as JSON.
+    pub pinned_tabs: Vec<String>,
     /// Names given to session tabs, by the session's saved key (as in
     /// `sessions`), put back when each reopens.
     pub session_names: Vec<(String, String)>,
@@ -141,6 +144,7 @@ impl Default for SavedState {
             collapsed_sections: vec!["rituals".into(), "harness".into()],
             expanded_groups: Vec::new(),
             tab_names: Vec::new(),
+            pinned_tabs: Vec::new(),
             session_names: Vec::new(),
             window: None,
             ci: CiSaved::default(),

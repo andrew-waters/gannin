@@ -589,6 +589,8 @@ pub struct Workspace {
     last_saved: Option<SavedState>,
     /// Adds a todo about the drawer's issue or PR (`note_editor::linked_section`).
     linked_todo: Entity<editor::Editor>,
+    /// Pinned tabs, by `tab_key`: no close button, and Close Tab passes them by.
+    pinned: HashSet<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -649,6 +651,11 @@ impl Workspace {
             project: self.project.clone(),
             folder: self.folder.as_ref().map(|f| f.location.clone()).or_else(|| self.saved_folder.clone()),
             tabs: Vec::new(),
+            pinned_tabs: {
+                let mut pinned: Vec<String> = self.pinned.iter().cloned().collect();
+                pinned.sort();
+                pinned
+            },
             views: self
                 .tabs
                 .iter()
@@ -921,6 +928,7 @@ impl Workspace {
             editor.set_placeholder_text("Filter", window, cx);
             editor
         });
+        let pinned: HashSet<String> = saved.pinned_tabs.iter().cloned().collect();
         let linked_todo = crate::note_editor::todo_field(window, cx);
         let notes = crate::notes::NotesStore::get(cx);
         let subscriptions = vec![
@@ -1017,6 +1025,7 @@ impl Workspace {
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
             linked_todo,
+            pinned,
             _subscriptions: subscriptions,
         }
     }
@@ -3673,7 +3682,32 @@ impl Workspace {
     /// Closing the last tab leaves an empty pane, as Zed's does; the window
     /// stays open. A session still running asks first, as ending the tab
     /// ends its process.
+    /// What a pin is kept by: a session's saved key, so it's pinned again
+    /// when it reopens; else the page.
+    fn tab_key(&self, tab: &Tab, cx: &App) -> Option<String> {
+        match tab.nav {
+            Nav::Session(id) => self.session(id, cx).and_then(|p| p.read(cx).saved_key()),
+            nav => serde_json::to_string(&nav).ok(),
+        }
+    }
+
+    fn is_pinned(&self, tab: &Tab, cx: &App) -> bool {
+        self.tab_key(tab, cx).is_some_and(|key| self.pinned.contains(&key))
+    }
+
+    fn toggle_pin(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(key) = self.tabs.get(index).and_then(|tab| self.tab_key(tab, cx)) else { return };
+        if !self.pinned.remove(&key) {
+            self.pinned.insert(key);
+        }
+        cx.notify();
+    }
+
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // A pinned tab stays: unpin it first.
+        if self.tabs.get(index).is_some_and(|tab| self.is_pinned(tab, cx)) {
+            return;
+        }
         let Some(nav) = self.tabs.get(index).map(|tab| tab.nav) else { return };
         if let Nav::Session(id) = nav {
             // Not while it's moving to a server: the move needs its folder
@@ -5711,8 +5745,10 @@ impl Workspace {
                     _ => None,
                 };
                 let landing = theme.row_selected;
+                let pinned = self.is_pinned(tab, cx);
                 div()
                     .id(("tab", index))
+                    .group(SharedString::from(format!("tab-{id}")))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -5850,19 +5886,39 @@ impl Workspace {
                             crate::session::Outcome::ChangesRequested => crate::prs::icon_badge("icons/close.svg", theme.critical(), 11.),
                         })
                     })
-                    .child(
+                    // Pinned, a pin in place of the close button, which
+                    // unpins; otherwise a pin shows on hover beside it.
+                    .child({
+                        let group = SharedString::from(format!("tab-{id}"));
                         div()
-                            .id(("close-tab", index))
-                            .px_1()
+                            .id(("pin-tab", index))
+                            .flex_none()
+                            .px_0p5()
                             .rounded_sm()
-                            .text_color(theme.tertiary)
                             .hover(|s| s.bg(theme.row_selected))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            .when(!pinned, |d| d.invisible().group_hover(group, |s| s.visible()))
+                            .child(gpui::svg().path("icons/pin.svg").size(px(11.)).text_color(if pinned { theme.secondary } else { theme.tertiary }))
+                            .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(if pinned { "Unpin".into() } else { "Pin, so it can't be closed".into() })).into())
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
-                                this.close_tab(index, window, cx);
+                                this.toggle_pin(index, cx);
                             }))
-                            .child("×"),
-                    )
+                    })
+                    .when(!pinned, |d| {
+                        d.child(
+                            div()
+                                .id(("close-tab", index))
+                                .px_1()
+                                .rounded_sm()
+                                .text_color(theme.tertiary)
+                                .hover(|s| s.bg(theme.row_selected))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    this.close_tab(index, window, cx);
+                                }))
+                                .child("×"),
+                        )
+                    })
     }
 
     fn tab_status_of(&self, tab: &Tab, cx: &App) -> TabStatus {
