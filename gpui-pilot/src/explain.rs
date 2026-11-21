@@ -11,7 +11,7 @@ use crate::charts::Theme;
 use crate::launch::Subject;
 use crate::markdown::markdown;
 use crate::review::Area;
-use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, EventEmitter, FontWeight, KeyDownEvent, Task, Window};
+use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, EventEmitter, FontWeight, KeyDownEvent, ScrollHandle, ScrollEvent, Task, Window};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -44,6 +44,11 @@ pub struct ExplainSheet {
     working: bool,
     status: Option<String>,
     question: Entity<editor::Editor>,
+    /// The transcript's scroll, and whether it follows the newest text: on
+    /// until the person scrolls up, back on when they reach the bottom again
+    /// or click Jump to Latest.
+    scroll: ScrollHandle,
+    follow: bool,
     _watch: Option<Task<()>>,
 }
 
@@ -54,7 +59,7 @@ impl ExplainSheet {
             editor.set_placeholder_text("Ask a follow-up question", window, cx);
             editor
         });
-        let mut sheet = Self { subject, walkthrough, session: String::new(), turns: Vec::new(), working: false, status: None, question, _watch: None };
+        let mut sheet = Self { subject, walkthrough, session: String::new(), turns: Vec::new(), working: false, status: None, question, scroll: ScrollHandle::new(), follow: true, _watch: None };
         sheet.explain(cx);
         sheet
     }
@@ -94,6 +99,8 @@ impl ExplainSheet {
         self.session = uuid::Uuid::new_v4().to_string();
         self.turns = vec![Turn::default()];
         self.status = None;
+        self.follow = true;
+        self.scroll.set_offset(gpui::point(px(0.), px(0.)));
         let prompt = self.prompt();
         self.run(prompt, false, cx);
     }
@@ -105,6 +112,9 @@ impl ExplainSheet {
         }
         self.question.update(cx, |editor, cx| editor.set_text("", window, cx));
         self.turns.push(Turn { question: Some(text.clone()), reply: String::new() });
+        // Asking takes you to the answer.
+        self.follow = true;
+        self.scroll.scroll_to_bottom();
         self.run(text, true, cx);
     }
 
@@ -135,6 +145,9 @@ impl ExplainSheet {
                     if let Some(turn) = this.turns.last_mut() {
                         if turn.reply != text {
                             turn.reply = text.clone();
+                            if this.follow {
+                                this.scroll.scroll_to_bottom();
+                            }
                             cx.notify();
                         }
                     }
@@ -157,6 +170,12 @@ impl ExplainSheet {
             }
         }));
         cx.notify();
+    }
+
+    /// Whether the transcript is scrolled to (near) its end.
+    fn at_bottom(&self) -> bool {
+        let (offset, max) = (self.scroll.offset().y, self.scroll.max_offset().y);
+        -offset >= max - px(24.)
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
@@ -226,6 +245,10 @@ fn run_claude(session: &str, prompt: &str, resume: bool, run: &Arc<Mutex<Run>>) 
 impl Render for ExplainSheet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
+        // Back at the bottom by scrolling: follow again.
+        if !self.follow && self.at_bottom() {
+            self.follow = true;
+        }
         let has_text = self.turns.first().is_some_and(|t| !t.reply.is_empty());
         let spinner = |id: &'static str| {
             use gpui::{Animation, AnimationExt, Transformation};
@@ -257,11 +280,13 @@ impl Render for ExplainSheet {
                 }
                 Some(question) => {
                     transcript = transcript
-                        .child(div().flex().flex_row().child(div().w(px(40.)).flex_none()).child(div().flex_1().flex().justify_end().child(
-                            div().px(px(10.)).py(px(6.)).rounded(px(10.)).bg(theme.selected.opacity(0.18)).child(question.clone()),
+                        // `min_w_0` lets the bubbles wrap: a flex child is
+                        // otherwise as wide as its text on one line.
+                        .child(div().flex().flex_row().child(div().w(px(40.)).flex_none()).child(div().flex_1().min_w_0().flex().justify_end().child(
+                            div().min_w_0().px(px(10.)).py(px(6.)).rounded(px(10.)).bg(theme.selected.opacity(0.18)).child(question.clone()),
                         )))
                         .child(div().flex().flex_row().child(
-                            div().flex_1().child(div().px(px(10.)).py(px(6.)).rounded(px(10.)).bg(theme.secondary.opacity(0.12)).map(|d| {
+                            div().flex_1().min_w_0().child(div().min_w_0().px(px(10.)).py(px(6.)).rounded(px(10.)).bg(theme.secondary.opacity(0.12)).map(|d| {
                                 if turn.reply.is_empty() {
                                     d.child(spinner("explain-reply"))
                                 } else {
@@ -323,7 +348,55 @@ impl Render for ExplainSheet {
                             .child("×"),
                     ),
             )
-            .child(div().id("explain-transcript").flex_1().min_h_0().overflow_y_scroll().child(transcript))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("explain-transcript")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            // Scrolling up stops following; reaching the bottom
+                            // again starts it.
+                            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                                let up = event.delta.pixel_delta(window.line_height()).y > px(0.);
+                                if up && this.follow {
+                                    this.follow = false;
+                                    cx.notify();
+                                } else if !up && !this.follow && this.at_bottom() {
+                                    this.follow = true;
+                                    cx.notify();
+                                }
+                            }))
+                            .child(transcript),
+                    )
+                    .when(!self.follow && !self.at_bottom(), |d| {
+                        d.child(
+                            div().absolute().bottom_3().left_0().right_0().flex().justify_center().child(
+                                div()
+                                    .id("explain-latest")
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_full()
+                                    .text_sm()
+                                    .bg(theme.selected)
+                                    .text_color(theme.on_selected)
+                                    .shadow_md()
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.85))
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.follow = true;
+                                        this.scroll.scroll_to_bottom();
+                                        cx.notify();
+                                    }))
+                                    .child(if self.working { "↓ Follow" } else { "↓ Jump to Latest" }),
+                            ),
+                        )
+                    }),
+            )
             .when(has_text, |d| {
                 d.child(
                     div()
