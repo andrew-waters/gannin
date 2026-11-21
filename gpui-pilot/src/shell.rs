@@ -914,6 +914,10 @@ impl Workspace {
     }
 
     fn choose_project(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        // Only one of the window's harness's projects.
+        if !self.projects.iter().any(|p| p.id == id) {
+            return;
+        }
         self.project = Some(id);
         self.switcher = None;
         self.drawers.clear();
@@ -4415,13 +4419,23 @@ impl Workspace {
         section
     }
 
-    /// The window's projects: with a folder open, its harnesses that are
-    /// the org's (named as the org's settings name them, else by their
-    /// project file or folder); without one, every project of the org.
+    /// The window's projects: those of the harness in its folder, never
+    /// another's, so a window on gannin can't switch to orchard. Before the
+    /// folder's been read again at launch, its harnesses as it had them when
+    /// last opened; with no folder, none.
     fn folder_projects(&self, known: Vec<Project>) -> Vec<Project> {
-        let (Some(folder), Some(org)) = (&self.folder, &self.org) else { return known };
-        folder
-            .harnesses_of(org)
+        let Some(org) = &self.org else { return Vec::new() };
+        let ours = |h: &crate::folders::Found| h.owner().is_none_or(|o| o.eq_ignore_ascii_case(org));
+        let harnesses: Vec<crate::folders::Found> = match (&self.folder, &self.saved_folder) {
+            (Some(folder), _) => folder.harnesses_of(org).into_iter().cloned().collect(),
+            (None, Some(location)) => crate::folders::recent()
+                .into_iter()
+                .find(|r| r.location.key() == location.key())
+                .map(|r| r.harnesses.into_iter().filter(|h| ours(h)).collect())
+                .unwrap_or_default(),
+            (None, None) => Vec::new(),
+        };
+        harnesses
             .into_iter()
             .map(|h| {
                 let id = h.repo_id(org);
@@ -7178,7 +7192,7 @@ impl Workspace {
         let typing_path = switcher.server.as_ref().map(|s| s.name());
         let (prompt, none) = match (pick, &typing_path) {
             (_, Some(server)) => (format!("A folder's path on {server}, such as ~/Code/acme"), String::new()),
-            (Pick::Folder, None) => ("Find a recent folder".to_string(), "No recent folder matches".to_string()),
+            (Pick::Folder, None) => ("Find a harness".to_string(), "No harness matches".to_string()),
             (Pick::Project, None) => ("Find a project".to_string(), "No project matches".to_string()),
         };
         let matches = if typing_path.is_some() { Vec::new() } else { matches };
