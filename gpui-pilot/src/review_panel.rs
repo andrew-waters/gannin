@@ -828,6 +828,11 @@ impl ReviewPanel {
         self.posted = Some(posted);
     }
 
+    /// Whether the review you posted on the PR approved it.
+    pub fn approved(&self) -> bool {
+        self.posted.as_ref().is_some_and(|p| matches!(p.event.as_str(), "APPROVE" | "APPROVED"))
+    }
+
     /// The posted review, if it's for the latest result: a newer result
     /// isn't posted yet.
     fn posted_latest(&self) -> Option<&Posted> {
@@ -2828,11 +2833,13 @@ impl ReviewPanel {
             }))
         };
         let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
+        // Something on its way: a spinner beside what it's waiting for.
+        let busy = |id: &'static str, text: &str| div().flex().flex_row().items_center().gap_2().child(Self::spinner(id, 14., theme)).child(quiet(text.into()));
         // In a well of its own, under the review's facts.
         let column = Self::well(theme).mt_3().mb_0().gap_2().text_sm();
         match post {
-            Post::Loading => column.child(quiet("Loading the pull request".into())).child(div().flex().flex_row().child(close("post-cancel", "Cancel", cx))).into_any_element(),
-            Post::Posting => column.child(quiet("Posting to GitHub".into())).into_any_element(),
+            Post::Loading => column.child(busy("post-loading", "Loading the pull request")).child(div().flex().flex_row().child(close("post-cancel", "Cancel", cx))).into_any_element(),
+            Post::Posting => column.child(busy("post-posting", "Posting to GitHub")).into_any_element(),
             Post::Posted(url) => {
                 let url = url.clone();
                 column
