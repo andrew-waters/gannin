@@ -349,6 +349,9 @@ struct Drawer {
     /// Its description and comments: nil while they load, then what's
     /// cached, then what GitHub sent.
     text: Option<Option<Arc<IssueText>>>,
+    /// A PR's Related (what it closes, what mentions it, its plans and
+    /// requirements), fetched for the drawer's sidebar.
+    related: Option<Entity<crate::pull_page::PullPage>>,
 }
 
 enum DrawerItem {
@@ -3895,7 +3898,29 @@ impl Workspace {
         let seq = self.drawer_seq;
         let is_issue = matches!(item, DrawerItem::Issue(_));
         let on_github = !matches!(item, DrawerItem::Doc(_));
-        self.drawers.push(Drawer { seq, item, text: None });
+        let related = match &item {
+            DrawerItem::Pull(pr) => self.org.clone().map(|org| {
+                let (repo, number, url) = (pr.repo.clone(), pr.number, pr.url.clone());
+                let key = crate::issues::related_key(&repo, number);
+                let page = cx.new(|cx| crate::pull_page::PullPage::related_only(pr.clone(), org, cx));
+                let sessions = self.related_sessions(cx).remove(&key).unwrap_or_default();
+                let local = self.issues.read(cx).about_pull(&repo, number, &url);
+                page.update(cx, |p, cx| {
+                    p.set_related(sessions, cx);
+                    p.set_local(local, cx);
+                });
+                // Each opens on top, as the PR page's Related does.
+                self._subscriptions.push(cx.subscribe(&page, |this, _, event: &crate::pull_page::OpenLinked, cx| this.open_item(ItemLink::linked(event), cx)));
+                self._subscriptions.push(cx.subscribe(&page, |this, _, event: &crate::pull_page::OpenPull, cx| this.open_item(ItemLink::pull(&event.0), cx)));
+                self._subscriptions.push(cx.subscribe(&page, |this, _, event: &crate::harness::OpenDoc, cx| {
+                    let id = event.0.path.clone();
+                    this.open_drawer(DrawerItem::Doc(event.0.clone()), id, cx);
+                }));
+                page
+            }),
+            _ => None,
+        };
+        self.drawers.push(Drawer { seq, item, text: None, related });
         // What's cached shows at once, off the main thread; then, signed in,
         // the item is fetched from GitHub and the drawer (and for an issue,
         // the list) shows it as it is now.
@@ -6972,6 +6997,10 @@ impl Workspace {
                 .when_some(note, |d, note| d.child(div().text_xs().text_color(theme.secondary).child(note)))
         };
         let mut right = div().w(px(280.)).flex_none().flex().flex_col().gap_5().p_4().border_l_1().border_color(theme.border);
+        // What it relates to first, as on the PR's page.
+        if let Some(related) = drawer.related.clone() {
+            right = right.child(related);
+        }
         if let Some(login) = &pr.author {
             right = right.child(
                 div().flex().flex_col().child(group("Author")).child(person(login, pr.author_avatar.as_deref(), pr.author_name.clone(), pr.author_is_bot.then(|| "bot".into()), cx)),

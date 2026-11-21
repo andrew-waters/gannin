@@ -461,6 +461,8 @@ pub enum Part {
     Commits,
     Checks,
     Sidebar,
+    /// Related alone, for a PR's drawer.
+    Related,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -641,6 +643,13 @@ impl PullPage {
             check_view: None,
             _fetch: None,
         }
+    }
+
+    /// A PR's Related alone, fetched: for its drawer.
+    pub fn related_only(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
+        let mut page = Self::new(pr, org, cx);
+        page.part = Part::Related;
+        page
     }
 
     /// One part of this page, drawn from its fetch: it never fetches, and
@@ -1558,9 +1567,36 @@ impl PullPage {
             Some(m) => div().text_sm().child(m.clone()),
             None => none("No milestone"),
         });
-        // Related: what it closes, the issues and PRs that mention it, and
-        // the harness's plans and requirements about it or what it closes.
-        // Each opens in its drawer: an issue's, a PR's, a plan's.
+        let related = self.related_group(data, theme, cx);
+        let mut participants = div().flex().flex_row().flex_wrap().gap_1();
+        for p in &data.participants {
+            participants = participants.child(Self::avatar(p, 22., theme, cx));
+        }
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_3()
+            // Laid beside a review, its Needs attention says all this.
+            .when(self.part != Part::Sidebar, |d| {
+                d.child(group("Activity").child(row("Approvals", approvals)).child(row("Changes requested", changes)).child(row("Unresolved threads", unresolved)).child(row("Commits", data.commit_total)))
+            })
+            // What it relates to first: each opens in a drawer.
+            .child(related)
+            .child(reviewers)
+            .child(assignees)
+            .child(labels)
+            .child(milestone)
+            .child(group(&if data.participants.len() == 1 { "1 participant".to_string() } else { format!("{} participants", data.participants.len()) }).child(participants))
+    }
+
+    /// Related: what it closes, the issues and PRs that mention it, and the
+    /// harness's plans and requirements about it or what it closes. Each
+    /// opens in its drawer. The sidebar's first group, and a PR drawer's
+    /// (`Part::Related`).
+    fn related_group(&self, data: &PullData, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let group = |title: &str| div().flex().flex_col().gap_1p5().pb_3().border_b_1().border_color(theme.border).child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(title.to_string()));
+        let none = |text: &str| div().text_sm().text_color(theme.tertiary).child(text.to_string());
         let caption = |text: &str| div().pt_1().text_xs().text_color(theme.tertiary).child(text.to_string());
         let own_repo = self.pr.repo.clone();
         let item_row = |key: (&'static str, usize), l: &Linked, cx: &mut Context<Self>| {
@@ -1633,26 +1669,7 @@ impl PullPage {
         if !requirements.is_empty() {
             related = related.child(caption("Requirements")).children(crate::harness::plan_rows("pull-related-requirement", &requirements, theme, cx));
         }
-        let mut participants = div().flex().flex_row().flex_wrap().gap_1();
-        for p in &data.participants {
-            participants = participants.child(Self::avatar(p, 22., theme, cx));
-        }
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap_3()
-            // Laid beside a review, its Needs attention says all this.
-            .when(self.part != Part::Sidebar, |d| {
-                d.child(group("Activity").child(row("Approvals", approvals)).child(row("Changes requested", changes)).child(row("Unresolved threads", unresolved)).child(row("Commits", data.commit_total)))
-            })
-            // What it relates to first: each opens in a drawer.
-            .child(related)
-            .child(reviewers)
-            .child(assignees)
-            .child(labels)
-            .child(milestone)
-            .child(group(&if data.participants.len() == 1 { "1 participant".to_string() } else { format!("{} participants", data.participants.len()) }).child(participants))
+        related
     }
 
     // MARK: Other sections
@@ -1804,6 +1821,7 @@ impl Render for PullPage {
                     Self::list_over("pull-checks-list", list, self.check_view.as_ref().map(|(_, v)| v.clone().into_any_element()), &theme)
                 }
                 Part::Sidebar => self.sidebar(data, &theme, cx).into_any_element(),
+                Part::Related => self.related_group(data, &theme, cx).into_any_element(),
                 Part::Whole => unreachable!(),
             };
         }
