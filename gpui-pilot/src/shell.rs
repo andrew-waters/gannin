@@ -29,12 +29,13 @@ use gpui::{
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleSync, ToggleTabsOnLeft, ToggleHarness, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, OpenFolder, NewWindow]);
+actions!(shell, [OpenSettings, ToggleSidebar, ToggleSync, ToggleTabsOnLeft, ToggleHarness, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, OpenFolder, NewWindow]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new(crate::zed::keys("ctrl-secondary-s"), ToggleSidebar, None),
         // The panels in the order the bar along the bottom shows them.
+        KeyBinding::new(crate::zed::keys("secondary-,"), OpenSettings, None),
         KeyBinding::new(crate::zed::keys("secondary-1"), ToggleSidebar, None),
         KeyBinding::new(crate::zed::keys("secondary-2"), ToggleHarness, None),
         KeyBinding::new(crate::zed::keys("secondary-3"), ToggleTabsOnLeft, None),
@@ -228,6 +229,7 @@ fn sections() -> Vec<Section> {
         // },
         // Claude Code's agents: the workflows sessions run through.
         Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview)] },
+        Section { id: "settings", title: None, rows: vec![Item(Settings)] },
     ]
 }
 
@@ -425,6 +427,7 @@ enum Page {
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
     AgentMetrics(Entity<crate::agent_metrics::AgentMetricsPage>),
     Releases(Entity<crate::releases::ReleasesPage>),
+    Settings(Entity<crate::settings_page::SettingsPage>),
     Pull(Entity<crate::pull_page::PullPage>),
     None,
 }
@@ -800,8 +803,7 @@ impl Workspace {
             }
             workspace.start_scheduler(cx);
         }
-        // Settings held only the servers, now in the title bar's Remotes.
-        for view in views.iter().filter(|v| v.nav != Nav::Settings) {
+        for view in &views {
             let tab = workspace.make_tab(view.nav, Some(view), window, cx);
             workspace.tabs.push(tab);
         }
@@ -905,6 +907,7 @@ impl Workspace {
                 Page::Issues(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
                 Page::Prs(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
                 Page::Ci(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
+                Page::Releases(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
                 _ => {}
             }
         }
@@ -1120,6 +1123,7 @@ impl Workspace {
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             Nav::AgentMetrics => Page::AgentMetrics(cx.new(|cx| crate::agent_metrics::AgentMetricsPage::new(org.clone(), cx))),
             Nav::Releases => Page::Releases(cx.new(|cx| crate::releases::ReleasesPage::new(org.clone(), window, cx))),
+            Nav::Settings => Page::Settings(cx.new(|cx| crate::settings_page::SettingsPage::new(org.clone(), window, cx))),
             _ => Page::None,
         };
         let subscriptions = Self::watch(&page, window, cx);
@@ -1129,6 +1133,7 @@ impl Workspace {
             Page::Issues(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
             Page::Prs(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
             Page::Ci(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
+            Page::Releases(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
             _ => {}
         }
         self.next_tab += 1;
@@ -1202,6 +1207,8 @@ impl Workspace {
                 }
                 None => cx.open_url(&event.url),
             })],
+            // A project added, removed, made home or saved: read them again.
+            Page::Settings(page) => vec![cx.subscribe(page, |this, _, _: &crate::settings_page::ProjectsChanged, cx| this.load_settings(cx))],
             Page::Releases(page) => vec![cx.subscribe(page, |this, _, event: &crate::activity::OpenItem, cx| match ItemLink::from_url(&event.url, event.issue_id.clone(), "") {
                 Some(link) => {
                     this.drawers.clear();
@@ -4582,6 +4589,7 @@ impl Workspace {
                 Page::SchedulePreview(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::AgentMetrics(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::Releases(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
+                Page::Settings(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), window, cx)),
                 _ => {}
             }
         }
@@ -6324,6 +6332,7 @@ impl Workspace {
                 Page::WorkflowsPreview(page) => page.into_any_element(),
                 Page::AgentMetrics(page) => page.into_any_element(),
                 Page::Releases(page) => page.into_any_element(),
+                Page::Settings(page) => page.into_any_element(),
                 Page::Pull(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
@@ -7536,6 +7545,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &PreviousTab, window, cx| this.step_tab(-1, window, cx)))
             .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Folder, window, cx)))
             .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.pick_folder(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| this.navigate(Nav::Settings, false, window, cx)))
             // Escape closes the top drawer; the switcher takes it first when open.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" && this.sign_in.is_some() {

@@ -92,11 +92,13 @@ pub fn harness_repos(org: &str) -> Vec<String> {
     let named = |v: &Value| v["repo"].as_str().map(str::to_string);
     let mut repos: Vec<String> = named(&config["harness"]).into_iter().chain(config["otherHarnesses"].as_array().into_iter().flatten().filter_map(named)).collect();
     let mut added = false;
+    // One removed in Settings stays removed, though a folder still has it.
+    let removed: Vec<String> = config["removedHarnesses"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(str::to_lowercase)).collect();
     for recent in crate::folders::recent() {
         for found in recent.harnesses {
             let Some(repo) = found.repo else { continue };
             let owner = repo.split('/').next().unwrap_or("");
-            if !owner.eq_ignore_ascii_case(org) || repos.iter().any(|r| r.eq_ignore_ascii_case(&repo)) {
+            if !owner.eq_ignore_ascii_case(org) || repos.iter().any(|r| r.eq_ignore_ascii_case(&repo)) || removed.contains(&repo.to_lowercase()) {
                 continue;
             }
             if config["harness"]["repo"].is_string() {
@@ -117,6 +119,143 @@ pub fn harness_repos(org: &str) -> Vec<String> {
         save_config(org, &config);
     }
     repos
+}
+
+/// Rewrites which harnesses are the org's projects, home first: `change`
+/// gets each harness's entry (`{"repo": ..}` and anything else it holds).
+fn update_harnesses(org: &str, change: impl FnOnce(&mut Vec<Value>)) {
+    let mut config = config_json(org);
+    if !config.is_object() {
+        config = json!({});
+    }
+    let mut entries: Vec<Value> = std::iter::once(config["harness"].clone()).filter(|h| h["repo"].is_string()).chain(config["otherHarnesses"].as_array().cloned().unwrap_or_default()).collect();
+    change(&mut entries);
+    let mut entries = entries.into_iter();
+    match entries.next() {
+        Some(home) => config["harness"] = home,
+        None => {
+            if let Some(map) = config.as_object_mut() {
+                map.remove("harness");
+            }
+        }
+    }
+    config["otherHarnesses"] = Value::Array(entries.collect());
+    save_config(org, &config);
+}
+
+fn is(entry: &Value, repo: &str) -> bool {
+    entry["repo"].as_str().is_some_and(|r| r.eq_ignore_ascii_case(repo))
+}
+
+/// Makes `repo` one of the org's projects, home when it has none. Local:
+/// which harnesses are projects is each person's own.
+pub fn add_harness(org: &str, repo: &str) {
+    let mut config = config_json(org);
+    if let Some(removed) = config["removedHarnesses"].as_array_mut() {
+        removed.retain(|r| !r.as_str().is_some_and(|r| r.eq_ignore_ascii_case(repo)));
+        save_config(org, &config);
+    }
+    update_harnesses(org, |entries| {
+        if !entries.iter().any(|e| is(e, repo)) {
+            entries.push(json!({ "repo": repo }));
+        }
+    });
+}
+
+/// Stops reading `repo` as a project; the harness itself is untouched. The
+/// next becomes home when it was.
+pub fn remove_harness(org: &str, repo: &str) {
+    update_harnesses(org, |entries| entries.retain(|e| !is(e, repo)));
+    let mut config = config_json(org);
+    if !config["removedHarnesses"].is_array() {
+        config["removedHarnesses"] = json!([]);
+    }
+    if let Some(removed) = config["removedHarnesses"].as_array_mut() {
+        if !removed.iter().any(|r| r.as_str().is_some_and(|r| r.eq_ignore_ascii_case(repo))) {
+            removed.push(json!(repo));
+        }
+    }
+    save_config(org, &config);
+}
+
+/// Makes `repo` home: the org-wide data (exclusions, the working week and
+/// the rest) is read from its harness from then on. Nothing is copied.
+pub fn make_home(org: &str, repo: &str) {
+    update_harnesses(org, |entries| {
+        if let Some(i) = entries.iter().position(|e| is(e, repo)) {
+            let home = entries.remove(i);
+            entries.insert(0, home);
+        }
+    });
+}
+
+/// JSON as Gannin's team files are written (`TeamCoding`): keys sorted,
+/// two-space indents and `"key" : value`, so a file the Swift app wrote
+/// changes only where it's edited.
+pub fn team_json(value: &Value) -> String {
+    fn write(value: &Value, indent: usize, out: &mut String) {
+        let pad = "  ".repeat(indent + 1);
+        let close = "  ".repeat(indent);
+        match value {
+            Value::Object(map) => {
+                if map.is_empty() {
+                    out.push_str("{\n\n");
+                    out.push_str(&close);
+                    out.push('}');
+                    return;
+                }
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                out.push_str("{\n");
+                for (i, key) in keys.iter().enumerate() {
+                    out.push_str(&pad);
+                    out.push_str(&Value::String((*key).clone()).to_string());
+                    out.push_str(" : ");
+                    write(&map[*key], indent + 1, out);
+                    if i + 1 < keys.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&close);
+                out.push('}');
+            }
+            Value::Array(items) => {
+                if items.is_empty() {
+                    out.push_str("[\n\n");
+                    out.push_str(&close);
+                    out.push(']');
+                    return;
+                }
+                out.push_str("[\n");
+                for (i, item) in items.iter().enumerate() {
+                    out.push_str(&pad);
+                    write(item, indent + 1, out);
+                    if i + 1 < items.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&close);
+                out.push(']');
+            }
+            other => out.push_str(&other.to_string()),
+        }
+    }
+    let mut out = String::new();
+    write(value, 0, &mut out);
+    out.push('\n');
+    out
+}
+
+/// A project's `.gannin/project.json` with its name and repos set,
+/// keeping whatever else the file holds (its boards repo and anything
+/// newer).
+pub fn project_file(existing: Option<&str>, name: &str, repos: &[String]) -> String {
+    let mut file: Value = existing.and_then(|t| serde_json::from_str(t).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    file["name"] = json!(name);
+    file["repos"] = json!(repos);
+    team_json(&file)
 }
 
 /// The org's settings with what its harnesses keep winning, as Gannin's
@@ -193,4 +332,18 @@ pub fn load(org: &str) -> OrgSettings {
     }
     let workflow = serde_json::from_value(config["issueWorkflow"].clone()).unwrap_or_default();
     OrgSettings { projects, workflow }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_file_keeps_other_keys_and_writes_as_gannin_does() {
+        let existing = "{\n  \"boardsRepo\" : \"andrew-waters/gannin\",\n  \"name\" : \"gannin\",\n  \"repos\" : [\n    \"andrew-waters/gannin\"\n  ]\n}\n";
+        assert_eq!(project_file(Some(existing), "gannin", &["andrew-waters/gannin".to_string()]), existing);
+        let changed = project_file(Some(existing), "Gannin", &[]);
+        assert_eq!(changed, "{\n  \"boardsRepo\" : \"andrew-waters/gannin\",\n  \"name\" : \"Gannin\",\n  \"repos\" : [\n\n  ]\n}\n");
+        assert_eq!(project_file(None, "x", &["o/a".into(), "o/b".into()]), "{\n  \"name\" : \"x\",\n  \"repos\" : [\n    \"o/a\",\n    \"o/b\"\n  ]\n}\n");
+    }
 }

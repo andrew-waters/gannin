@@ -622,9 +622,9 @@ impl Group {
 
 /// Grouped by title, leaving out excluded repos: open ones first, by due
 /// date (none last), then closed ones, most recently closed first.
-fn groups(milestones: &[Milestone], excluded: &HashSet<String>) -> Vec<Group> {
+fn groups(milestones: &[Milestone], visible: &dyn Fn(&str) -> bool) -> Vec<Group> {
     let mut by_key: BTreeMap<String, Vec<Milestone>> = BTreeMap::new();
-    for m in milestones.iter().filter(|m| !excluded.contains(&m.repo.to_lowercase())) {
+    for m in milestones.iter().filter(|m| visible(&m.repo)) {
         by_key.entry(milestone_key(&m.title)).or_default().push(m.clone());
     }
     let mut groups: Vec<Group> = by_key
@@ -848,14 +848,12 @@ struct Loaded {
     issues: HashMap<(String, String), Vec<MilestoneIssue>>,
     /// Lowercased.
     excluded: HashSet<String>,
-    groups: Vec<Group>,
 }
 
 fn load(org: &str) -> Loaded {
     let (excluded, _) = exclusions(org);
     let history = read_history(org);
-    let groups = history.as_ref().map(|h| groups(&h.milestones, &excluded)).unwrap_or_default();
-    Loaded { downloads: read_downloads(org), issues: milestone_issues(org), groups, history, excluded }
+    Loaded { downloads: read_downloads(org), issues: milestone_issues(org), history, excluded }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -902,6 +900,10 @@ struct Overview {
 
 pub struct ReleasesPage {
     org: Option<String>,
+    /// The window's project's repos; none for every repo.
+    focus: Option<Vec<String>>,
+    /// Milestones grouped by title, over the repos on the page.
+    groups: Vec<Group>,
     data: Option<Arc<Loaded>>,
     overview: Arc<Overview>,
     /// The first `STARGAZER_LIMIT` in the table's order, and how many match.
@@ -1003,6 +1005,8 @@ impl ReleasesPage {
         ];
         let mut page = Self {
             org,
+            focus: None,
+            groups: Vec::new(),
             data: None,
             overview: Arc::default(),
             stargazers: (Vec::new(), 0),
@@ -1036,6 +1040,16 @@ impl ReleasesPage {
             self.expanded_milestone = None;
             self.error = None;
             self.load(true, cx);
+        }
+    }
+
+    /// Keeps the page to the window's project's repos, or every repo for none.
+    pub fn set_focus(&mut self, focus: Option<Vec<String>>, cx: &mut Context<Self>) {
+        if focus != self.focus {
+            self.focus = focus;
+            self.hover = None;
+            self.recompute(cx);
+            cx.notify();
         }
     }
 
@@ -1106,15 +1120,24 @@ impl ReleasesPage {
     /// The repos with releases in view, sorted by name.
     fn repo_names(&self) -> Vec<String> {
         let Some(data) = &self.data else { return Vec::new() };
-        let mut names: Vec<String> = data.history.iter().flat_map(|h| &h.repositories).map(|r| r.name.clone()).filter(|n| !data.excluded.contains(&n.to_lowercase())).collect();
+        let mut names: Vec<String> = data.history.iter().flat_map(|h| &h.repositories).map(|r| r.name.clone()).filter(|n| self.visible(n)).collect();
         names.sort_by_key(|n| n.to_lowercase());
         names
     }
 
-    /// Whether a repo is in view: not excluded, and the one picked if any.
+    /// Whether a repo belongs on the page: one of the window's project's
+    /// repos (which count even when excluded org-wide), else any repo not
+    /// excluded.
+    fn visible(&self, repo: &str) -> bool {
+        match &self.focus {
+            Some(focus) => focus.iter().any(|r| r.eq_ignore_ascii_case(repo)),
+            None => !self.data.as_ref().is_some_and(|d| d.excluded.contains(&repo.to_lowercase())),
+        }
+    }
+
+    /// Whether a repo is in view: on the page, and the one picked if any.
     fn included(&self, repo: &str) -> bool {
-        let excluded = self.data.as_ref().is_some_and(|d| d.excluded.contains(&repo.to_lowercase()));
-        !excluded && self.repo.as_deref().is_none_or(|r| r == repo)
+        self.visible(repo) && self.repo.as_deref().is_none_or(|r| r == repo)
     }
 
     fn releases_in_view(&self) -> Vec<&Release> {
@@ -1129,6 +1152,7 @@ impl ReleasesPage {
             self.repo = None;
         }
         let Some(data) = self.data.clone() else { return };
+        self.groups = data.history.as_ref().map(|h| groups(&h.milestones, &|repo| self.visible(repo))).unwrap_or_default();
         let Some(history) = &data.history else {
             self.overview = Arc::default();
             self.list_stargazers(cx);
@@ -1227,7 +1251,7 @@ impl ReleasesPage {
             })
             .collect();
         let (column, descending) = self.sorts[Table::Releases as usize];
-        let groups = self.data.as_ref().map(|d| d.groups.as_slice()).unwrap_or(&[]);
+        let groups = self.groups.as_slice();
         shown.sort_by(|a, b| {
             let order = match column {
                 "release" => a.title().to_lowercase().cmp(&b.title().to_lowercase()),
@@ -1298,7 +1322,7 @@ impl ReleasesPage {
 
     /// Opens a milestone from a release, in the Milestones part.
     fn show_milestone(&mut self, key: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.closed_too = self.closed_too || self.data.as_ref().is_some_and(|d| d.groups.iter().any(|g| g.key == key && !g.is_open()));
+        self.closed_too = self.closed_too || self.groups.iter().any(|g| g.key == key && !g.is_open());
         self.expanded_milestone = Some(key);
         self.search.update(cx, |editor, cx| editor.set_text("", window, cx));
         self.set_part(Part::Milestones, window, cx);
@@ -1627,7 +1651,7 @@ impl ReleasesPage {
             let text = if any { "No matching releases. Try another search." } else { "GitHub Releases in the org's repositories show here." };
             return div().text_sm().text_color(theme.secondary).child(text).into_any_element();
         }
-        let groups = self.data.as_ref().map(|d| d.groups.as_slice()).unwrap_or(&[]);
+        let groups = self.groups.as_slice();
         let columns = [
             ("release", "Release", 0., "Its name, its tag when that differs, and how it's marked"),
             ("repo", "Repository", 130., "The repository it's in"),
@@ -2065,9 +2089,9 @@ impl ReleasesPage {
 
     fn milestones_part(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let Some(data) = self.data.clone() else { return div().into_any_element() };
-        let shown = self.shown_groups(&data.groups, cx);
+        let shown = self.shown_groups(&self.groups, cx);
         if shown.is_empty() {
-            let (title, detail) = if data.groups.is_empty() {
+            let (title, detail) = if self.groups.is_empty() {
                 ("No milestones", "Milestones in the org's repositories show here.")
             } else {
                 ("No matching milestones", "Try another search, or show closed ones too.")
@@ -2082,7 +2106,7 @@ impl ReleasesPage {
                 .child(div().text_sm().text_color(theme.secondary).child(detail))
                 .into_any_element();
         }
-        let releases: Vec<Release> = data.history.as_ref().map(|h| h.releases.iter().filter(|r| !data.excluded.contains(&r.repo.to_lowercase())).cloned().collect()).unwrap_or_default();
+        let releases: Vec<Release> = data.history.as_ref().map(|h| h.releases.iter().filter(|r| self.visible(&r.repo)).cloned().collect()).unwrap_or_default();
         div()
             .flex()
             .flex_col()
@@ -2329,7 +2353,7 @@ impl Render for ReleasesPage {
         let theme = Theme::for_window(window);
         let has_history = self.data.as_ref().is_some_and(|d| d.history.is_some());
         let count = match self.part {
-            Part::Milestones => self.data.as_ref().map(|d| self.shown_groups(&d.groups, cx).len()).unwrap_or(0),
+            Part::Milestones => self.shown_groups(&self.groups, cx).len(),
             Part::Releases => {
                 let releases = self.releases_in_view();
                 self.shown_releases(&releases, cx).len()
@@ -2414,7 +2438,7 @@ mod tests {
             notes: None,
             assets: Vec::new(),
         };
-        let groups = groups(&[milestone("o/a", "1.2"), milestone("o/b", "1.2 "), milestone("o/c", "Version")], &HashSet::new());
+        let groups = groups(&[milestone("o/a", "1.2"), milestone("o/b", "1.2 "), milestone("o/c", "Version")], &|_| true);
         assert_eq!(groups.len(), 2);
         let both = groups.iter().find(|g| g.key == "1.2").unwrap();
         assert_eq!((both.closed(), both.total()), (6, 8));

@@ -120,6 +120,18 @@ fn fetched_at() -> &'static Mutex<HashMap<PathBuf, Instant>> {
     FETCHED.get_or_init(Default::default)
 }
 
+/// Fetches the harness again on its next read, after a commit to it.
+pub fn refetch(org: &str, repo: &str) {
+    let local = crate::launch::harness_path(org, repo);
+    let clone = repo.split_once('/').map(|(owner, name)| crate::paths::app_dir().join("harnesses").join(owner).join(name));
+    if let Ok(mut fetched) = fetched_at().lock() {
+        fetched.remove(&local);
+        if let Some(clone) = clone {
+            fetched.remove(&clone);
+        }
+    }
+}
+
 /// `git fetch origin`, unless it was fetched in the last few minutes. A
 /// failed fetch (offline) leaves what was fetched before.
 fn fetch(path: &Path) {

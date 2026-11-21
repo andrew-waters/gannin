@@ -71,6 +71,7 @@ mod workflows;
 mod workflows_page;
 mod releases;
 mod scorecard;
+mod settings_page;
 mod pr_diff;
 mod pr_picker;
 mod prs;
@@ -153,7 +154,7 @@ fn handle_window_actions(cx: &mut App) {
 
 /// The app menu's items: Hide and friends on a Mac, then Quit.
 fn app_menu_items() -> Vec<MenuItem> {
-    let mut items = Vec::new();
+    let mut items = vec![MenuItem::action("Settings", shell::OpenSettings), MenuItem::separator()];
     if cfg!(target_os = "macos") {
         items.extend([MenuItem::action("Hide Gannin", Hide), MenuItem::action("Hide Others", HideOthers), MenuItem::action("Show All", ShowAll), MenuItem::separator()]);
     }
