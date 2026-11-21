@@ -29,12 +29,18 @@ use gpui::{
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, OpenFolder, NewWindow]);
+actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, ToggleHarness, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, OpenFolder, NewWindow]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new(crate::zed::keys("ctrl-secondary-s"), ToggleSidebar, None),
         KeyBinding::new(crate::zed::keys("secondary-alt-i"), ToggleInspector, None),
+        // The panels in the order the bar along the bottom shows them.
+        KeyBinding::new(crate::zed::keys("secondary-1"), ToggleSidebar, None),
+        KeyBinding::new(crate::zed::keys("secondary-2"), ToggleHarness, None),
+        KeyBinding::new(crate::zed::keys("secondary-3"), ToggleTabsOnLeft, None),
+        KeyBinding::new(crate::zed::keys("secondary-4"), ToggleSync, None),
+        KeyBinding::new(crate::zed::keys("secondary-5"), ToggleInspector, None),
         KeyBinding::new(crate::zed::keys("secondary-t"), NewClaudeSession, None),
         KeyBinding::new("ctrl-`", NewTerminal, None),
         KeyBinding::new(crate::zed::keys("secondary-w"), CloseTab, None),
@@ -4955,15 +4961,15 @@ impl Workspace {
             .bg(theme.sidebar)
             .border_t_1()
             .border_color(theme.border)
-            .child(toggle("toggle-sidebar", "icons/list_tree.svg", "Navigation  ⌃⌘S", self.sidebar_open, cx, |this, _| {
+            .child(toggle("toggle-sidebar", "icons/list_tree.svg", "Navigation  ⌘1", self.sidebar_open, cx, |this, _| {
                 this.sidebar_open = !this.sidebar_open
             }))
-            .child(toggle("toggle-harness", "icons/book.svg", "Harness", self.harness_open, cx, |this, cx| this.toggle_harness(cx)))
+            .child(toggle("toggle-harness", "icons/book.svg", "Harness  ⌘2", self.harness_open, cx, |this, cx| this.toggle_harness(cx)))
             // Tabs down a column on the left, or across the top (View › Toggle Tabs on Left).
             .child(toggle(
                 "toggle-tabs-left",
                 if self.tabs_on_left { "icons/threads_sidebar_left_open.svg" } else { "icons/threads_sidebar_left_closed.svg" },
-                "Tabs on Left",
+                "Tabs on Left  ⌘3",
                 self.tabs_on_left,
                 cx,
                 |this, _| this.tabs_on_left = !this.tabs_on_left,
@@ -4972,7 +4978,7 @@ impl Workspace {
             .child(toggle(
                 "toggle-sync",
                 "icons/arrow_circle.svg",
-                "Sync  ⌘R refreshes",
+                "Sync  ⌘4, ⌘R refreshes",
                 self.sync.open,
                 cx,
                 |this, _| this.sync.open = !this.sync.open,
@@ -4980,7 +4986,7 @@ impl Workspace {
             .child(toggle(
                 "toggle-inspector",
                 "icons/user_check.svg",
-                "Your Work  ⌥⌘I",
+                "Your Work  ⌘5",
                 self.inspector_open,
                 cx,
                 |this, _| this.inspector_open = !this.inspector_open,
@@ -7727,6 +7733,10 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &ToggleInspector, _, cx| {
                 this.inspector_open = !this.inspector_open;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleHarness, _, cx| {
+                this.toggle_harness(cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &NewClaudeSession, window, cx| this.new_session(Kind::Claude, window, cx)))

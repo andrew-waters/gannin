@@ -91,7 +91,7 @@ mod zed;
 use gpui::{
     actions, App, AppContext, KeyBinding, Menu, MenuItem,
 };
-use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, ToggleTabsOnLeft, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenFolder, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
+use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, ToggleTabsOnLeft, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenFolder, OpenSwitcher, ToggleHarness, ToggleInspector, ToggleSidebar, Workspace};
 
 actions!(pilot, [Quit, CloseWindow, Minimize, Zoom, ToggleFullScreen, Hide, HideOthers, ShowAll]);
 
@@ -457,9 +457,10 @@ fn main() {
                 name: "View".into(),
                 items: vec![
                     MenuItem::action("Toggle Sidebar", ToggleSidebar),
-                    MenuItem::action("Toggle Your Work", ToggleInspector),
-                    MenuItem::action("Toggle Sync", ToggleSync),
+                    MenuItem::action("Toggle Harness", ToggleHarness),
                     MenuItem::action("Toggle Tabs on Left", ToggleTabsOnLeft),
+                    MenuItem::action("Toggle Sync", ToggleSync),
+                    MenuItem::action("Toggle Your Work", ToggleInspector),
                     MenuItem::separator(),
                     MenuItem::action("Marra", marra_view::ToggleMarra),
                     MenuItem::separator(),
