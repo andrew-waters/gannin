@@ -40,16 +40,6 @@ impl State {
             State::Ended => "Ended",
         }
     }
-
-    /// How soon it wants you: lower comes first.
-    pub fn rank(self) -> u8 {
-        match self {
-            State::NeedsYou => 0,
-            State::YourTurn => 1,
-            State::Working => 2,
-            State::Ended => 3,
-        }
-    }
 }
 
 /// How far a session's pull requests have got, shown on its tab.

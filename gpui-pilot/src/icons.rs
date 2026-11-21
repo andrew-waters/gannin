@@ -13,10 +13,22 @@ pub const PULL: &str = "icons/pull_request.svg";
 /// Merged: GitHub's git-merge mark (Octicons, MIT), a branch joining
 /// the line it came from.
 pub const MERGE: &str = "icons/gannin_merge.svg";
+/// Tabs down a column on the left: a window with its left strip filled.
+pub const TABS_LEFT: &str = "icons/gannin_tabs_left.svg";
+/// Tabs across the top: a window with its top strip filled.
+pub const TABS_TOP: &str = "icons/gannin_tabs_top.svg";
 /// A note: a page of text (Zed's).
 pub const NOTE: &str = "icons/file_text_outlined.svg";
 
 const OWN: &[(&str, &str)] = &[
+    (
+        TABS_LEFT,
+        r#"<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="black" stroke-width="1.2"/><rect x="2.6" y="3.6" width="3.9" height="8.8" rx="0.9" fill="black"/></svg>"#,
+    ),
+    (
+        TABS_TOP,
+        r#"<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="black" stroke-width="1.2"/><rect x="2.6" y="3.6" width="10.8" height="2.8" rx="0.9" fill="black"/></svg>"#,
+    ),
     (
         ISSUE,
         r#"<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="5" stroke="black" stroke-width="1.2"/><circle cx="8" cy="8" r="1.3" fill="black"/></svg>"#,

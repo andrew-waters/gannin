@@ -30,12 +30,10 @@ pub struct Pr {
 /// An issue assigned to you, from the live query.
 #[derive(Clone)]
 pub struct Issue {
-    pub id: String,
     pub repo: String,
     pub number: i64,
     pub title: String,
     pub url: String,
-    pub updated: DateTime<Utc>,
 }
 
 impl Pr {
@@ -78,7 +76,6 @@ impl Pr {
 
 #[derive(Default, Clone)]
 pub struct Work {
-    pub login: Option<String>,
     pub reviews: Vec<Pr>,
     pub mine: Vec<Pr>,
     /// Live: issues assigned to you in every org. Nil from the cache,
@@ -90,7 +87,7 @@ pub struct Work {
 const LIVE_PR_FIELDS: &str = "id number title url isDraft createdAt updatedAt reviewDecision mergeable author { login } repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }";
 
 /// `EngineerWatch.engineerWork()`: one query, three searches, every org.
-pub fn load_live(token: &str, login: Option<String>) -> Result<Work, crate::github::Error> {
+pub fn load_live(token: &str) -> Result<Work, crate::github::Error> {
     let query = format!(
         "query {{ reviews: search(type: ISSUE, query: \"is:open is:pr review-requested:@me archived:false sort:updated-desc\", first: 40) {{ nodes {{ __typename ... on PullRequest {{ {LIVE_PR_FIELDS} }} }} }} mine: search(type: ISSUE, query: \"is:open is:pr author:@me archived:false sort:updated-desc\", first: 40) {{ nodes {{ __typename ... on PullRequest {{ {LIVE_PR_FIELDS} }} }} }} issues: search(type: ISSUE, query: \"is:open is:issue assignee:@me archived:false sort:updated-desc\", first: 25) {{ nodes {{ __typename ... on Issue {{ id number title url updatedAt repository {{ nameWithOwner }} }} }} }} }}"
     );
@@ -115,17 +112,14 @@ pub fn load_live(token: &str, login: Option<String>) -> Result<Work, crate::gith
         .iter()
         .filter_map(|node| {
             Some(Issue {
-                id: node["id"].as_str()?.to_string(),
                 repo: node["repository"]["nameWithOwner"].as_str()?.to_string(),
                 number: node["number"].as_i64()?,
                 title: node["title"].as_str()?.to_string(),
                 url: node["url"].as_str()?.to_string(),
-                updated: node["updatedAt"].as_str()?.parse().ok()?,
             })
         })
         .collect();
     Ok(Work {
-        login,
         reviews: list("reviews").iter().filter_map(pr).collect(),
         mine: list("mine").iter().filter_map(pr).collect(),
         issues: Some(issues),
@@ -183,7 +177,7 @@ fn store_path(org: &str) -> PathBuf {
 /// viewer; call off the main thread (it can be tens of MB).
 pub fn load(org: &str, login: Option<String>) -> Work {
     let login = login.or_else(|| crate::auth::saved_viewer().map(|v| v.login));
-    let mut work = Work { login: login.clone(), ..Default::default() };
+    let mut work = Work::default();
     let Some(login) = login else { return work };
     let Ok(bytes) = std::fs::read(store_path(org)) else { return work };
     let Ok(store) = serde_json::from_slice::<Store>(&bytes) else { return work };

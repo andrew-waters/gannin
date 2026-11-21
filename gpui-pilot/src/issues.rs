@@ -1269,14 +1269,6 @@ impl IssuesPage {
         self.issues.iter().find(|i| i.number == number && i.repo == repo).cloned()
     }
 
-    /// Open issues assigned to `login`, recently updated first.
-    pub fn assigned_to(&self, login: &str) -> Vec<IssueItem> {
-        let mut assigned: Vec<IssueItem> =
-            self.issues.iter().filter(|i| i.is_open() && i.assignee_logins.iter().any(|l| l == login)).cloned().collect();
-        assigned.sort_by_key(|i| std::cmp::Reverse(i.updated_at.unwrap_or(i.created_at)));
-        assigned
-    }
-
     /// Its sub-issues, open ones first, then by number.
     pub fn sub_issues(&self, id: &str) -> Vec<IssueItem> {
         let mut children: Vec<IssueItem> = self.issues.iter().filter(|i| i.parent_id.as_deref() == Some(id)).cloned().collect();

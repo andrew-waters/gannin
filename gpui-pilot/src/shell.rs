@@ -20,7 +20,7 @@ use crate::page::{ActionsPage, OpenRepo};
 use crate::session::{self, Changed, Kind, SessionPage, State};
 use crate::prs::{OpenPr, OpenPrs, ResumePrs, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs, ShowReview};
 use crate::state::{remove_slot, CiSaved, SavedState, SavedTab};
-use crate::work::{self, Pr, Work};
+use crate::work::{self, Work};
 use gpui::{
     actions, anchored, Focusable, black, deferred, div, ease_out_quint, prelude::*, px, relative, Animation, AnimationExt, AnyElement, ClickEvent, Context, App, Entity, FocusHandle, FontWeight, KeyBinding,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Subscription, Window,
@@ -29,18 +29,16 @@ use gpui::{
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, ToggleHarness, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, OpenFolder, NewWindow]);
+actions!(shell, [ToggleSidebar, ToggleSync, ToggleTabsOnLeft, ToggleHarness, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, OpenFolder, NewWindow]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new(crate::zed::keys("ctrl-secondary-s"), ToggleSidebar, None),
-        KeyBinding::new(crate::zed::keys("secondary-alt-i"), ToggleInspector, None),
         // The panels in the order the bar along the bottom shows them.
         KeyBinding::new(crate::zed::keys("secondary-1"), ToggleSidebar, None),
         KeyBinding::new(crate::zed::keys("secondary-2"), ToggleHarness, None),
         KeyBinding::new(crate::zed::keys("secondary-3"), ToggleTabsOnLeft, None),
         KeyBinding::new(crate::zed::keys("secondary-4"), ToggleSync, None),
-        KeyBinding::new(crate::zed::keys("secondary-5"), ToggleInspector, None),
         KeyBinding::new(crate::zed::keys("secondary-t"), NewClaudeSession, None),
         KeyBinding::new("ctrl-`", NewTerminal, None),
         KeyBinding::new(crate::zed::keys("secondary-w"), CloseTab, None),
@@ -2846,7 +2844,7 @@ impl Workspace {
             let work = cx
                 .background_executor()
                 .spawn(async move {
-                    let live = login.is_some().then(auth::token).flatten().and_then(|token| work::load_live(&token, login.clone()).ok());
+                    let live = login.is_some().then(auth::token).flatten().and_then(|token| work::load_live(&token).ok());
                     live.unwrap_or_else(|| work::load(&loaded, login))
                 })
                 .await;
@@ -2978,8 +2976,8 @@ impl Workspace {
         }
     }
 
-    /// "Synced 3m ago", "Syncing", or why it isn't; a click opens the sync
-    /// popover.
+    /// "Synced 3m ago", "Syncing", or why it isn't, in the status bar; a
+    /// click shows or hides the Sync panel (Sync Now is in it).
     fn sync_button(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let last = self.org.as_deref().and_then(crate::sync::last_synced);
         let label: String = if self.sync.running {
@@ -3005,22 +3003,17 @@ impl Workspace {
                     .id("sync")
                     .px_2()
                     .py_0p5()
-                    .mr_2()
                     .rounded_md()
                     .text_xs()
                     .cursor_pointer()
                     .text_color(if self.sync.error.is_some() { theme.critical() } else { theme.secondary })
                     .when(open, |d| d.bg(theme.row_selected))
                     .hover(|s| s.bg(theme.row_selected))
+                    .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("Sync  ⌘4, ⌘R syncs now".into())).into())
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
-                        // A second click closes the panel it opened.
-                        if this.sync.open {
-                            this.sync.open = false;
-                            cx.notify();
-                        } else {
-                            this.refresh(cx);
-                        }
+                        this.sync.open = !this.sync.open;
+                        cx.notify();
                     }))
                     .child(label)
                     .when_some(fraction.filter(|_| self.sync.running), |d, f| {
@@ -3086,6 +3079,22 @@ impl Workspace {
                     .border_b_1()
                     .border_color(theme.border)
                     .child(div().flex_1().text_color(theme.secondary).child("Sync"))
+                    .child(
+                        div()
+                            .id("sync-now")
+                            .mr_1()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.border)
+                            .text_xs()
+                            .cursor_pointer()
+                            .when(self.sync.running, |d| d.opacity(0.5))
+                            .hover(|s| s.bg(theme.row_selected))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.refresh(cx)))
+                            .child(if self.sync.running { "Syncing" } else { "Sync Now" }),
+                    )
                     .child(
                         div()
                             .id("close-sync")
@@ -4768,7 +4777,6 @@ impl Workspace {
                 d.child(div().text_color(theme.tertiary).child("/")).child(self.switcher_button(Pick::Project, name, theme, cx))
             })
             .child(div().flex_1())
-            .when(self.viewer.is_some(), |d| d.child(self.sync_button(theme, cx)))
             .child(self.account(theme, cx))
     }
 
@@ -4965,32 +4973,45 @@ impl Workspace {
                 this.sidebar_open = !this.sidebar_open
             }))
             .child(toggle("toggle-harness", "icons/book.svg", "Harness  ⌘2", self.harness_open, cx, |this, cx| this.toggle_harness(cx)))
-            // Tabs down a column on the left, or across the top (View › Toggle Tabs on Left).
-            .child(toggle(
-                "toggle-tabs-left",
-                if self.tabs_on_left { "icons/threads_sidebar_left_open.svg" } else { "icons/threads_sidebar_left_closed.svg" },
-                "Tabs on Left  ⌘3",
-                self.tabs_on_left,
-                cx,
-                |this, _| this.tabs_on_left = !this.tabs_on_left,
-            ))
+            // Where the tabs go: down a column on the left, or across the
+            // top. A choice of layout, so both are shown, the one in use lit.
+            .child(self.tabs_layout(theme, cx))
             .child(div().flex_1())
-            .child(toggle(
-                "toggle-sync",
-                "icons/arrow_circle.svg",
-                "Sync  ⌘4, ⌘R refreshes",
-                self.sync.open,
-                cx,
-                |this, _| this.sync.open = !this.sync.open,
-            ))
-            .child(toggle(
-                "toggle-inspector",
-                "icons/user_check.svg",
-                "Your Work  ⌘5",
-                self.inspector_open,
-                cx,
-                |this, _| this.inspector_open = !this.inspector_open,
-            ))
+            .when(self.viewer.is_some(), |d| d.child(self.sync_button(theme, cx)))
+
+    }
+
+    /// The tab layout as a pair of buttons, the one in use selected.
+    fn tabs_layout(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let option = |id: &'static str, icon: &'static str, tip: &'static str, left: bool, cx: &mut Context<Self>| {
+            let on = self.tabs_on_left == left;
+            div()
+                .id(id)
+                .px_1()
+                .py_0p5()
+                .rounded_sm()
+                .cursor_pointer()
+                .when(on, |d| d.bg(theme.row_selected))
+                .hover(|s| s.bg(theme.row_selected))
+                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.to_string())).into())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.tabs_on_left = left;
+                    cx.notify();
+                }))
+                .child(gpui::svg().path(icon).size(px(14.)).text_color(if on { theme.fg } else { theme.tertiary }))
+        };
+        div()
+            .ml_1()
+            .p_0p5()
+            .flex()
+            .flex_row()
+            .gap_0p5()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .child(option("tabs-left", crate::icons::TABS_LEFT, "Tabs down the left  ⌘3", true, cx))
+            .child(option("tabs-top", crate::icons::TABS_TOP, "Tabs across the top  ⌘3", false, cx))
     }
 
     // MARK: Sidebar
@@ -6337,221 +6358,6 @@ impl Workspace {
         }
     }
 
-    // MARK: Your work
-
-    /// The menu bar's list in the window: sessions wanting you first, then
-    /// reviews asked of you, your PRs needing you, the rest of your PRs,
-    /// the sessions still working, and issues assigned to you. A session or
-    /// an issue switches to its tab; a PR opens on GitHub (no PR page yet).
-    fn your_work(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut waiting: Vec<&Entity<SessionPage>> =
-            self.sessions.iter().filter(|s| matches!(s.read(cx).state, State::NeedsYou | State::YourTurn)).collect();
-        waiting.sort_by_key(|s| (s.read(cx).state.rank(), s.read(cx).since));
-        let working: Vec<&Entity<SessionPage>> = self.sessions.iter().filter(|s| s.read(cx).state == State::Working).collect();
-        let ended: Vec<&Entity<SessionPage>> = self.sessions.iter().filter(|s| s.read(cx).state == State::Ended).collect();
-        let needing: Vec<&Pr> = self.work.mine.iter().filter(|p| p.needs().is_some_and(|n| n != "Ready to merge")).collect();
-        let others: Vec<&Pr> = self.work.mine.iter().filter(|p| !p.needs().is_some_and(|n| n != "Ready to merge")).collect();
-        let assigned = match &self.work.login {
-            Some(login) => self.issues.read(cx).assigned_to(login),
-            None => Vec::new(),
-        };
-        let count = waiting.len() + self.work.reviews.len() + needing.len();
-        let orange: gpui::Hsla = gpui::rgb(0xFF9F0A).into();
-        let red: gpui::Hsla = gpui::rgb(0xFF453A).into();
-        let green: gpui::Hsla = gpui::rgb(0x30D158).into();
-
-        let section = |title: &'static str, count: usize, tint: gpui::Hsla| {
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .px_1()
-                .pt_3()
-                .pb_1()
-                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(title))
-                .child(
-                    div()
-                        .px_1p5()
-                        .rounded_full()
-                        .text_xs()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .bg(tint.opacity(0.18))
-                        .text_color(tint)
-                        .child(count.to_string()),
-                )
-        };
-        let row = |id: (&'static str, usize), tint: gpui::Hsla, title: String, detail: String| {
-            div()
-                .id(id)
-                .flex()
-                .flex_row()
-                .items_start()
-                .gap_2()
-                .px_1()
-                .py_1()
-                .rounded_md()
-                .cursor_pointer()
-                .hover(|s| s.bg(theme.row_selected))
-                .child(div().mt(px(5.)).size(px(8.)).flex_none().rounded_full().bg(tint))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .child(div().truncate().child(title))
-                        .child(div().text_xs().text_color(theme.secondary).truncate().child(detail)),
-                )
-        };
-        let session_row = |index: usize, page: &Entity<SessionPage>, cx: &mut Context<Self>| {
-            let p = page.read(cx);
-            let id = p.id;
-            let detail = format!("{} · {}", p.state.label(), relative_date(p.since.with_timezone(&Utc), Utc::now()));
-            row(("work-session", index), state_tint(p.state, theme), p.title(cx), detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
-                    this.activate(index, window, cx);
-                }
-            }))
-        };
-        let pr_row = |index: usize, pr: &Pr, tint: gpui::Hsla, detail: String, cx: &mut Context<Self>| {
-            let link = ItemLink { id: Some(pr.id.clone()).filter(|i| !i.is_empty()), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone(), pull: Some(true), open: Some(true) };
-            row(("work-pr", index), tint, pr.title.clone(), detail).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.drawers.clear();
-                this.open_item(link.clone(), cx);
-            }))
-        };
-        let mine_tint = |pr: &Pr| match pr.needs() {
-            Some("Checks failing") => red,
-            Some("Changes requested" | "Conflicts") => orange,
-            Some("Ready to merge") => green,
-            _ => theme.tertiary,
-        };
-
-        let mut list = div().flex().flex_col();
-        let mut index = 0;
-        if count == 0 {
-            list = list.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap_1()
-                    .py_4()
-                    .child(div().text_color(green).text_lg().child("✓"))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("All clear"))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.secondary)
-                            .text_center()
-                            .child("No reviews waiting, nothing failing, no session waiting on you."),
-                    ),
-            );
-        }
-        if !waiting.is_empty() {
-            list = list.child(section("Sessions waiting on you", waiting.len(), orange));
-            for page in &waiting {
-                list = list.child(session_row(index, page, cx));
-                index += 1;
-            }
-        }
-        if !self.work.reviews.is_empty() {
-            list = list.child(section("Reviews asked of you", self.work.reviews.len(), theme.selected));
-            for pr in &self.work.reviews {
-                let detail = format!(
-                    "{}#{}{} · {}",
-                    pr.short_repo(),
-                    pr.number,
-                    pr.author.as_ref().map(|a| format!(" · {a}")).unwrap_or_default(),
-                    relative_date(pr.updated, Utc::now())
-                );
-                list = list.child(pr_row(index, pr, theme.selected, detail, cx));
-                index += 1;
-            }
-        }
-        if !needing.is_empty() {
-            list = list.child(section("Your PRs needing you", needing.len(), red));
-            for pr in &needing {
-                let detail = format!("{}#{} · {}", pr.short_repo(), pr.number, pr.standing());
-                list = list.child(pr_row(index, pr, mine_tint(pr), detail, cx));
-                index += 1;
-            }
-        }
-        if !working.is_empty() {
-            list = list.child(section("Sessions working", working.len(), green));
-            for page in &working {
-                list = list.child(session_row(index, page, cx));
-                index += 1;
-            }
-        }
-        if !others.is_empty() {
-            list = list.child(section("Your other PRs", others.len(), theme.secondary));
-            for pr in &others {
-                let detail = format!("{}#{} · {}", pr.short_repo(), pr.number, pr.standing());
-                list = list.child(pr_row(index, pr, mine_tint(pr), detail, cx));
-                index += 1;
-            }
-        }
-        if let Some(live) = self.work.issues.clone().filter(|i| !i.is_empty()) {
-            list = list.child(section("Assigned to you", live.len(), green));
-            for issue in live.into_iter().take(8) {
-                let detail = format!("{}#{} · updated {}", issue.repo.rsplit('/').next().unwrap_or(&issue.repo), issue.number, relative_date(issue.updated, Utc::now()));
-                let id = issue.id.clone();
-                let link = ItemLink { id: Some(issue.id.clone()), repo: issue.repo.clone(), number: issue.number, title: issue.title.clone(), url: issue.url.clone(), pull: Some(false), open: Some(true) };
-                list = list.child(row(("work-issue", index), green, issue.title.clone(), detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    // This org's opens over Issues; another's in a drawer
-                    // fetched from GitHub.
-                    match this.issues.read(cx).issue(&id) {
-                        Some(found) => {
-                            this.navigate(Nav::Issues, false, window, cx);
-                            this.push_drawer(found, cx);
-                        }
-                        None => this.open_item(link.clone(), cx),
-                    }
-                })));
-                index += 1;
-            }
-        } else if !assigned.is_empty() {
-            list = list.child(section("Assigned to you", assigned.len(), green));
-            for issue in assigned.into_iter().take(8) {
-                let detail = format!("{}#{} · updated {}", issue.repo_name, issue.number, relative_date(issue.updated_at.unwrap_or(issue.created_at), Utc::now()));
-                let title = issue.title.clone();
-                list = list.child(row(("work-issue", index), green, title, detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.navigate(Nav::Issues, false, window, cx);
-                    this.push_drawer(issue.clone(), cx);
-                })));
-                index += 1;
-            }
-        }
-        if !ended.is_empty() {
-            list = list.child(section("Ended", ended.len(), theme.tertiary));
-            for page in &ended {
-                list = list.child(session_row(index, page, cx));
-                index += 1;
-            }
-        }
-
-        let summary = match &self.work.login {
-            Some(login) => format!(
-                "{} · {} · {}",
-                login,
-                match count {
-                    0 => "nothing waiting".to_string(),
-                    1 => "1 thing waiting".to_string(),
-                    n => format!("{n} things waiting"),
-                },
-                if self.work.live { "live from GitHub" } else { "from the cache" }
-            ),
-            None => "Not signed in: only sessions show".to_string(),
-        };
-        div()
-            .flex()
-            .flex_col()
-            .child(div().text_xs().text_color(theme.secondary).child(summary))
-            .child(list)
-    }
-
     // MARK: Inspector
 
     fn inspector(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -6608,7 +6414,7 @@ impl Workspace {
                     )
                     .into_any_element()
             }
-            None => self.your_work(theme, cx).into_any_element(),
+            None => div().into_any_element(),
         };
         div()
             .relative()
@@ -6631,7 +6437,7 @@ impl Workspace {
                     .bg(theme.sidebar)
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(div().flex_1().text_color(theme.secondary).child(if self.inspector.is_some() { "Repository" } else { "Your Work" }))
+                    .child(div().flex_1().text_color(theme.secondary).child("Repository"))
                     .child(
                         div()
                             .id("close-inspector")
@@ -6647,22 +6453,6 @@ impl Workspace {
                             .child("×"),
                     ),
             )
-            .when(self.inspector.is_some(), |d| {
-                d.child(
-                    div()
-                        .id("back-to-work")
-                        .px_3()
-                        .pt_2()
-                        .text_xs()
-                        .cursor_pointer()
-                        .text_color(theme.selected)
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.inspector = None;
-                            cx.notify();
-                        }))
-                        .child("‹ Your Work"),
-                )
-            })
             .child(div().id("inspector-body").flex_1().min_h_0().overflow_y_scroll().p_3().child(body))
             .child(self.resize_handle("resize-inspector", Edge::Inspector, cx))
     }
@@ -7660,15 +7450,6 @@ fn nav_icon(nav: Nav) -> &'static str {
     }
 }
 
-/// A session's state as a colour, as `SessionState.color`.
-fn state_tint(state: State, theme: &Theme) -> gpui::Hsla {
-    match state {
-        State::NeedsYou => gpui::rgb(0xFF9F0A).into(),
-        State::YourTurn => theme.selected,
-        State::Working => gpui::rgb(0x30D158).into(),
-        State::Ended => theme.tertiary,
-    }
-}
 
 
 impl Render for Workspace {
@@ -7729,10 +7510,6 @@ impl Render for Workspace {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.sidebar_open = !this.sidebar_open;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &ToggleInspector, _, cx| {
-                this.inspector_open = !this.inspector_open;
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleHarness, _, cx| {
@@ -7802,7 +7579,7 @@ impl Render for Workspace {
                     .when(self.harness_open, |d| d.child(self.harness_panel(&theme, cx)))
                     .when(self.tabs_on_left, |d| d.child(self.tab_column(&theme, cx)))
                     .child(center)
-                    .when(self.inspector_open, |d| d.child(self.inspector(&theme, cx)))
+                    .when(self.inspector_open && self.inspector.is_some(), |d| d.child(self.inspector(&theme, cx)))
                     .when(self.sync.open, |d| d.child(self.sync_panel(&theme, cx)))
                     .when_some(self.marra_dock.clone(), |d, marra| d.child(div().flex_none().w(px(400.)).h_full().border_l_1().border_color(theme.border).child(marra))),
             )

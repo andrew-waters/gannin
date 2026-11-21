@@ -91,7 +91,7 @@ mod zed;
 use gpui::{
     actions, App, AppContext, KeyBinding, Menu, MenuItem,
 };
-use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, ToggleTabsOnLeft, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenFolder, OpenSwitcher, ToggleHarness, ToggleInspector, ToggleSidebar, Workspace};
+use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, ToggleTabsOnLeft, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenFolder, OpenSwitcher, ToggleHarness, ToggleSidebar, Workspace};
 
 actions!(pilot, [Quit, CloseWindow, Minimize, Zoom, ToggleFullScreen, Hide, HideOthers, ShowAll]);
 
@@ -388,8 +388,7 @@ fn main() {
             // Runs Your Work's live query and lists what it found.
             "--work" => {
                 let token = auth::token().expect("sign in first");
-                let viewer = auth::saved_viewer().map(|v| v.login);
-                match work::load_live(&token, viewer) {
+                match work::load_live(&token) {
                     Ok(work) => {
                         for pr in &work.reviews {
                             println!("review: {}#{} {}", pr.repo, pr.number, pr.title);
@@ -460,7 +459,6 @@ fn main() {
                     MenuItem::action("Toggle Harness", ToggleHarness),
                     MenuItem::action("Toggle Tabs on Left", ToggleTabsOnLeft),
                     MenuItem::action("Toggle Sync", ToggleSync),
-                    MenuItem::action("Toggle Your Work", ToggleInspector),
                     MenuItem::separator(),
                     MenuItem::action("Marra", marra_view::ToggleMarra),
                     MenuItem::separator(),
