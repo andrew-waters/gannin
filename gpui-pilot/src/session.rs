@@ -103,6 +103,9 @@ pub struct Changed;
 
 impl gpui::EventEmitter<Changed> for SessionPage {}
 impl gpui::EventEmitter<crate::review_panel::ExplainPr> for SessionPage {}
+impl gpui::EventEmitter<crate::pull_page::OpenLinked> for SessionPage {}
+impl gpui::EventEmitter<crate::pull_page::OpenPull> for SessionPage {}
+impl gpui::EventEmitter<crate::issues::ShowSession> for SessionPage {}
 impl gpui::EventEmitter<crate::work_panel::WorkEvent> for SessionPage {}
 impl gpui::EventEmitter<crate::harness::OpenDoc> for SessionPage {}
 
@@ -315,6 +318,10 @@ impl SessionPage {
             // Explain starts a session of its own, so the workspace hears of it.
             subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone(), event.1.clone()))));
             subscriptions.push(cx.subscribe(review, |_, _, event: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(event.0.clone()))));
+            // Its PR sidebar's Related links, for the workspace to open.
+            subscriptions.push(cx.subscribe(review, |_, _, event: &crate::pull_page::OpenLinked, cx| cx.emit(event.clone())));
+            subscriptions.push(cx.subscribe(review, |_, _, event: &crate::pull_page::OpenPull, cx| cx.emit(crate::pull_page::OpenPull(event.0.clone()))));
+            subscriptions.push(cx.subscribe(review, |_, _, event: &crate::issues::ShowSession, cx| cx.emit(crate::issues::ShowSession(event.0))));
         }
         subscriptions.push(cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {

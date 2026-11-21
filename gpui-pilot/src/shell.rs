@@ -223,7 +223,7 @@ fn sections() -> Vec<Section> {
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
         // Claude Code's agents: the workflows sessions run through.
-        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview), Item(ReviewPreview)] },
+        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview)] },
     ]
 }
 
@@ -1454,6 +1454,17 @@ impl Workspace {
                     let id = event.0.path.clone();
                     this.open_drawer(DrawerItem::Doc(event.0.clone()), id, cx);
                 }));
+                // A review's PR sidebar: Related's issues and PRs open in
+                // their drawers, its sessions in their tabs.
+                this._subscriptions.push(cx.subscribe(&page, |this, _, event: &crate::pull_page::OpenLinked, cx| {
+                    this.drawers.clear();
+                    this.open_item(ItemLink::linked(event), cx);
+                }));
+                this._subscriptions.push(cx.subscribe(&page, |this, _, event: &crate::pull_page::OpenPull, cx| {
+                    this.drawers.clear();
+                    this.open_item(ItemLink::pull(&event.0), cx);
+                }));
+                this._subscriptions.push(cx.subscribe_in(&page, window, |this, _, event: &crate::issues::ShowSession, window, cx| this.show_session_tab(event.0, window, cx)));
                 this.sessions.push(page);
                 this.sync_reviewing(cx);
                 this.drawers.clear();
@@ -1623,6 +1634,10 @@ impl Workspace {
         let related = self.related_sessions(cx).remove(&key).unwrap_or_default();
         let (pr_repo, pr_number, pr_url) = (pr.repo.clone(), pr.number, pr.url.clone());
         let page = cx.new(|cx| crate::pull_page::PullPage::new(pr, org, cx));
+        // It shows as the review panel with the PR merged in, the same page
+        // a review of it has.
+        let panel = cx.new(|cx| crate::review_panel::ReviewPanel::for_pull(&page, window, cx));
+        page.update(cx, |p, cx| p.set_merged(panel, cx));
         let local = self.issues.read(cx).about_pull(&pr_repo, pr_number, &pr_url);
         page.update(cx, |p, cx| {
             p.set_related(related, cx);

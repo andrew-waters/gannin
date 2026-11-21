@@ -33,6 +33,8 @@ pub enum Post {
 enum Source {
     Live { launch: Launch, terminal: Entity<Terminal>, view: AnyView },
     Preview { repo: String, number: i64, url: String, idle: bool, working: bool, snapshot: Arc<Snapshot> },
+    /// A PR with no review session: its page, before Review with Claude.
+    Pull { pr: crate::prs::PrItem },
 }
 
 /// A review posted to GitHub: its kind (as GitHub names it), when, and
@@ -88,10 +90,18 @@ enum Selected {
 
 impl gpui::EventEmitter<crate::pull_page::OpenLinked> for ReviewPanel {}
 impl gpui::EventEmitter<crate::pull_page::OpenPull> for ReviewPanel {}
+impl gpui::EventEmitter<crate::pull_page::PullAction> for ReviewPanel {}
+impl gpui::EventEmitter<crate::issues::ShowSession> for ReviewPanel {}
 
-/// The PR page laid into the panel, each part its own `PullPage`: the
-/// merged PR and review sketch in Review Preview.
+/// The PR page laid into the panel, each part its own `PullPage` drawn
+/// from one fetch (the page's, `main`).
 pub struct PullParts {
+    /// The page that fetches, which Check for Changes refreshes; none for
+    /// Review Preview's made-up PR.
+    main: Option<gpui::WeakEntity<crate::pull_page::PullPage>>,
+    /// The page, held here when the panel is a review session's (a PR's own
+    /// page holds the panel instead).
+    _owned: Option<Entity<crate::pull_page::PullPage>>,
     description: Entity<crate::pull_page::PullPage>,
     timeline: Entity<crate::pull_page::PullPage>,
     commits: Entity<crate::pull_page::PullPage>,
@@ -105,11 +115,28 @@ impl PullParts {
         use crate::pull_page::{Part, PullPage};
         let mut part = |p: Part| cx.new(|_| PullPage::preview(repo, number, title, p));
         Self {
+            main: None,
+            _owned: None,
             description: part(Part::Description),
             timeline: part(Part::Timeline),
             commits: part(Part::Commits),
             checks: part(Part::Checks),
             sidebar: part(Part::Sidebar),
+        }
+    }
+
+    /// `main`'s parts. `own` keeps it alive with the panel.
+    pub fn of(main: &Entity<crate::pull_page::PullPage>, own: bool, cx: &mut gpui::App) -> Self {
+        use crate::pull_page::Part;
+        let mut part = |p: Part| main.update(cx, |m, cx| m.part_of(p, cx));
+        Self {
+            description: part(Part::Description),
+            timeline: part(Part::Timeline),
+            commits: part(Part::Commits),
+            checks: part(Part::Checks),
+            sidebar: part(Part::Sidebar),
+            main: Some(main.downgrade()),
+            _owned: own.then(|| main.clone()),
         }
     }
 }
@@ -181,6 +208,10 @@ pub struct ReviewPanel {
     show_criteria: bool,
     /// Each changed file's diff from GitHub, made when it's first shown.
     diffs: HashMap<String, Entity<crate::pr_diff::PrDiff>>,
+    /// The PR's head commit the review read, and the result it's for (by
+    /// its time): set by the first check after a result that finds no new
+    /// commits, kept in the session's folder.
+    reviewed_head: Option<(String, Option<chrono::DateTime<chrono::Utc>>)>,
     /// The PR page merged in (the sketch only): its parts in the list, the
     /// Overview and a sidebar.
     pull: Option<PullParts>,
@@ -260,7 +291,30 @@ impl ReviewPanel {
         })
     }
 
+    /// A review session's panel, with its PR's page merged in.
     pub fn new(launch: Launch, terminal: Entity<Terminal>, view: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let place = launch.subject.clone().map(|s| (s, launch.org.clone()));
+        let mut panel = Self::session(launch, terminal, view, window, cx);
+        if let Some((s, org)) = place {
+            let main = cx.new(|cx| crate::pull_page::PullPage::new(crate::prs::PrItem::stub(&s.id, &s.repo, s.number, &s.title, &s.url), org, cx));
+            let parts = PullParts::of(&main, true, cx);
+            panel.set_pull(parts, cx);
+        }
+        panel
+    }
+
+    /// A PR's own page: `main` merged into a panel with no review yet,
+    /// whose Review with Claude starts one.
+    pub fn for_pull(main: &Entity<crate::pull_page::PullPage>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let pr = main.read(cx).pr().clone();
+        let mut panel = Self::preview(&pr.repo, pr.number, None, false, false, Snapshot::sample(false, &[]), None, window, cx);
+        panel.source = Source::Pull { pr };
+        let parts = PullParts::of(main, false, cx);
+        panel.set_pull(parts, cx);
+        panel
+    }
+
+    fn session(launch: Launch, terminal: Entity<Terminal>, view: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let claude_id = launch.claude_id();
         let state_file = launch.dir().join("state");
         let sensitive = launch.subject.as_ref().map(|s| crate::risk::sensitive_paths(&launch.harness_path, &s.repo)).unwrap_or_default();
@@ -276,14 +330,12 @@ impl ReviewPanel {
             if this
                 .update(cx, |this, cx| {
                     if result.is_some() && this.result != result {
-                        let first = this.checked.is_none();
                         this.result = result;
                         this.remember_risk(cx);
-                        // A check once there's a result, so Review Again knows
-                        // whether anything's changed since.
-                        if first {
-                            this.check_for_changes(cx);
-                        }
+                        // A check with each new result, so Review Again knows
+                        // whether anything's changed since, and the commit the
+                        // review read is recorded.
+                        this.check_for_changes(cx);
                         this.auto_post(cx);
                         cx.notify();
                     }
@@ -319,6 +371,7 @@ impl ReviewPanel {
             cx.background_executor().timer(if fast { Duration::from_millis(750) } else { Duration::from_secs(4) }).await;
         });
         let posted = std::fs::read(launch.dir().join("posted.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let reviewed_head = std::fs::read(launch.dir().join("reviewed-head.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
         let decisions: serde_json::Value = std::fs::read(launch.dir().join("decisions.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         let dismissed = decisions["dismissed"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
         let edits = decisions["edits"].as_object().map(|m| m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()).unwrap_or_default();
@@ -364,6 +417,7 @@ impl ReviewPanel {
             opened_at: Instant::now(),
             plans: Vec::new(),
             author: None,
+            reviewed_head,
             record_with_post: crate::review_record::recording(),
             detail_width: Default::default(),
             show_grading: false,
@@ -419,6 +473,7 @@ impl ReviewPanel {
             sensitive: Vec::new(),
             plans: Vec::new(),
             author: None,
+            reviewed_head: None,
             record_with_post: crate::review_record::recording(),
             detail_width: Default::default(),
             show_grading: false,
@@ -451,6 +506,7 @@ impl ReviewPanel {
         cx.subscribe(&parts.sidebar, |_, _, e: &OpenLinked, cx| cx.emit(e.clone())).detach();
         cx.subscribe(&parts.sidebar, |_, _, e: &OpenPull, cx| cx.emit(OpenPull(e.0.clone()))).detach();
         cx.subscribe(&parts.sidebar, |_, _, e: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(e.0.clone()))).detach();
+        cx.subscribe(&parts.sidebar, |_, _, e: &crate::issues::ShowSession, cx| cx.emit(crate::issues::ShowSession(e.0))).detach();
         self.pull = Some(parts);
     }
 
@@ -458,6 +514,7 @@ impl ReviewPanel {
         match &self.source {
             Source::Live { launch, .. } => launch.subject.as_ref().map(|s| (s.repo.clone(), s.number)).unwrap_or_default(),
             Source::Preview { repo, number, .. } => (repo.clone(), *number),
+            Source::Pull { pr } => (pr.repo.clone(), pr.number),
         }
     }
 
@@ -465,6 +522,7 @@ impl ReviewPanel {
         match &self.source {
             Source::Live { launch, .. } => launch.subject.as_ref().map(|s| s.title.clone()).filter(|t| !t.is_empty()),
             Source::Preview { .. } => Some("Idempotency keys for payments".into()),
+            Source::Pull { pr } => Some(pr.title.clone()).filter(|t| !t.is_empty()),
         }
     }
 
@@ -472,6 +530,7 @@ impl ReviewPanel {
         match &self.source {
             Source::Live { launch, .. } => launch.subject.as_ref().map(|s| s.url.clone()).unwrap_or_default(),
             Source::Preview { url, .. } => url.clone(),
+            Source::Pull { pr } => pr.url.clone(),
         }
     }
 
@@ -481,6 +540,8 @@ impl ReviewPanel {
         match &self.source {
             Source::Live { launch, .. } => launch.state(),
             Source::Preview { idle, working, .. } => Some(if *working { "working" } else if *idle { "idle" } else { "exited" }.into()),
+            // No claude: nothing running, nothing to wait for.
+            Source::Pull { .. } => Some("exited".into()),
         }
     }
 
@@ -695,8 +756,12 @@ impl ReviewPanel {
         let Some(result) = self.kept() else { return };
         let none = HashSet::new();
         let risk = self.risk();
+        // What's changed since, checked again now: the sheet holds an
+        // out-of-date review to a comment.
+        self.check_for_changes(cx);
         if let Source::Preview { snapshot, .. } = &self.source {
             self.post = Some(Self::ready(&result, &none, snapshot.clone(), risk.as_ref(), window, cx));
+            self.hold_to_comment();
             self.watch_body(cx);
             cx.notify();
             return;
@@ -717,6 +782,7 @@ impl ReviewPanel {
                     Ok(snapshot) => Self::ready(&result, &HashSet::new(), Arc::new(snapshot), risk.as_ref(), window, cx),
                     Err(error) => Post::Failed(error),
                 });
+                this.hold_to_comment();
                 this.watch_body(cx);
                 cx.notify();
             })
@@ -757,20 +823,28 @@ impl ReviewPanel {
         if self.checking {
             return;
         }
+        // The PR's own facts (checks, threads, reviewers) come again too.
+        if let Some(main) = self.pull.as_ref().and_then(|p| p.main.as_ref()).and_then(|m| m.upgrade()) {
+            main.update(cx, |m, cx| m.refresh(cx));
+        }
+        if matches!(self.source, Source::Pull { .. }) {
+            return;
+        }
         self.checking = true;
         cx.notify();
         let since = self.result.as_ref().and_then(|r| r.at);
+        let reviewed = self.reviewed_head().map(str::to_string);
         let (repo, number) = self.subject();
         let preview = matches!(self.source, Source::Preview { .. });
         cx.spawn(async move |this, cx| {
             let found = if preview {
                 cx.background_executor().timer(Duration::from_millis(800)).await;
-                Ok(review::Changes { state: "OPEN".into(), new_commits: 2, new_comments: 1, mine: None })
+                Ok(review::Changes { state: "OPEN".into(), new_commits: 2, head: "preview-head".into(), new_comments: 1, mine: None })
             } else {
                 cx.background_executor()
                     .spawn(async move {
                         let token = crate::auth::token().ok_or("Sign in to check GitHub.")?;
-                        review::check(&token, &repo, number, since)
+                        review::check(&token, &repo, number, since, reviewed.as_deref())
                     })
                     .await
             };
@@ -782,9 +856,16 @@ impl ReviewPanel {
                         }
                     }
                 }
+                // Nothing new since the result: the head now is what it read.
+                if let Ok(changes) = &found {
+                    if this.result.is_some() && this.reviewed_head().is_none() && changes.new_commits == 0 && !changes.head.is_empty() {
+                        this.remember_head(changes.head.clone());
+                    }
+                }
                 let ended = matches!(&found, Ok(c) if c.state != "OPEN");
                 this.checked = Some((chrono::Utc::now(), found));
                 this.checking = false;
+                this.hold_to_comment();
                 if ended {
                     this.record(None, cx);
                 }
@@ -793,6 +874,49 @@ impl ReviewPanel {
             .ok();
         })
         .detach();
+    }
+
+    /// The head commit the review read, if it's known for this result.
+    fn reviewed_head(&self) -> Option<&str> {
+        let at = self.result.as_ref()?.at;
+        self.reviewed_head.as_ref().filter(|(_, for_at)| *for_at == at).map(|(head, _)| head.as_str())
+    }
+
+    fn remember_head(&mut self, head: String) {
+        let at = self.result.as_ref().and_then(|r| r.at);
+        if let Source::Live { launch, .. } = &self.source {
+            let _ = std::fs::write(launch.dir().join("reviewed-head.json"), serde_json::to_vec(&(&head, at)).unwrap_or_default());
+        }
+        self.reviewed_head = Some((head, at));
+    }
+
+    /// New commits since the review read the PR, when it's out of date:
+    /// from the last check, or from `snapshot` (the Post sheet's fresh copy)
+    /// when its head isn't the one the review read. Comments alone don't
+    /// count: the code the findings describe hasn't changed.
+    fn stale(&self, snapshot: Option<&Snapshot>) -> Option<usize> {
+        self.result.as_ref()?;
+        let checked = match &self.checked {
+            Some((_, Ok(c))) if c.state == "OPEN" => c.new_commits,
+            _ => 0,
+        };
+        let moved = matches!((self.reviewed_head(), snapshot), (Some(head), Some(s)) if !s.head_sha.is_empty() && head != s.head_sha);
+        if checked > 0 {
+            Some(checked)
+        } else if moved {
+            Some(1)
+        } else {
+            None
+        }
+    }
+
+    /// An out-of-date review goes up only as a comment: what it says may
+    /// not hold for the latest code.
+    fn hold_to_comment(&mut self) {
+        let stale = matches!(&self.post, Some(Post::Ready { snapshot, .. }) if self.stale(Some(snapshot)).is_some());
+        if let (true, Some(Post::Ready { event, .. })) = (stale, self.post.as_mut()) {
+            *event = "COMMENT";
+        }
     }
 
     /// Whether the last check found new commits or comments since the
@@ -937,6 +1061,10 @@ impl ReviewPanel {
     }
 
     fn explain(&mut self, cx: &mut Context<Self>) {
+        if let Source::Pull { pr } = &self.source {
+            cx.emit(crate::pull_page::PullAction::Explain(pr.clone()));
+            return;
+        }
         if let Source::Live { launch, .. } = &self.source {
             if let Some(subject) = launch.subject.clone() {
                 let walkthrough = self.result.as_ref().map(|r| r.walkthrough.clone()).unwrap_or_default();
@@ -949,6 +1077,8 @@ impl ReviewPanel {
     /// only pretends, after a moment.
     fn confirm_post(&mut self, cx: &mut Context<Self>) {
         let Some(Post::Ready { snapshot, draft, event, body }) = self.post.take() else { return };
+        // Never more than a comment from an out-of-date review.
+        let event = if self.stale(Some(&snapshot)).is_some() { "COMMENT" } else { event };
         let text = body.read(cx).text(cx);
         let draft = Draft { body: text, comments: draft.comments.clone(), left_out: draft.left_out.clone() };
         let (repo, number) = self.subject();
@@ -1184,6 +1314,7 @@ impl ReviewPanel {
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
         let live = matches!(self.source, Source::Live { .. });
+        let pull = matches!(self.source, Source::Pull { .. });
         let dot = if self.working() { theme.good() } else if status_tint == theme.orange() { theme.orange() } else if self.running() { theme.selected } else { theme.tertiary };
         let controls = match &self.post {
             Some(post) => self.post_controls(post, theme, cx).into_any_element(),
@@ -1201,8 +1332,8 @@ impl ReviewPanel {
                     )))
                 })
                 .child(Self::button("review-github", "Open on GitHub", false, true, theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
-                .child(Self::button("review-explain", "Explain", false, live, theme).when(live, |d| d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.explain(cx)))))
-                .child(Self::button("review-check", "Check for Changes", false, !self.checking, theme).when(!self.checking, |d| {
+                .child(Self::button("review-explain", "Explain", false, live || pull, theme).when(live || pull, |d| d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.explain(cx)))))
+                .child(Self::button("review-check", if pull { "Refresh" } else { "Check for Changes" }, false, !self.checking, theme).when(!self.checking, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.check_for_changes(cx)))
                 }))
                 // Merged with the PR page, these sit under the status in the
@@ -1281,7 +1412,8 @@ impl ReviewPanel {
             return Self::busy_button("review-again", "Review Again", theme);
         }
         let can_again = self.can_again();
-        Self::button("review-again", "Review Again", false, can_again, theme)
+        // Out of date, reviewing again is the next step, so it leads.
+        Self::button("review-again", "Review Again", self.stale(None).is_some(), can_again, theme)
             .when(can_again, |d| d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx))))
     }
 
@@ -1290,7 +1422,7 @@ impl ReviewPanel {
     fn post_button(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let posted = self.posted_latest().is_some();
         let can_post = self.result.is_some() && !posted;
-        Self::button("review-post", if posted { "Posted" } else { "Post Review" }, true, can_post, theme)
+        Self::button("review-post", if posted { "Posted" } else { "Post Review" }, self.stale(None).is_none(), can_post, theme)
             .when(can_post, |d| d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx))))
     }
 
@@ -1336,11 +1468,19 @@ impl ReviewPanel {
         if let Some(at) = self.result.as_ref().and_then(|r| r.at) {
             rows.push(row("Reviewed", text(ago(at), theme.secondary)));
         }
+        if let Some(n) = self.stale(None) {
+            rows.push(row("Out of date", text(format!("{} since", plural(n, "new commit", "new commits")), theme.orange())));
+        }
         if let Some(n) = blockers {
             rows.push(row("Blockers", if n > 0 { text(n.to_string(), theme.critical()) } else { text("None".into(), theme.secondary) }));
         }
         rows.push(row("Checks", if failing > 0 { text(format!("{failing} failing"), theme.critical()) } else { text("Passing".into(), theme.secondary) }));
-        if let Some(level) = self.risk().and_then(|r| r.level()) {
+        // A PR with no review here shows the grade a past review left.
+        let stored = match &self.source {
+            Source::Pull { pr } => crate::risk::level_for(&pr.id),
+            _ => None,
+        };
+        if let Some(level) = self.risk().and_then(|r| r.level()).or(stored) {
             use crate::risk::Level;
             let at = match level {
                 Level::Low => 1,
@@ -1372,14 +1512,30 @@ impl ReviewPanel {
             rows.push(row("Changes", text(t, if self.has_changes() { theme.selected } else { theme.secondary })));
         }
         // The two buttons share the column's width.
-        let again = self.again_button(theme, cx).flex_1().flex().justify_center();
-        let post = self.post_button(theme, cx).flex_1().flex().justify_center();
+        let buttons = match &self.source {
+            // No review yet: starting one is the only thing to do.
+            Source::Pull { pr } => {
+                let pr = pr.clone();
+                div().pt_3().flex().flex_row().text_sm().child(
+                    Self::button("review-start", "Review with Claude", true, true, theme)
+                        .flex_1()
+                        .flex()
+                        .justify_center()
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(crate::pull_page::PullAction::Review(pr.clone())))),
+                )
+            }
+            _ => {
+                let again = self.again_button(theme, cx).flex_1().flex().justify_center();
+                let post = self.post_button(theme, cx).flex_1().flex().justify_center();
+                div().pt_3().flex().flex_row().gap_2().text_sm().child(again).child(post)
+            }
+        };
         div()
             .flex()
             .flex_col()
             .gap_2()
             .children(rows)
-            .child(div().pt_3().flex().flex_row().gap_2().text_sm().child(again).child(post))
+            .child(buttons)
             .pb_5()
             .border_b_1()
             .border_color(theme.border)
@@ -2209,6 +2365,7 @@ impl ReviewPanel {
                 .when_some(r.headline.clone(), |d, h| d.child(div().text_base().font_weight(FontWeight::SEMIBOLD).child(h)))
                 .child(markdown("review-summary", &Self::prose_only(&r.summary), theme))
                 .into_any_element(),
+            None if matches!(self.source, Source::Pull { .. }) => div().into_any_element(),
             None => self.waiting(theme, cx).into_any_element(),
         };
         let before = result.as_ref().and_then(|_| self.risk()).map(|risk| self.risk_panel(&risk, true, theme, cx));
@@ -2447,7 +2604,7 @@ impl ReviewPanel {
         self.shortcuts.update(cx, |bar, cx| bar.set_enabled(ready, cx));
         let live = match &self.source {
             Source::Live { view, .. } => Some(view.clone()),
-            Source::Preview { .. } => None,
+            Source::Preview { .. } | Source::Pull { .. } => None,
         };
         div()
             .relative()
@@ -2581,6 +2738,7 @@ impl ReviewPanel {
                 .child(close("post-close", "Close", cx)),
             Post::Ready { snapshot, draft, event, .. } => {
                 let own = snapshot.is_own();
+                let stale = self.stale(Some(snapshot));
                 let event_now = *event;
                 let choice = |id: &'static str, label: &'static str, value: &'static str, cx: &mut Context<Self>| {
                     let on = event_now == value;
@@ -2601,13 +2759,19 @@ impl ReviewPanel {
                         .child(label)
                 };
                 let mut events = div().flex_none().p_0p5().flex().flex_row().gap_0p5().rounded_md().bg(theme.grid).text_sm().child(choice("event-comment", "Comment", "COMMENT", cx));
-                if !own {
+                if !own && stale.is_none() {
                     events = events.child(choice("event-approve", "Approve", "APPROVE", cx)).child(choice("event-changes", "Request Changes", "REQUEST_CHANGES", cx));
                 }
                 let inline = draft.comments.len();
                 let recording = self.record_with_post;
                 row.child(events)
-                    .child(quiet(if own { "Your own PR: only a comment".into() } else { plural(inline, "inline comment", "inline comments") }))
+                    .child(quiet(if own {
+                        "Your own PR: only a comment".into()
+                    } else if stale.is_some() {
+                        "Out of date: only a comment".into()
+                    } else {
+                        plural(inline, "inline comment", "inline comments")
+                    }))
                     .child(
                         div()
                             .id("post-record")
@@ -2658,6 +2822,20 @@ impl ReviewPanel {
                 .flex_col()
                 .gap(px(18.))
                 .max_w(px(860.))
+                .when_some(self.stale(Some(snapshot)), |d, n| {
+                    d.child(
+                        div()
+                            .p_3()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.orange())
+                            .text_sm()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Reviewed before {}", plural(n, "new commit", "new commits"))))
+                            .child(div().text_color(theme.secondary).child(
+                                "What it says may not hold for the latest code, so it can only go up as a comment. Review Again first to approve or request changes.",
+                            )),
+                    )
+                })
                 .child(
                     div()
                         .flex()
@@ -2738,7 +2916,7 @@ impl Render for ReviewPanel {
         let draft = self.post.as_ref().and_then(|post| self.post_draft(post, &theme, cx)).map(|d| d.into_any_element());
         // A file's diff, read from GitHub the first time it's picked.
         let diff = match (&self.selected, &self.source, draft.is_some()) {
-            (Selected::File(path), Source::Live { .. }, false) => {
+            (Selected::File(path), Source::Live { .. } | Source::Pull { .. }, false) => {
                 if !self.diffs.contains_key(path) {
                     let (repo, number) = self.subject();
                     let (file, key) = (path.clone(), path.clone());

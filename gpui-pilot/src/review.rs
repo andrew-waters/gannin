@@ -642,6 +642,8 @@ pub struct Changes {
     /// OPEN, MERGED or CLOSED.
     pub state: String,
     pub new_commits: usize,
+    /// The PR's head commit now.
+    pub head: String,
     /// Comments and reviews by others since the review.
     pub new_comments: usize,
     /// The viewer's own latest review since the review: its state, when and where.
@@ -668,15 +670,29 @@ impl Changes {
 
 /// Reads the PR's state, commits, comments and reviews, and counts what's
 /// newer than `since` (the review). Read only.
-pub fn check(token: &str, repo: &str, number: i64, since: Option<chrono::DateTime<chrono::Utc>>) -> Result<Changes, String> {
+/// `reviewed` is the head commit the review read, when known: commits are
+/// counted after it, which holds when a push carries older commits (their
+/// dates are when they were made). A head no longer in the list (a
+/// force-push) counts as at least one new commit.
+pub fn check(token: &str, repo: &str, number: i64, since: Option<chrono::DateTime<chrono::Utc>>, reviewed: Option<&str>) -> Result<Changes, String> {
     let (owner, name) = repo.split_once('/').ok_or("Not a repository")?;
-    let query = "query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) { state commits(last: 100) { nodes { commit { committedDate } } } comments(last: 100) { nodes { createdAt author { login } } } reviews(last: 50) { nodes { state submittedAt url author { login } } } } } }";
+    let query = "query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) { state headRefOid commits(last: 100) { nodes { commit { oid committedDate } } } comments(last: 100) { nodes { createdAt author { login } } } reviews(last: 50) { nodes { state submittedAt url author { login } } } } } }";
     let data = crate::github::graphql(token, query, json!({ "owner": owner, "name": name, "number": number })).map_err(|e| e.to_string())?;
     let viewer = data["viewer"]["login"].as_str().unwrap_or("");
     let pr = &data["repository"]["pullRequest"];
     let after = |v: &Value| v.as_str().and_then(|t| t.parse::<chrono::DateTime<chrono::Utc>>().ok()).is_some_and(|t| since.is_none_or(|s| t > s));
     let nodes = |v: &Value| v["nodes"].as_array().cloned().unwrap_or_default();
-    let new_commits = nodes(&pr["commits"]).iter().filter(|c| after(&c["commit"]["committedDate"])).count();
+    let commits = nodes(&pr["commits"]);
+    let head = pr["headRefOid"].as_str().unwrap_or_default().to_string();
+    let by_time = commits.iter().filter(|c| after(&c["commit"]["committedDate"])).count();
+    let new_commits = match reviewed {
+        Some(sha) if sha == head => 0,
+        Some(sha) => match commits.iter().position(|c| c["commit"]["oid"].as_str() == Some(sha)) {
+            Some(i) => commits.len() - i - 1,
+            None => by_time.max(1),
+        },
+        None => by_time,
+    };
     let others = |n: &Value| n["author"]["login"].as_str().is_some_and(|l| l != viewer);
     let reviews = nodes(&pr["reviews"]);
     let new_comments = nodes(&pr["comments"]).iter().filter(|c| others(c) && after(&c["createdAt"])).count()
@@ -686,5 +702,5 @@ pub fn check(token: &str, repo: &str, number: i64, since: Option<chrono::DateTim
         .filter(|r| r["author"]["login"].as_str() == Some(viewer) && after(&r["submittedAt"]))
         .filter_map(|r| Some((r["state"].as_str()?.to_string(), r["submittedAt"].as_str()?.parse().ok()?, r["url"].as_str().unwrap_or_default().to_string())))
         .max_by_key(|r| r.1);
-    Ok(Changes { state: pr["state"].as_str().unwrap_or("OPEN").to_string(), new_commits, new_comments, mine })
+    Ok(Changes { state: pr["state"].as_str().unwrap_or("OPEN").to_string(), new_commits, head, new_comments, mine })
 }

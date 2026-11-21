@@ -145,19 +145,16 @@ impl gpui::EventEmitter<crate::harness::OpenDoc> for ReviewPreview {}
 
 pub struct ReviewPreview {
     state: State,
-    /// The sketch of the PR page merged into the review: its parts in the
-    /// list, the Overview and a sidebar.
-    merged: bool,
     panel: Entity<ReviewPanel>,
 }
 
 impl ReviewPreview {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let panel = Self::make(State::Findings, true, window, cx);
-        Self { state: State::Findings, merged: true, panel }
+        let panel = Self::make(State::Findings, window, cx);
+        Self { state: State::Findings, panel }
     }
 
-    fn make(state: State, merged: bool, window: &mut Window, cx: &mut Context<Self>) -> Entity<ReviewPanel> {
+    fn make(state: State, window: &mut Window, cx: &mut Context<Self>) -> Entity<ReviewPanel> {
         let result = match state {
             State::Reviewing => None,
             State::Approve => review::parse(APPROVE),
@@ -180,11 +177,10 @@ impl ReviewPreview {
             _ => None,
         };
         let panel = cx.new(|cx| {
+            // As a review session's: the PR's page merged in.
             let mut panel = ReviewPanel::preview(REPO, NUMBER, result, idle, working, snapshot(own), post, window, cx);
-            if merged {
-                let parts = PullParts::preview(REPO, NUMBER, "Add idempotency keys to the payments API", cx);
-                panel.set_pull(parts, cx);
-            }
+            let parts = PullParts::preview(REPO, NUMBER, "Add idempotency keys to the payments API", cx);
+            panel.set_pull(parts, cx);
             panel
         });
         // What the merged sidebar opens goes on to the window's drawers.
@@ -197,7 +193,7 @@ impl ReviewPreview {
 
     fn pick(&mut self, state: State, window: &mut Window, cx: &mut Context<Self>) {
         self.state = state;
-        self.panel = Self::make(state, self.merged, window, cx);
+        self.panel = Self::make(state, window, cx);
         cx.notify();
     }
 }
@@ -231,25 +227,7 @@ impl Render for ReviewPreview {
                     .when(!on, |d| d.text_color(theme.secondary).hover(|s| s.bg(theme.row_selected)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.pick(state, window, cx)))
                     .child(state.title())
-            }))
-            .child(div().flex_1())
-            .child({
-                let on = self.merged;
-                div()
-                    .id("preview-merged")
-                    .px_2()
-                    .py_0p5()
-                    .rounded_md()
-                    .text_xs()
-                    .cursor_pointer()
-                    .when(on, |d| d.bg(theme.selected).text_color(theme.on_selected))
-                    .when(!on, |d| d.text_color(theme.secondary).hover(|s| s.bg(theme.row_selected)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.merged = !on;
-                        this.pick(this.state, window, cx);
-                    }))
-                    .child("Merged with PR page")
-            });
+            }));
         div()
             .size_full()
             .flex()

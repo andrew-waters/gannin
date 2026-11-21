@@ -568,7 +568,8 @@ pub struct PullPage {
     pr: PrItem,
     org: String,
     part: Part,
-    data: Option<PullData>,
+    /// Shared with its parts, which draw from the same fetch.
+    data: Option<std::rc::Rc<PullData>>,
     error: Option<String>,
     loading: bool,
     section: Section,
@@ -589,12 +590,18 @@ pub struct PullPage {
     rounds_open: std::collections::HashMap<usize, bool>,
     /// Rounds whose folded events (bots, requests, labels) are shown.
     noise_open: std::collections::HashSet<usize>,
+    /// The parts a review panel lays out (`part_of`), kept up to date with
+    /// this page's fetch, plans and Related.
+    parts: Vec<gpui::WeakEntity<PullPage>>,
+    /// The page as it shows: the review panel with this PR merged in. Its
+    /// events go on from here, as the page's own.
+    merged: Option<gpui::Entity<crate::review_panel::ReviewPanel>>,
     _fetch: Option<Task<()>>,
 }
 
 impl PullPage {
     pub fn new(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), docs: Default::default(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), _fetch: None };
+        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), docs: Default::default(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), parts: Vec::new(), merged: None, _fetch: None };
         page.refresh(cx);
         page
     }
@@ -607,7 +614,7 @@ impl PullPage {
             pr,
             org: String::new(),
             part,
-            data: Some(sample(repo, number, title)),
+            data: Some(std::rc::Rc::new(sample(repo, number, title))),
             error: None,
             loading: false,
             section: Section::Overview,
@@ -618,8 +625,77 @@ impl PullPage {
             width: Default::default(),
             rounds_open: Default::default(),
             noise_open: Default::default(),
+            parts: Vec::new(),
+            merged: None,
             _fetch: None,
         }
+    }
+
+    /// One part of this page, drawn from its fetch: it never fetches, and
+    /// follows this page as it refreshes.
+    pub fn part_of(&mut self, part: Part, cx: &mut Context<Self>) -> gpui::Entity<PullPage> {
+        let entity = cx.new(|_| Self {
+            pr: self.pr.clone(),
+            org: self.org.clone(),
+            part,
+            data: self.data.clone(),
+            error: self.error.clone(),
+            loading: self.loading,
+            section: Section::Overview,
+            plans: self.plans.clone(),
+            docs: self.docs.clone(),
+            related: self.related.clone(),
+            local: self.local.clone(),
+            width: Default::default(),
+            rounds_open: Default::default(),
+            noise_open: Default::default(),
+            parts: Vec::new(),
+            merged: None,
+            _fetch: None,
+        });
+        self.parts.push(entity.downgrade());
+        entity
+    }
+
+    /// Passes this page's state on to its parts.
+    fn share(&mut self, cx: &mut Context<Self>) {
+        self.parts.retain(|p| p.upgrade().is_some());
+        for part in &self.parts {
+            let _ = part.update(cx, |p, cx| {
+                p.data = self.data.clone();
+                p.error = self.error.clone();
+                p.loading = self.loading;
+                p.plans = self.plans.clone();
+                p.docs = self.docs.clone();
+                p.related = self.related.clone();
+                p.local = self.local.clone();
+                cx.notify();
+            });
+        }
+    }
+
+    /// Shows the PR as `panel` (the review panel with it merged in), whose
+    /// events (Review with Claude, Explain, Related's links) go on as this
+    /// page's.
+    pub fn set_merged(&mut self, panel: gpui::Entity<crate::review_panel::ReviewPanel>, cx: &mut Context<Self>) {
+        cx.subscribe(&panel, |_, _, e: &PullAction, cx| {
+            cx.emit(match e {
+                PullAction::Review(pr) => PullAction::Review(pr.clone()),
+                PullAction::Explain(pr) => PullAction::Explain(pr.clone()),
+            })
+        })
+        .detach();
+        cx.subscribe(&panel, |_, _, e: &OpenLinked, cx| cx.emit(e.clone())).detach();
+        cx.subscribe(&panel, |_, _, e: &OpenPull, cx| cx.emit(OpenPull(e.0.clone()))).detach();
+        cx.subscribe(&panel, |_, _, e: &ShowSession, cx| cx.emit(ShowSession(e.0))).detach();
+        cx.subscribe(&panel, |_, _, e: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(e.0.clone()))).detach();
+        self.merged = Some(panel);
+        cx.notify();
+    }
+
+    /// The PR as Review with Claude and Explain take it.
+    pub fn pr(&self) -> &PrItem {
+        &self.pr
     }
 
     /// The changed files' paths, for a file list before there's a review.
@@ -660,6 +736,7 @@ impl PullPage {
         if self.local != local {
             self.local = local;
             self.relink();
+            self.share(cx);
             cx.notify();
         }
     }
@@ -678,6 +755,7 @@ impl PullPage {
     pub fn set_related(&mut self, related: Vec<Related>, cx: &mut Context<Self>) {
         if self.related != related {
             self.related = related;
+            self.share(cx);
             cx.notify();
         }
     }
@@ -686,6 +764,7 @@ impl PullPage {
     /// thread; `relink` then picks the plans and requirements.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
+        self.share(cx);
         cx.notify();
         let (repo, number, org) = (self.pr.repo.clone(), self.pr.number, self.org.clone());
         self._fetch = Some(cx.spawn(async move |this, cx| {
@@ -694,13 +773,14 @@ impl PullPage {
                 page.loading = false;
                 match fetched {
                     Ok(data) => {
-                        page.data = Some(data);
+                        page.data = Some(std::rc::Rc::new(data));
                         page.error = None;
                     }
                     Err(e) => page.error = Some(e),
                 }
                 page.docs = std::sync::Arc::new(docs);
                 page.relink();
+                page.share(cx);
                 cx.notify();
             })
             .ok();
@@ -1163,7 +1243,7 @@ impl PullPage {
 
     /// What's open on GitHub, for a page that lists it with its own.
     pub fn open_items(&self) -> Vec<AttentionItem> {
-        self.data.as_ref().map(Self::attention_items).unwrap_or_default()
+        self.data.as_deref().map(Self::attention_items).unwrap_or_default()
     }
 
     /// Where it stands and whose move it is, and the facts behind it: open
@@ -1633,6 +1713,10 @@ impl PullPage {
 impl Render for PullPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
+        // The PR page is the review panel with the PR merged in.
+        if let (Part::Whole, Some(panel)) = (self.part, &self.merged) {
+            return panel.clone().into_any_element();
+        }
         if self.part != Part::Whole {
             let Some(data) = &self.data else { return div().into_any_element() };
             return match self.part {
