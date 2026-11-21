@@ -481,6 +481,8 @@ pub enum ThreadKind {
     Issue,
     /// The plain checklist: no AI, kept on this Mac (`todos.rs`).
     Todos,
+    /// Your notes: no AI, kept on this Mac unless shared (`notes.rs`).
+    Notes,
     Build,
     Review,
 }

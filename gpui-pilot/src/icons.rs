@@ -12,6 +12,8 @@ pub const ISSUE_CLOSED: &str = "icons/todo_complete.svg";
 pub const PULL: &str = "icons/pull_request.svg";
 /// Merged: a branch joining the line it came from.
 pub const MERGE: &str = "icons/gannin_merge.svg";
+/// A note: a page of text (Zed's).
+pub const NOTE: &str = "icons/file_text_outlined.svg";
 
 const OWN: &[(&str, &str)] = &[
     (

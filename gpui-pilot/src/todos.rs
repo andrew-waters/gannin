@@ -1,7 +1,8 @@
 //! Todos: a plain checklist kept in Marra's window, with no AI in it.
-//! Each one keeps when it was added and when it was ticked off. They live
-//! in `~/.gannin/todos.json` on this Mac only, and nothing sends them to
-//! Marra's claude or anywhere else.
+//! Each one keeps when it was added and when it was ticked off, and what
+//! it's about (`links.rs`). They live in `~/.gannin/todos.json` on this Mac
+//! only, and nothing sends them to Marra's claude or anywhere else.
+//! `NotesStore` (`notes.rs`) holds them for every window.
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,9 @@ pub struct Todo {
     pub added: DateTime<Local>,
     #[serde(default)]
     pub done: Option<DateTime<Local>>,
+    /// As `Link` writes them; none on todos from before links.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
 }
 
 fn path() -> PathBuf {
@@ -40,12 +44,12 @@ pub fn save(todos: &[Todo]) {
     }
 }
 
-pub fn add(todos: &mut Vec<Todo>, text: &str) {
+pub fn add(todos: &mut Vec<Todo>, text: &str, links: Vec<String>) {
     let text = text.trim();
     if text.is_empty() {
         return;
     }
-    todos.push(Todo { id: uuid::Uuid::new_v4().simple().to_string()[..8].to_string(), text: text.to_string(), added: Local::now(), done: None });
+    todos.push(Todo { id: uuid::Uuid::new_v4().simple().to_string()[..8].to_string(), text: text.to_string(), added: Local::now(), done: None, links });
     save(todos);
 }
 
@@ -100,8 +104,15 @@ mod tests {
     #[test]
     fn took_reads_as_a_duration() {
         let added = Local::now() - chrono::Duration::minutes(185);
-        let todo = Todo { id: "a".into(), text: "x".into(), added, done: Some(added + chrono::Duration::minutes(185)) };
+        let todo = Todo { id: "a".into(), text: "x".into(), added, done: Some(added + chrono::Duration::minutes(185)), links: Vec::new() };
         assert_eq!(took(&todo).as_deref(), Some("3h 5m"));
         assert_eq!(took(&Todo { done: None, ..todo }), None);
+    }
+
+    #[test]
+    fn todos_from_before_links_still_read() {
+        let old = r#"[{"id":"a1","text":"send it","added":"2026-11-14T09:00:00+00:00","done":null}]"#;
+        let todos: Vec<Todo> = serde_json::from_str(old).unwrap();
+        assert!(todos[0].links.is_empty());
     }
 }

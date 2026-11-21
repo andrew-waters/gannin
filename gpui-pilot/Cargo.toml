@@ -31,6 +31,11 @@ util = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d
 rpc = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
 text = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
 assets = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+# Markdown highlighting in note editors (markdown_lang.rs): Zed's embedded
+# highlight queries, without its other grammars, and the markdown grammar at
+# the fork Zed pins.
+grammars = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "b596e737286780d7bfa9fcddceaeeb754574b352" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Already in the tree through Zed's crates: New Issue's images.

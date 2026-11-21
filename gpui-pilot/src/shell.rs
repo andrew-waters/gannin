@@ -587,6 +587,8 @@ pub struct Workspace {
     _sync_loop: Option<gpui::Task<()>>,
     /// What was last written, so unchanged state isn't written again.
     last_saved: Option<SavedState>,
+    /// Adds a todo about the drawer's issue or PR (`note_editor::linked_section`).
+    linked_todo: Entity<editor::Editor>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -919,7 +921,11 @@ impl Workspace {
             editor.set_placeholder_text("Filter", window, cx);
             editor
         });
+        let linked_todo = crate::note_editor::todo_field(window, cx);
+        let notes = crate::notes::NotesStore::get(cx);
         let subscriptions = vec![
+            // Notes and todos show in drawers and on session tabs.
+            cx.observe(&notes, |_, _, cx| cx.notify()),
             cx.observe_window_appearance(window, |_, window, cx| {
                 crate::zed::follow_appearance(window, cx);
                 cx.notify();
@@ -1010,6 +1016,7 @@ impl Workspace {
             broadcast: None,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
+            linked_todo,
             _subscriptions: subscriptions,
         }
     }
@@ -2053,6 +2060,16 @@ impl Workspace {
         self.navigate(Nav::Issues, false, window, cx);
         self.push_drawer(issue, cx);
         true
+    }
+
+    /// A note's or todo's link, in this window's drawer.
+    pub fn open_link(&mut self, link: &crate::links::Link, cx: &mut Context<Self>) {
+        let (repo, number, pull) = match link {
+            crate::links::Link::Pr { repo, number } => (repo, number, true),
+            crate::links::Link::Issue { repo, number } => (repo, number, false),
+            crate::links::Link::Note(_) => return,
+        };
+        self.open_item(ItemLink { id: None, repo: repo.clone(), number: *number as i64, title: String::new(), url: link.url().unwrap_or_default(), pull: Some(pull), open: None }, cx);
     }
 
     fn review_subject(&mut self, pr: crate::launch::Subject, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
@@ -6846,6 +6863,7 @@ impl Workspace {
             .flex_col()
             .gap_5()
             .p_4()
+            .child(crate::note_editor::linked_section(&crate::links::Link::Issue { repo: issue.repo.clone(), number: issue.number as u64 }, Some(&self.linked_todo), theme, cx))
             .border_l_1()
             .border_color(theme.border)
             .child(div().flex().flex_col().child(group("Assignees".into())).map(|d| {
@@ -7080,6 +7098,7 @@ impl Workspace {
         if let Some(related) = drawer.related.clone() {
             right = right.child(related);
         }
+        right = right.child(crate::note_editor::linked_section(&crate::links::Link::Pr { repo: pr.repo.clone(), number: pr.number as u64 }, Some(&self.linked_todo), theme, cx));
         if let Some(login) = &pr.author {
             right = right.child(
                 div().flex().flex_col().child(group("Author")).child(person(login, pr.author_avatar.as_deref(), pr.author_name.clone(), pr.author_is_bot.then(|| "bot".into()), cx)),
@@ -7787,5 +7806,24 @@ impl Render for Workspace {
                         .child(form),
                 )
             })
+    }
+}
+
+/// A note's or todo's PR or issue, in the front Gannin window's drawer;
+/// on GitHub when no window is open.
+pub fn open_link(link: &crate::links::Link, cx: &mut App) {
+    let target = cx.active_window().and_then(|w| w.downcast::<Workspace>()).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));
+    let shown = target.is_some_and(|window| {
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.open_link(link, cx);
+                window.activate_window();
+            })
+            .is_ok()
+    });
+    if !shown {
+        if let Some(url) = link.url() {
+            cx.open_url(&url);
+        }
     }
 }

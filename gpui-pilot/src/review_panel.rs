@@ -1361,6 +1361,7 @@ impl ReviewPanel {
                         },
                     )))
                 })
+                .when(!repo.is_empty(), |d| d.child(crate::note_editor::notes_chip(&crate::links::Link::Pr { repo: repo.clone(), number: number as u64 }, theme, cx)))
                 .child(
                     div()
                         .id("review-github")

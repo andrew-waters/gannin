@@ -244,6 +244,8 @@ pub struct WorkPanel {
     uncommitted: bool,
     file: Option<String>,
     composer: Entity<editor::Editor>,
+    /// Adds a todo about the issue (`note_editor::linked_section`).
+    linked_todo: Entity<editor::Editor>,
     /// The team's prompt shortcuts beside the composer.
     shortcuts: Entity<crate::shortcuts::ShortcutBar>,
     /// The question card, put away to answer in the terminal.
@@ -316,6 +318,9 @@ impl WorkPanel {
         });
         let shortcuts = cx.new(|_| crate::shortcuts::ShortcutBar::new());
         cx.subscribe(&shortcuts, |this, _, event: &crate::shortcuts::SendShortcut, cx| this.send(event.0.clone(), false, cx)).detach();
+        let linked_todo = crate::note_editor::todo_field(window, cx);
+        let notes = crate::notes::NotesStore::get(cx);
+        cx.observe(&notes, |_, _, cx| cx.notify()).detach();
         let file = data.worktrees.iter().flat_map(|w| w.files.first()).next().map(|f| f.path.clone());
         let picked = match &data.ask {
             Some(Ask::Questions(qs)) => vec![Vec::new(); qs.len()],
@@ -337,6 +342,7 @@ impl WorkPanel {
             uncommitted: false,
             file,
             composer,
+            linked_todo,
             shortcuts,
             ask_away: false,
             picked,
@@ -1603,6 +1609,8 @@ impl WorkPanel {
                     })
                     .child(markdown("work-issue-body", &d.issue_body, theme)),
             )
+            // Your notes and todos about the issue.
+            .when_some(crate::links::from_input(&d.issue_url), |el, link| el.child(div().p_3().rounded_lg().bg(theme.bg).border_1().border_color(theme.border).child(crate::note_editor::linked_section(&link, Some(&self.linked_todo), theme, cx))))
             .child(
                 Self::section("Claude Code", theme)
                     .child(Self::fact("State", div().flex().flex_row().items_center().gap_1p5().child(Self::dot(state.tint(theme), 8.)).child(state.label()), theme))

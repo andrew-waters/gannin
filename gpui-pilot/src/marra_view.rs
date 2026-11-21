@@ -20,7 +20,7 @@ const REMIND: [(&str, Option<i64>); 7] = [("5m", Some(5)), ("10m", Some(10)), ("
 /// The models offered in the menu; any other goes with /model.
 const MODELS: [(&str, Option<&str>); 4] = [("Claude's default", None), ("Opus", Some("opus")), ("Sonnet", Some("sonnet")), ("Haiku", Some("haiku"))];
 
-const COMMANDS: [(&str, &str); 15] = [
+const COMMANDS: [(&str, &str); 16] = [
     ("/waiting", "What needs you now"),
     ("/catch-up", "Sum up the unread threads"),
     ("/ask", "A data question, answered by a worker in a harness"),
@@ -30,6 +30,7 @@ const COMMANDS: [(&str, &str); 15] = [
     ("/open", "Bring a session's tab forward"),
     ("/later", "Park the top item for 30 minutes"),
     ("/todo", "Add a todo: /todo send the invoice"),
+    ("/note", "Start a note: /note Ideas for the release"),
     ("/compact", "Compact Marra's conversation"),
     ("/new", "Start a new conversation"),
     ("/model", "Marra's model: /model sonnet, /model default"),
@@ -89,10 +90,15 @@ pub struct MarraView {
     chat_scroll: gpui::ScrollHandle,
     /// The thread it was last showing, to start a newly opened one at its end.
     chat_for: Option<String>,
-    /// The checklist, as last read or changed (`todos.rs`).
-    todos: Vec<crate::todos::Todo>,
-    /// Whether the composer's placeholder says it adds a todo.
-    todo_placeholder: bool,
+    /// Your notes, their categories and the checklist (`notes.rs`).
+    notes: Entity<crate::notes::NotesStore>,
+    /// What the composer's placeholder last said.
+    todo_placeholder: &'static str,
+    /// The note open (thread `n:<id>`), and its events.
+    note_editor: Option<(Entity<crate::note_editor::NoteEditor>, Subscription)>,
+    /// Notes narrowed to one category.
+    notes_category: Option<String>,
+    notes_search: Entity<editor::Editor>,
     /// Why New Issue couldn't start, shown until the next try.
     issue_error: Option<String>,
     row_menu: Option<(String, Point<Pixels>)>,
@@ -178,6 +184,18 @@ impl MarraView {
             }
             cx.notify();
         });
+        let notes = crate::notes::NotesStore::get(cx);
+        let notes_search = cx.new(|cx| {
+            let mut editor = editor::Editor::single_line(window, cx);
+            editor.set_placeholder_text("Search notes", window, cx);
+            editor
+        });
+        let searching = cx.subscribe(&notes_search, |_: &mut Self, _, event: &editor::EditorEvent, cx| {
+            if matches!(event, editor::EditorEvent::BufferEdited) {
+                cx.notify();
+            }
+        });
+        let noted = cx.observe(&notes, |_: &mut Self, _, cx| cx.notify());
         window.focus(&composer.focus_handle(cx), cx);
         if !docked && !marra.read(cx).saved.not_on_top {
             keep_up(window);
@@ -203,8 +221,11 @@ impl MarraView {
             issue_error: None,
             chat_scroll: gpui::ScrollHandle::new(),
             chat_for: None,
-            todos: crate::todos::load(),
-            todo_placeholder: false,
+            notes,
+            todo_placeholder: "Message Marra",
+            note_editor: None,
+            notes_category: None,
+            notes_search,
             row_menu: None,
             menu_closed: None,
             phone: (None, 0),
@@ -224,7 +245,7 @@ impl MarraView {
             audit_prompts: HashSet::new(),
             _tail_task: None,
             theme: Theme::for_window(window),
-            _subscriptions: vec![edits, observe, filtering, about_edits],
+            _subscriptions: vec![edits, observe, filtering, about_edits, noted, searching],
         };
         // In its own window the list and a thread show side by side, so
         // one's always open: the main conversation to start.
@@ -304,7 +325,8 @@ impl MarraView {
         // Main first, then the newest; pinned ones lead.
         threads.sort_by(|a, b| (b.kind == ThreadKind::Main).cmp(&(a.kind == ThreadKind::Main)).then(b.activity.cmp(&a.activity)));
         // The checklist next, always: it isn't a conversation.
-        let open: Vec<&crate::todos::Todo> = self.todos.iter().filter(|t| t.done.is_none()).collect();
+        let store = self.notes.read(cx);
+        let open: Vec<&crate::todos::Todo> = store.todos.iter().filter(|t| t.done.is_none()).collect();
         let last = match open.len() {
             0 => "Nothing to do".to_string(),
             1 => open[0].text.clone(),
@@ -312,6 +334,13 @@ impl MarraView {
         };
         let at = threads.iter().position(|t| t.kind != ThreadKind::Main).unwrap_or(threads.len());
         threads.insert(at, Thread { id: "todos".into(), kind: ThreadKind::Todos, title: "Todos".into(), last, activity: None, working: false, org: None });
+        let latest = store.notes.iter().max_by_key(|n| n.updated);
+        let last = match (store.notes.len(), latest) {
+            (_, None) => "No notes yet".to_string(),
+            (1, Some(n)) => n.title(),
+            (count, Some(n)) => format!("{count} notes: {}", n.title()),
+        };
+        threads.insert(at + 1, Thread { id: "notes".into(), kind: ThreadKind::Notes, title: "Notes".into(), last, activity: None, working: false, org: None });
         threads
     }
 
@@ -344,6 +373,11 @@ impl MarraView {
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
+        // From a note, back to the notes.
+        if self.open.as_deref().is_some_and(|o| o.starts_with("n:")) {
+            self.open_thread("notes".into(), cx);
+            return;
+        }
         if let Some(open) = self.open.take() {
             self.marra.update(cx, |m, _| m.mark_read(&open, true));
         }
@@ -565,9 +599,22 @@ impl MarraView {
             None => (self.open.as_deref() == Some("todos")).then_some(text.as_str()),
         };
         if let Some(todo) = todo {
-            crate::todos::add(&mut self.todos, todo);
+            let todo = todo.to_string();
+            self.notes.update(cx, |store, cx| store.add_todo(&todo, Vec::new(), cx));
             self.composer.update(cx, |editor, cx| editor.set_text("", window, cx));
             cx.notify();
+            return;
+        }
+        // A note, likewise: from the notes, or /note from anywhere; it opens.
+        let note = match text.strip_prefix("/note ").map(str::trim) {
+            Some(note) => Some(note),
+            None => (self.open.as_deref() == Some("notes")).then_some(text.as_str()),
+        };
+        if let Some(note) = note {
+            let note = note.to_string();
+            let id = self.notes.update(cx, |store, cx| store.new_note(&note, Vec::new(), cx));
+            self.composer.update(cx, |editor, cx| editor.set_text("", window, cx));
+            self.open_thread(format!("n:{id}"), cx);
             return;
         }
         self.composer.update(cx, |editor, cx| editor.set_text("", window, cx));
@@ -958,7 +1005,7 @@ fn keep_up(window: &Window) {
 
 // MARK: Drawing
 
-fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, primary: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, primary: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id.into())
         .px_2()
@@ -974,7 +1021,7 @@ fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, primary: 
 
 /// A square icon button with its words as a tooltip, for the session card
 /// and the thread's bar, where labels took the room.
-fn icon_button(id: impl Into<SharedString>, icon: &'static str, tip: impl Into<String>, primary: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn icon_button(id: impl Into<SharedString>, icon: &'static str, tip: impl Into<String>, primary: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     let tip = tip.into();
     div()
         .id(id.into())
@@ -1007,6 +1054,7 @@ fn avatar(kind: ThreadKind, theme: &Theme) -> (&'static str, Hsla) {
         ThreadKind::Investigation => ("icons/magnifying_glass.svg", theme.orange()),
         ThreadKind::Issue => ("icons/notepad.svg", theme.good()),
         ThreadKind::Todos => ("icons/list_todo.svg", theme.selected),
+        ThreadKind::Notes => (crate::icons::NOTE, theme.slot(3)),
         ThreadKind::Build => ("icons/tool_hammer.svg", theme.good()),
         ThreadKind::Review => ("icons/pull_request.svg", theme.slot(4)),
     }
@@ -1883,6 +1931,12 @@ impl MarraView {
         if id == "todos" {
             return self.todos_view(theme, cx);
         }
+        if id == "notes" {
+            return self.notes_view(theme, cx);
+        }
+        if let Some(note) = id.strip_prefix("n:") {
+            return self.note_view(note, theme, cx);
+        }
         let marra = self.marra.read(cx);
         let Some(thread) = marra.threads().into_iter().find(|t| t.id == id) else {
             return div().flex_1().p_4().text_color(theme.secondary).child(div().id("gone").cursor_pointer().text_color(theme.selected).child("‹ Threads").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)))).child("This thread has closed.").into_any_element();
@@ -1959,9 +2013,10 @@ impl MarraView {
     /// The checklist: to do first, oldest first, then what's done, newest
     /// first; each with when it was added and, once done, when and how long.
     fn todos_view(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let mut open: Vec<crate::todos::Todo> = self.todos.iter().filter(|t| t.done.is_none()).cloned().collect();
+        let todos = self.notes.read(cx).todos.clone();
+        let mut open: Vec<crate::todos::Todo> = todos.iter().filter(|t| t.done.is_none()).cloned().collect();
         open.sort_by_key(|t| t.added);
-        let mut done: Vec<crate::todos::Todo> = self.todos.iter().filter(|t| t.done.is_some()).cloned().collect();
+        let mut done: Vec<crate::todos::Todo> = todos.iter().filter(|t| t.done.is_some()).cloned().collect();
         done.sort_by(|a, b| b.done.cmp(&a.done));
         let has_done = !done.is_empty();
         let nav = div()
@@ -1978,13 +2033,26 @@ impl MarraView {
             .child(div().flex_1().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(format!("Todos · {} to do", open.len())))
             .when(has_done, |d| {
                 d.child(div().id("clear-done").text_xs().text_color(theme.selected).cursor_pointer().child("Clear done").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    crate::todos::clear_done(&mut this.todos);
-                    cx.notify();
+                    this.notes.update(cx, |store, cx| store.clear_done(cx));
                 })))
             });
         let row = |todo: crate::todos::Todo, cx: &mut Context<Self>| {
             let (toggle_id, remove_id) = (todo.id.clone(), todo.id.clone());
             let is_done = todo.done.is_some();
+            // What it's about, each opening where it lives.
+            let links: Vec<AnyElement> = crate::links::parse_all(&todo.links)
+                .into_iter()
+                .enumerate()
+                .map(|(n, link)| {
+                    let label = match &link {
+                        crate::links::Link::Note(id) => self.notes.read(cx).note(id).map(|n| n.title()).unwrap_or_else(|| "Deleted note".into()),
+                        other => other.short(),
+                    };
+                    crate::note_editor::chip(SharedString::from(format!("todo-link-{}-{n}", todo.id)), Some(link.icon()), label, false, theme)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_link(link.clone(), cx)))
+                        .into_any_element()
+                })
+                .collect();
             let times = match (todo.done, crate::todos::took(&todo)) {
                 (Some(at), Some(took)) => format!("Added {} · done {} · {took}", crate::todos::when(todo.added), crate::todos::when(at)),
                 _ => format!("Added {}", crate::todos::when(todo.added)),
@@ -2012,8 +2080,7 @@ impl MarraView {
                         .justify_center()
                         .map(|d| if is_done { d.bg(theme.selected).border_color(theme.selected).text_color(theme.on_selected).text_xs().child("✓") } else { d.border_color(theme.secondary) })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            crate::todos::toggle(&mut this.todos, &toggle_id);
-                            cx.notify();
+                            this.notes.update(cx, |store, cx| store.toggle_todo(&toggle_id, cx));
                         })),
                 )
                 .child(
@@ -2023,7 +2090,8 @@ impl MarraView {
                         .flex()
                         .flex_col()
                         .child(div().text_sm().text_color(if is_done { theme.secondary } else { theme.fg }).when(is_done, |d| d.line_through()).child(todo.text.clone()))
-                        .child(div().text_xs().text_color(theme.tertiary).child(times)),
+                        .child(div().text_xs().text_color(theme.tertiary).child(times))
+                        .when(!links.is_empty(), |d| d.child(div().flex().flex_row().flex_wrap().gap_1().pt_1().children(links))),
                 )
                 .child(
                     div()
@@ -2037,8 +2105,7 @@ impl MarraView {
                         .child("×")
                         .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("Remove".into())).into())
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            crate::todos::remove(&mut this.todos, &remove_id);
-                            cx.notify();
+                            this.notes.update(cx, |store, cx| store.remove_todo(&remove_id, cx));
                         })),
                 )
                 .into_any_element()
@@ -2059,6 +2126,164 @@ impl MarraView {
             .when(!done_rows.is_empty(), |d| d.child(div().px_4().pt_3().pb_1().text_xs().text_color(theme.secondary).child("Done")))
             .children(done_rows);
         div().flex_1().min_h_0().flex().flex_col().child(nav).child(list).into_any_element()
+    }
+
+    /// The open note's editor, made as its thread opens and saved as it
+    /// closes, so the last half second of typing isn't lost.
+    fn sync_note_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let wanted = self.open.as_deref().and_then(|o| o.strip_prefix("n:")).map(str::to_string);
+        let current = self.note_editor.as_ref().map(|(e, _)| e.read(cx).id.clone());
+        if wanted == current {
+            return;
+        }
+        if let Some((editor, _)) = self.note_editor.take() {
+            editor.update(cx, |e, cx| e.save(cx));
+        }
+        if let Some(id) = wanted {
+            let editor = cx.new(|cx| crate::note_editor::NoteEditor::new(id, window, cx));
+            let events = cx.subscribe(&editor, |this: &mut Self, _, event: &crate::note_editor::NoteEvent, cx| match event {
+                crate::note_editor::NoteEvent::Open(link) => this.open_link(link.clone(), cx),
+                crate::note_editor::NoteEvent::Deleted => this.open_thread("notes".into(), cx),
+            });
+            self.note_editor = Some((editor, events));
+        }
+    }
+
+    /// A note opens here; a PR or issue in the front Gannin window's drawer.
+    fn open_link(&mut self, link: crate::links::Link, cx: &mut Context<Self>) {
+        match link {
+            crate::links::Link::Note(id) => self.open_thread(format!("n:{id}"), cx),
+            // After this window's update: a docked Marra's window is lent out until then.
+            other => cx.defer(move |cx| crate::shell::open_link(&other, cx)),
+        }
+    }
+
+    /// Back to the notes, from a note, in both layouts.
+    fn notes_nav(&self, title: String, back: Option<&'static str>, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .h(px(40.))
+            .border_b_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .when_some(back, |d, label| d.child(div().id("back").flex_none().text_sm().text_color(theme.selected).cursor_pointer().child(label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)))))
+            .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(title))
+    }
+
+    fn note_view(&self, id: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let title = self.notes.read(cx).note(id).map(|n| n.title()).unwrap_or_else(|| "Note".into());
+        let nav = self.notes_nav(title, Some("‹ Notes"), theme, cx);
+        let editor = self.note_editor.as_ref().filter(|(e, _)| e.read(cx).id == id).map(|(e, _)| e.clone());
+        div().flex_1().min_h_0().flex().flex_col().child(nav).children(editor.map(|e| div().flex_1().min_h_0().flex().flex_col().child(e))).into_any_element()
+    }
+
+    /// Your notes, newest first, narrowed by category and search; then
+    /// those teammates have shared.
+    fn notes_view(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let store = self.notes.read(cx);
+        let query = self.notes_search.read(cx).text(cx).trim().to_lowercase();
+        let matches = |n: &crate::notes::Note| query.is_empty() || n.body.to_lowercase().contains(&query) || n.links.iter().any(|l| l.to_lowercase().contains(&query));
+        let in_category = |n: &crate::notes::Note| self.notes_category.as_ref().is_none_or(|c| n.category.as_ref() == Some(c));
+        let mut mine: Vec<crate::notes::Note> = store.notes.iter().filter(|n| matches(n) && in_category(n)).cloned().collect();
+        mine.sort_by(|a, b| b.updated.cmp(&a.updated));
+        let mut shared: Vec<crate::notes::Note> = store.shared.iter().filter(|n| matches(n) && in_category(n)).cloned().collect();
+        shared.sort_by(|a, b| b.updated.cmp(&a.updated));
+        let categories = store.categories.clone();
+        let total = store.notes.len();
+        let nav = self.notes_nav(format!("Notes · {total}"), (!self.split()).then_some("‹ Threads"), theme, cx).child(button("new-note", "New Note", true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            let id = this.notes.update(cx, |store, cx| store.new_note("", Vec::new(), cx));
+            this.open_thread(format!("n:{id}"), cx);
+        })));
+        // Categories to narrow by, and the search.
+        let mut filters = div().flex_none().flex().flex_row().flex_wrap().items_center().gap_1p5().px_4().py_2().border_b_1().border_color(theme.border);
+        filters = filters.child(crate::note_editor::chip("notes-all", None, "All", self.notes_category.is_none(), theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.notes_category = None;
+            cx.notify();
+        })));
+        for category in &categories {
+            let id = category.id.clone();
+            let on = self.notes_category.as_deref() == Some(category.id.as_str());
+            filters = filters.child(
+                crate::note_editor::chip(SharedString::from(format!("notes-cat-{}", category.id)), None, category.name.clone(), on, theme)
+                    .child(div().size(px(8.)).rounded_full().bg(theme.slot(category.colour)))
+                    .flex_row_reverse()
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.notes_category = if this.notes_category.as_deref() == Some(id.as_str()) { None } else { Some(id.clone()) };
+                        cx.notify();
+                    })),
+            );
+        }
+        filters = filters.child(div().flex_1()).child(div().w(px(180.)).px_2().py_0p5().rounded_md().border_1().border_color(theme.border).bg(theme.bg).text_xs().child(self.notes_search.clone()));
+        let row = |note: crate::notes::Note, cx: &mut Context<Self>| {
+            let store = self.notes.read(cx);
+            let dot = store.category(note.category.as_deref()).map(|c| theme.slot(c.colour));
+            let links: Vec<String> = crate::links::parse_all(&note.links)
+                .into_iter()
+                .map(|l| match &l {
+                    crate::links::Link::Note(id) => store.note(id).map(|n| n.title()).unwrap_or_default(),
+                    other => other.short(),
+                })
+                .collect();
+            let todos = store.linked(&crate::links::Link::Note(note.id.clone())).1.iter().filter(|t| t.done.is_none()).count();
+            let open = format!("n:{}", note.id);
+            let mut facts = vec![crate::notes::when(note.updated)];
+            if let Some(author) = &note.author {
+                facts.push(author.clone());
+            }
+            facts.extend(links);
+            if todos > 0 {
+                facts.push(format!("{todos} to do"));
+            }
+            div()
+                .id(SharedString::from(format!("note-row-{}", note.id)))
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_2()
+                .px_4()
+                .py_2()
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.tile))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(open.clone(), cx)))
+                .child(div().flex_none().mt(px(6.)).size(px(8.)).rounded_full().map(|d| match dot {
+                    Some(colour) => d.bg(colour),
+                    None => d.border_1().border_color(theme.tertiary),
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().flex().flex_row().items_center().gap_1().child(div().min_w_0().truncate().text_sm().text_color(theme.fg).child(note.title())).when(note.shared.is_some() && note.author.is_none(), |d| {
+                            d.child(gpui::svg().path("icons/user_group.svg").size(px(12.)).text_color(if note.unpublished() { theme.orange() } else { theme.secondary }))
+                        }))
+                        .when(!note.preview().is_empty(), |d| d.child(div().truncate().text_xs().text_color(theme.secondary).child(note.preview())))
+                        .child(div().truncate().text_xs().text_color(theme.tertiary).child(facts.join(" · "))),
+                )
+                .into_any_element()
+        };
+        let empty = mine.is_empty() && shared.is_empty();
+        let mine_rows: Vec<AnyElement> = mine.into_iter().map(|n| row(n, cx)).collect();
+        let shared_rows: Vec<AnyElement> = shared.into_iter().map(|n| row(n, cx)).collect();
+        let list = div()
+            .id("notes-list")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .py_1()
+            .when(empty, |d| d.child(div().px_4().py_6().text_sm().text_color(theme.secondary).text_center().child(if total == 0 { "No notes yet. Type below and press Return to start one; /note starts one from any thread." } else { "No notes match." })))
+            .children(mine_rows)
+            .when(!shared_rows.is_empty(), |d| d.child(div().px_4().pt_3().pb_1().text_xs().text_color(theme.secondary).child("Shared by the team")))
+            .children(shared_rows);
+        div().flex_1().min_h_0().flex().flex_col().child(nav).child(filters).child(list).into_any_element()
     }
 
     /// A session thread's actions, in a bar kept at the bottom above the
@@ -2664,12 +2889,19 @@ impl Render for MarraView {
         } else if behind <= px(24.) {
             self.chat_scroll.scroll_to_bottom();
         }
-        // The composer says what Return does: add a todo, or message.
-        let todos_open = self.open.as_deref() == Some("todos");
-        if todos_open != self.todo_placeholder {
-            self.todo_placeholder = todos_open;
-            self.composer.update(cx, |editor, cx| editor.set_placeholder_text(if todos_open { "Add a todo" } else { "Message Marra" }, window, cx));
+        // The composer says what Return does: add a todo or a note, or message.
+        let placeholder = match self.open.as_deref() {
+            Some("todos") => "Add a todo",
+            Some("notes") => "Start a note: the first line is its title",
+            _ => "Message Marra",
+        };
+        if placeholder != self.todo_placeholder {
+            self.todo_placeholder = placeholder;
+            self.composer.update(cx, |editor, cx| editor.set_placeholder_text(placeholder, window, cx));
         }
+        self.sync_note_editor(window, cx);
+        // A note has its own editor, so no composer under it.
+        let composing = !self.open.as_deref().is_some_and(|o| o.starts_with("n:"));
         let menus = self.menus(&theme, cx);
         let row_menu = self.row_menu_view(&theme, cx);
         let panel = if self.split() {
@@ -2689,7 +2921,7 @@ impl Render for MarraView {
                     Some(id) => d.child(self.thread_view(&id, &theme, cx)),
                     None => d.child(div().flex_1().flex().items_center().justify_center().text_sm().text_color(theme.secondary).child("Choose a thread")),
                 })
-                .child(self.composer_view(&theme, cx));
+                .when(composing, |d| d.child(self.composer_view(&theme, cx)));
             div().relative().flex_1().min_h_0().flex().flex_row().child(list).child(detail)
         } else {
             div()
@@ -2703,7 +2935,7 @@ impl Render for MarraView {
                     Some(id) => d.child(self.thread_view(&id, &theme, cx)),
                     None => d.child(self.new_issue_view(&theme, cx)).child(self.needs_view(&theme, cx)).child(self.threads_view(&theme, cx)),
                 })
-                .child(self.composer_view(&theme, cx))
+                .when(composing, |d| d.child(self.composer_view(&theme, cx)))
         };
         div()
             .id("marra")

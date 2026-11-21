@@ -57,20 +57,20 @@ fn kind_of_type(kind: &str) -> Option<HarnessKind> {
 
 /// A front matter value: text, or a list.
 #[derive(Clone)]
-enum Value {
+pub enum Value {
     Text(String),
     List(Vec<String>),
 }
 
 impl Value {
-    fn text(&self) -> Option<String> {
+    pub fn text(&self) -> Option<String> {
         match self {
             Value::Text(t) => (!t.is_empty()).then(|| t.clone()),
             Value::List(items) => items.first().cloned(),
         }
     }
 
-    fn list(&self) -> Vec<String> {
+    pub fn list(&self) -> Vec<String> {
         match self {
             Value::Text(t) if t.is_empty() => Vec::new(),
             Value::Text(t) => vec![t.clone()],
@@ -91,7 +91,7 @@ fn unquoted(text: &str) -> String {
 /// The front matter, as `HarnessFrontMatter.parse`: `key: value`,
 /// `[inline, lists]`, `- item` lists, and `>` or `|` blocks. None when the
 /// text doesn't open with `---` or never closes it.
-fn front_matter(lines: &[&str]) -> Option<BTreeMap<String, Value>> {
+pub fn front_matter(lines: &[&str]) -> Option<BTreeMap<String, Value>> {
     if lines.first()?.trim() != "---" {
         return None;
     }

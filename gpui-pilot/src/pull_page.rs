@@ -711,11 +711,15 @@ pub struct PullPage {
     commit_view: Option<(String, gpui::Entity<crate::pr_diff::CommitDiff>)>,
     check_view: Option<(String, gpui::Entity<crate::check_detail::CheckDetail>)>,
     _fetch: Option<Task<()>>,
+    /// Redraws as notes and todos about it change.
+    _notes: Option<gpui::Subscription>,
 }
 
 impl PullPage {
     pub fn new(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), docs: Default::default(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), parts: Vec::new(), merged: None, commit_view: None, check_view: None, _fetch: None };
+        let notes = crate::notes::NotesStore::get(cx);
+        let _notes = Some(cx.observe(&notes, |_, _, cx| cx.notify()));
+        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), docs: Default::default(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), parts: Vec::new(), merged: None, commit_view: None, check_view: None, _fetch: None, _notes };
         page.refresh(cx);
         page
     }
@@ -744,6 +748,7 @@ impl PullPage {
             commit_view: None,
             check_view: None,
             _fetch: None,
+            _notes: None,
         }
     }
 
@@ -777,6 +782,7 @@ impl PullPage {
             commit_view: None,
             check_view: None,
             _fetch: None,
+            _notes: None,
         });
         self.parts.push(entity.downgrade());
         entity
@@ -1686,6 +1692,7 @@ impl PullPage {
             })
             // What it relates to first: each opens in a drawer.
             .child(related)
+            .child(crate::note_editor::linked_section(&crate::links::Link::Pr { repo: self.pr.repo.clone(), number: self.pr.number as u64 }, None, theme, cx))
             .child(reviewers)
             .child(assignees)
             .child(labels)
