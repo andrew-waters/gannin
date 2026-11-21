@@ -1625,6 +1625,10 @@ impl Workspace {
     /// open already.
     fn open_pull_page(&mut self, pr: PrItem, window: &mut Window, cx: &mut Context<Self>) {
         self.drawers.clear();
+        // A PR being reviewed: its page is the review's tab.
+        if self.show_session(&pr.id, crate::launch::Flow::Review, window, cx) {
+            return;
+        }
         if let Some(index) = self.tabs.iter().position(|t| matches!(&t.page, Page::Pull(p) if p.read(cx).pr_id() == pr.id)) {
             self.activate(index, window, cx);
             return;
@@ -4041,13 +4045,32 @@ impl Workspace {
                 .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
                 .child(label)
         };
+        // Open on GitHub, with GitHub's mark on its left.
+        let github = |id: &'static str, tip: String| {
+            div()
+                .id((id, seq))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1p5()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .cursor_pointer()
+                .border_1()
+                .border_color(theme.border)
+                .hover(|s| s.bg(theme.row_selected))
+                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+                .child(gpui::svg().path("icons/github.svg").size(px(14.)).flex_none().text_color(theme.fg))
+                .child("Open on GitHub")
+        };
         let mut actions: Vec<AnyElement> = Vec::new();
         match &drawer.item {
             DrawerItem::Issue(item) => {
                 let issue = item.issue.clone();
                 let url = issue.url.clone();
                 actions.push(
-                    action("issue-github", "Open on GitHub".into(), "Open this issue on GitHub".into())
+                    github("issue-github", "Open this issue on GitHub".into())
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                         .into_any_element(),
                 );
@@ -4084,45 +4107,26 @@ impl Workspace {
             DrawerItem::Doc(doc) => {
                 let url = doc.url();
                 actions.push(
-                    action("doc-github", "Open on GitHub".into(), "Open this document in the harness on GitHub".into())
+                    github("doc-github", "Open this document in the harness on GitHub".into())
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                         .into_any_element(),
                 );
             }
             DrawerItem::Pull(pr) => {
+                // One way in: the PR's page, which is its review's when it has
+                // one. Review with Claude and Explain are on that page.
                 let url = pr.url.clone();
                 let paged = pr.clone();
                 actions.push(
-                    action("pr-page", "Open in Page".into(), "Open this pull request as a page of its own, with everything GitHub shows and what the harness knows".into())
+                    action("pr-page", "Open PR".into(), "Open this pull request's page: its review, checks, timeline and files".into())
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_pull_page(paged.clone(), window, cx)))
                         .into_any_element(),
                 );
                 actions.push(
-                    action("pr-github", "Open on GitHub".into(), "Open this pull request on GitHub".into())
+                    github("pr-github", "Open this pull request on GitHub".into())
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                         .into_any_element(),
                 );
-                // Reviews are for open PRs, as Gannin's drawer offers them.
-                if pr.state == PrState::Open {
-                    let has_review = self.session_for(&pr.id, Flow::Review, cx).is_some() || Self::saved_launch(&pr.id, Flow::Review).is_some();
-                    let (label, tip) = if has_review {
-                        ("Open Review", "Show Claude's review of this PR".to_string())
-                    } else {
-                        ("Review with Claude", "Have Claude review this PR, then go through its findings and post the review to GitHub".to_string())
-                    };
-                    let reviewed = pr.clone();
-                    actions.push(
-                        action("review-with-claude", label.into(), tip)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.review_pr(reviewed.clone(), window, cx)))
-                            .into_any_element(),
-                    );
-                    let explained = pr.clone();
-                    actions.push(
-                        action("explain", "Explain".into(), "Have Claude explain what this PR changes and why, in plain terms".into())
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.explain_pr(explained.clone(), window, cx)))
-                            .into_any_element(),
-                    );
-                }
             }
         }
         actions

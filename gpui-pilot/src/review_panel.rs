@@ -1331,7 +1331,24 @@ impl ReviewPanel {
                         },
                     )))
                 })
-                .child(Self::button("review-github", "Open on GitHub", false, true, theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                .child(
+                    div()
+                        .id("review-github")
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.85))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1p5()
+                        .child(gpui::svg().path("icons/github.svg").size(px(14.)).flex_none().text_color(theme.fg))
+                        .child("Open on GitHub")
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))),
+                )
                 .child(Self::button("review-explain", "Explain", false, live || pull, theme).when(live || pull, |d| d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.explain(cx)))))
                 .child(Self::button("review-check", if pull { "Refresh" } else { "Check for Changes" }, false, !self.checking, theme).when(!self.checking, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.check_for_changes(cx)))
