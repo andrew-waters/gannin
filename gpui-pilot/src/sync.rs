@@ -21,7 +21,8 @@ const PR_FIELDS: &str = "... on PullRequest { id number title url isDraft state 
 
 /// An issue's description and recent comments, fetched with each synced
 /// issue so the Issues search can match them (kept in `Details.json`).
-const ISSUE_TEXT: &str = "... on Issue { body comments(last: 20) { totalCount nodes { url body createdAt author { login } } } }";
+/// `name` is only on `User`, not on the `Actor` a comment's author is.
+const ISSUE_TEXT: &str = "... on Issue { body updatedAt comments(last: 20) { totalCount nodes { url body createdAt author { login avatarUrl ... on User { name } } } } }";
 
 const ISSUE_FIELDS: &str = "... on Issue { id number title url state createdAt updatedAt closedAt repository { nameWithOwner } author { login avatarUrl } assignees(first: 10) { nodes { login avatarUrl } } labels(first: 10) { nodes { name color } } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { id number title url state repository { nameWithOwner } } } }";
 
@@ -564,7 +565,9 @@ fn merge_issues(org: &str, nodes: &[Value], full: bool) -> std::io::Result<()> {
 
 // MARK: - One issue
 
-const TEXT_FIELDS: &str = "... on Issue { body comments(last: 20) { totalCount nodes { url body createdAt author { login } } } } ... on PullRequest { body comments(last: 20) { totalCount nodes { url body createdAt author { login } } } }";
+/// What `detail::remember` keeps of an issue or PR. Only a PR has branches
+/// and checks.
+const TEXT_FIELDS: &str = "... on Issue { body updatedAt comments(last: 20) { totalCount nodes { url body createdAt author { login avatarUrl ... on User { name } } } } } ... on PullRequest { body updatedAt headRefName baseRefName commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 20) { totalCount nodes { url body createdAt author { login avatarUrl ... on User { name } } } } }";
 
 /// Fetches one issue or PR as its drawer opens: its description and
 /// comments, kept in the org's `Details.json`; and for an issue in this
