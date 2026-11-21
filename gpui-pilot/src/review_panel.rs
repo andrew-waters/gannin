@@ -80,6 +80,37 @@ enum Selected {
     General,
     Learnings,
     File(String),
+    /// The PR page's parts, with `pull` set.
+    Timeline,
+    Commits,
+    Checks,
+}
+
+/// The PR page laid into the panel, each part its own `PullPage`: the
+/// merged PR and review sketch in Review Preview.
+pub struct PullParts {
+    attention: Entity<crate::pull_page::PullPage>,
+    description: Entity<crate::pull_page::PullPage>,
+    timeline: Entity<crate::pull_page::PullPage>,
+    commits: Entity<crate::pull_page::PullPage>,
+    checks: Entity<crate::pull_page::PullPage>,
+    sidebar: Entity<crate::pull_page::PullPage>,
+}
+
+impl PullParts {
+    /// A made-up pull request's parts.
+    pub fn preview(repo: &str, number: i64, title: &str, cx: &mut gpui::App) -> Self {
+        use crate::pull_page::{Part, PullPage};
+        let mut part = |p: Part| cx.new(|_| PullPage::preview(repo, number, title, p));
+        Self {
+            attention: part(Part::Attention),
+            description: part(Part::Description),
+            timeline: part(Part::Timeline),
+            commits: part(Part::Commits),
+            checks: part(Part::Checks),
+            sidebar: part(Part::Sidebar),
+        }
+    }
 }
 
 /// How long claude's input takes to be ready after its SessionStart hook.
@@ -149,6 +180,9 @@ pub struct ReviewPanel {
     show_criteria: bool,
     /// Each changed file's diff from GitHub, made when it's first shown.
     diffs: HashMap<String, Entity<crate::pr_diff::PrDiff>>,
+    /// The PR page merged in (the sketch only): its parts in the list, the
+    /// Overview and a sidebar.
+    pull: Option<PullParts>,
     _poll: Option<Task<()>>,
     /// Redraws the relative times now and then.
     _clock: Task<()>,
@@ -334,6 +368,7 @@ impl ReviewPanel {
             show_grading: false,
             show_criteria: false,
             diffs: HashMap::new(),
+            pull: None,
             _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
             sensitive,
@@ -388,6 +423,7 @@ impl ReviewPanel {
             show_grading: false,
             show_criteria: false,
             diffs: HashMap::new(),
+            pull: None,
             _clock: Self::clock(cx),
             source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, working, snapshot: Arc::new(snapshot) },
             result,
@@ -404,6 +440,12 @@ impl ReviewPanel {
             post,
             _poll: None,
         }
+    }
+
+    /// Merges the PR page in: the sketch in Review Preview.
+    pub fn with_pull(mut self, parts: PullParts) -> Self {
+        self.pull = Some(parts);
+        self
     }
 
     fn subject(&self) -> (String, i64) {
@@ -1210,6 +1252,9 @@ impl ReviewPanel {
                             .child(title),
                     )
                     .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{repo}#{number}")))
+                    .when_some(self.pull.as_ref().map(|p| p.sidebar.read(cx).state_pill(theme)), |d, (state, tint)| {
+                        d.child(div().flex_none().px_2().rounded_full().text_xs().bg(tint).text_color(theme.on_selected).font_weight(FontWeight::MEDIUM).child(state))
+                    })
                     // Who opened it: their avatar and name, the login in its tooltip.
                     .when_some(self.author.clone(), |d, author| {
                         let shown = author.name.clone().unwrap_or_else(|| author.login.clone());
@@ -1303,6 +1348,21 @@ impl ReviewPanel {
         }
         rows.push(self.standing(theme, cx).into_any_element());
         rows.push(self.list_row("row-overview".into(), Selected::Overview, "Overview".into(), None, None, theme, cx).into_any_element());
+        // The PR page's own parts, under the Overview.
+        let pull_files = self.pull.as_ref().map(|p| {
+            let (commits, checks, failing) = p.sidebar.read(cx).counts();
+            let paths = p.sidebar.read(cx).file_paths();
+            (commits, checks, failing, paths)
+        });
+        if let Some((commits, checks, failing, _)) = &pull_files {
+            let checks_badge = if *failing > 0 { (*failing, theme.critical()) } else { (*checks, theme.good()) };
+            rows.push(self.list_row("row-timeline".into(), Selected::Timeline, "Timeline".into(), None, None, theme, cx).into_any_element());
+            rows.push(self.list_row("row-commits".into(), Selected::Commits, "Commits".into(), None, Some((*commits, theme.secondary)), theme, cx).into_any_element());
+            rows.push(
+                self.list_row("row-checks".into(), Selected::Checks, if *failing > 0 { "Checks, failing".into() } else { "Checks".into() }, None, Some(checks_badge), theme, cx)
+                    .into_any_element(),
+            );
+        }
         let general = self.general();
         if !general.is_empty() {
             let kept = general.iter().filter(|f| !self.dismissed.contains(&f.key())).count();
@@ -1346,6 +1406,16 @@ impl ReviewPanel {
                         .into_any_element(),
                     );
                 }
+            }
+        }
+        // Not reviewed yet: the PR's files, flat, as the walkthrough has
+        // none to group them by.
+        if let (None, Some((_, _, _, paths))) = (&self.result, pull_files) {
+            rows.push(div().mt_3().mb_1().px_2().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("Files {}", paths.len())).into_any_element());
+            for path in paths {
+                let (name, folder) = file_name(&path);
+                let (name, folder) = (name.to_string(), folder.to_string());
+                rows.push(self.list_row(SharedString::from(format!("row-file-{path}")), Selected::File(path.clone()), name, Some(folder), None, theme, cx).into_any_element());
             }
         }
         div()
@@ -1937,7 +2007,16 @@ impl ReviewPanel {
     }
 
     fn file_detail(&self, path: &str, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(result) = self.result.clone() else { return div().into_any_element() };
+        let Some(result) = self.result.clone() else {
+            // A file listed from the PR before there's a review.
+            return div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().font_family(crate::zed::MONO).text_sm().child(path.to_string()))
+                .child(div().text_sm().text_color(theme.secondary).child("Not reviewed yet: its diff shows here, and a review adds its findings above it."))
+                .into_any_element();
+        };
         let area = result.area_of(path).map(|i| (i, result.walkthrough[i].clone()));
         let mut findings: Vec<Finding> = result.findings.iter().filter(|f| f.path == path).cloned().collect();
         findings.sort_by_key(|f| (f.line.unwrap_or(0), f.rank()));
@@ -2360,9 +2439,32 @@ impl Render for ReviewPanel {
         // detail area had when last laid out.
         let wide = self.detail_width.get() >= 980.;
         let risk_side = (wide && draft.is_none() && self.selected == Selected::Overview).then(|| self.risk()).flatten().map(|risk| self.risk_panel(&risk, &theme, cx));
+        // The PR page's sidebar (reviewers, labels, linked issues) beside
+        // everything but a file, whose diff wants the width.
+        let pull_side = self.pull.as_ref().filter(|_| wide && draft.is_none() && !matches!(self.selected, Selected::File(_))).map(|p| p.sidebar.clone());
+        let pull_part = |pick: fn(&PullParts) -> &Entity<crate::pull_page::PullPage>| self.pull.as_ref().map(|p| pick(p).clone().into_any_element()).unwrap_or_else(|| div().into_any_element());
         let detail = match self.selected.clone() {
             _ if draft.is_some() => draft.unwrap(),
+            // Merged: where the PR stands and what's open on GitHub, then
+            // the review, then the description.
+            Selected::Overview if self.pull.is_some() => {
+                let parts = self.pull.as_ref().unwrap();
+                let (attention, description) = (parts.attention.clone(), parts.description.clone());
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(28.))
+                    .max_w(px(860.))
+                    .child(attention)
+                    .child(div().border_t_1().border_color(theme.border))
+                    .child(self.overview(wide, &theme, cx))
+                    .child(div().flex().flex_col().gap_2().child(Self::section_heading("Description")).child(description))
+                    .into_any_element()
+            }
             Selected::Overview => self.overview(wide, &theme, cx).into_any_element(),
+            Selected::Timeline => div().max_w(px(860.)).child(pull_part(|p| &p.timeline)).into_any_element(),
+            Selected::Commits => div().max_w(px(860.)).child(pull_part(|p| &p.commits)).into_any_element(),
+            Selected::Checks => div().max_w(px(860.)).child(pull_part(|p| &p.checks)).into_any_element(),
             Selected::General => self.general_detail(&theme, cx).into_any_element(),
             Selected::Learnings => self.learnings_detail(&theme).into_any_element(),
             Selected::File(path) => self.file_detail(&path, &theme, cx).into_any_element(),
@@ -2439,8 +2541,20 @@ impl Render for ReviewPanel {
                                 ),
                                 None => d.child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail)),
                             })
-                            .when_some(risk_side, |d, side| {
-                                d.child(div().id("review-risk").flex_none().w(px(340.)).h_full().overflow_y_scroll().p_5().border_l_1().border_color(theme.border).bg(theme.sidebar).child(side))
+                            .when(risk_side.is_some() || pull_side.is_some(), |d| {
+                                d.child(
+                                    div()
+                                        .id("review-risk")
+                                        .flex_none()
+                                        .w(px(340.))
+                                        .h_full()
+                                        .overflow_y_scroll()
+                                        .p_5()
+                                        .border_l_1()
+                                        .border_color(theme.border)
+                                        .bg(theme.sidebar)
+                                        .child(div().flex().flex_col().gap_6().children(risk_side).children(pull_side)),
+                                )
                             }),
                     ),
             )

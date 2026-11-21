@@ -5,7 +5,7 @@
 
 use crate::charts::Theme;
 use crate::review::{self, Snapshot};
-use crate::review_panel::{Post, ReviewPanel};
+use crate::review_panel::{Post, PullParts, ReviewPanel};
 use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, SharedString, Window};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -141,16 +141,19 @@ fn snapshot(own: bool) -> Snapshot {
 
 pub struct ReviewPreview {
     state: State,
+    /// The sketch of the PR page merged into the review: its parts in the
+    /// list, the Overview and a sidebar.
+    merged: bool,
     panel: Entity<ReviewPanel>,
 }
 
 impl ReviewPreview {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let panel = Self::make(State::Findings, window, cx);
-        Self { state: State::Findings, panel }
+        let panel = Self::make(State::Findings, true, window, cx);
+        Self { state: State::Findings, merged: true, panel }
     }
 
-    fn make(state: State, window: &mut Window, cx: &mut Context<Self>) -> Entity<ReviewPanel> {
+    fn make(state: State, merged: bool, window: &mut Window, cx: &mut Context<Self>) -> Entity<ReviewPanel> {
         let result = match state {
             State::Reviewing => None,
             State::Approve => review::parse(APPROVE),
@@ -167,12 +170,19 @@ impl ReviewPreview {
             State::PostFailed => Some(Post::Failed("GitHub refused the review (422): the commit it's for is no longer the head of the pull request.".into())),
             _ => None,
         };
-        cx.new(|cx| ReviewPanel::preview(REPO, NUMBER, result, idle, working, snapshot(own), post, window, cx))
+        cx.new(|cx| {
+            let panel = ReviewPanel::preview(REPO, NUMBER, result, idle, working, snapshot(own), post, window, cx);
+            if merged {
+                panel.with_pull(PullParts::preview(REPO, NUMBER, "Add idempotency keys to the payments API", cx))
+            } else {
+                panel
+            }
+        })
     }
 
     fn pick(&mut self, state: State, window: &mut Window, cx: &mut Context<Self>) {
         self.state = state;
-        self.panel = Self::make(state, window, cx);
+        self.panel = Self::make(state, self.merged, window, cx);
         cx.notify();
     }
 }
@@ -206,7 +216,25 @@ impl Render for ReviewPreview {
                     .when(!on, |d| d.text_color(theme.secondary).hover(|s| s.bg(theme.row_selected)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.pick(state, window, cx)))
                     .child(state.title())
-            }));
+            }))
+            .child(div().flex_1())
+            .child({
+                let on = self.merged;
+                div()
+                    .id("preview-merged")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .text_xs()
+                    .cursor_pointer()
+                    .when(on, |d| d.bg(theme.selected).text_color(theme.on_selected))
+                    .when(!on, |d| d.text_color(theme.secondary).hover(|s| s.bg(theme.row_selected)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.merged = !on;
+                        this.pick(this.state, window, cx);
+                    }))
+                    .child("Merged with PR page")
+            });
         div()
             .size_full()
             .flex()

@@ -395,9 +395,108 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
     })
 }
 
+/// Which piece of the page to draw: the whole page, or one part of it for
+/// the review panel to lay out itself (the merged PR and review sketch in
+/// Review Preview).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Part {
+    Whole,
+    /// Where it stands and whose move it is, and what needs attention.
+    Attention,
+    Description,
+    Timeline,
+    Commits,
+    Checks,
+    Sidebar,
+}
+
+/// A made-up pull request for the merged sketch: the same change as the
+/// Review Preview's review, with one round of review, the author's reply
+/// and a second push.
+fn sample(repo: &str, number: i64, title: &str) -> PullData {
+    let now = Utc::now();
+    let ago = |hours: i64| Some(now - chrono::Duration::hours(hours));
+    let url = format!("https://github.com/{repo}/pull/{number}");
+    let who = |login: &str| Person { login: login.into(), avatar: None, bot: false };
+    let commit = |short: &str, headline: &str, hours: i64| CommitRow { short: short.into(), headline: headline.into(), at: ago(hours), url: format!("{url}/commits"), author: "alex".into() };
+    let commits = vec![
+        commit("a1c3f9e", "Add the idempotency_keys table", 50),
+        commit("b7d2e10", "Check the key before charging", 49),
+        commit("c4e8a77", "Tests for retries and replays", 48),
+        commit("d9f1b02", "One transaction around the check and the insert", 6),
+        commit("e2a6c35", "Expire keys after 24 hours", 5),
+    ];
+    let as_event = |c: &CommitRow| Event::Commit { short: c.short.clone(), headline: c.headline.clone(), at: c.at, author: c.author.clone() };
+    let mut timeline: Vec<Event> = commits[..3].iter().map(as_event).collect();
+    timeline.push(Event::Note { actor: "alex".into(), text: "asked sam and priya to review".into(), at: ago(48), noise: true });
+    timeline.push(Event::Review { id: "r1".into(), author: who("sam"), state: "CHANGES_REQUESTED".into(), body: "The check and the insert can race: see the thread on payments.rs.".into(), at: ago(30), url: url.clone() });
+    timeline.push(Event::Comment { author: who("alex"), body: "Good catch. Fixing it with one transaction, and adding expiry while I'm there.".into(), at: ago(28), url: url.clone() });
+    timeline.extend(commits[3..].iter().map(as_event));
+    timeline.push(Event::Comment { author: Person { login: "ci-bot".into(), avatar: None, bot: true }, body: "Coverage 84% (+1.2%)".into(), at: ago(5), url: url.clone() });
+    let thread = |path: &str, line: i64, resolved: bool, comments: &[(&str, &str)], hours: i64| Thread {
+        review: Some("r1".into()),
+        path: path.into(),
+        line: Some(line),
+        resolved,
+        comments: comments.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+        started_by: comments[0].0.into(),
+        last_by: comments[comments.len() - 1].0.into(),
+        last_at: ago(hours),
+        url: url.clone(),
+    };
+    let file = |path: &str, additions: i64, deletions: i64, change: &str| FileRow { path: path.into(), additions, deletions, change: change.into() };
+    let check = |name: &str, outcome: &'static str| CheckRow { name: name.into(), outcome, url: Some(format!("{url}/checks")) };
+    PullData {
+        viewer: "jo".into(),
+        id: format!("preview-{number}"),
+        title: title.into(),
+        state: "OPEN".into(),
+        draft: false,
+        body: "Retried payment requests can charge a card twice. This adds an `Idempotency-Key` header: the first request with a key is processed and its response kept; a retry with the same key gets that response back.\n\nCloses #198.".into(),
+        author: who("alex"),
+        created_at: ago(50),
+        merged_at: None,
+        closed_at: None,
+        merged_by: None,
+        base: "main".into(),
+        head: "alex/idempotency-keys".into(),
+        additions: 412,
+        deletions: 37,
+        labels: vec![("payments".into(), "0e8a16".into()), ("api".into(), "1d76db".into())],
+        assignees: vec![who("alex")],
+        milestone: Some("Q4 hardening".into()),
+        reviewers: vec![
+            Reviewer { person: who("sam"), at: ago(30), state: "CHANGES_REQUESTED".into() },
+            Reviewer { person: who("priya"), at: ago(48), state: "REQUESTED".into() },
+        ],
+        linked: vec![Linked { id: "preview-issue-198".into(), number: 198, title: "Retried payments can charge twice".into(), url: format!("https://github.com/{repo}/issues/198"), open: true, repo: repo.into() }],
+        participants: vec![who("alex"), who("sam"), who("priya")],
+        commit_total: commits.len(),
+        commits,
+        files: vec![
+            file("migrations/0042_idempotency_keys.sql", 18, 0, "ADDED"),
+            file("migrations/0043_key_expiry.sql", 6, 0, "ADDED"),
+            file("src/store/keys.rs", 96, 0, "ADDED"),
+            file("src/jobs/sweep_keys.rs", 41, 0, "ADDED"),
+            file("src/api/payments.rs", 88, 31, "MODIFIED"),
+            file("src/api/errors.rs", 12, 6, "MODIFIED"),
+            file("tests/payments_idempotency.rs", 151, 0, "ADDED"),
+        ],
+        file_total: 7,
+        checks: vec![check("build", "success"), check("unit tests", "success"), check("lint", "success"), check("e2e", "failure")],
+        timeline,
+        threads: vec![
+            thread("src/api/payments.rs", 88, true, &[("sam", "The lookup and the insert can race."), ("alex", "Both in one transaction now.")], 6),
+            thread("src/api/errors.rs", 57, false, &[("sam", "Say which request the key belonged to.")], 30),
+            thread("src/store/keys.rs", 31, false, &[("sam", "Do keys ever expire?"), ("alex", "They do now, after 24 hours. Long enough?")], 5),
+        ],
+    }
+}
+
 pub struct PullPage {
     pr: PrItem,
     org: String,
+    part: Part,
     data: Option<PullData>,
     error: Option<String>,
     loading: bool,
@@ -418,9 +517,79 @@ pub struct PullPage {
 
 impl PullPage {
     pub fn new(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { pr, org, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), _fetch: None };
+        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), _fetch: None };
         page.refresh(cx);
         page
+    }
+
+    /// One part of a made-up pull request, never fetched: for the merged
+    /// sketch in Review Preview.
+    pub fn preview(repo: &str, number: i64, title: &str, part: Part) -> Self {
+        let now = Utc::now();
+        let pr = PrItem {
+            id: format!("preview-{number}"),
+            number,
+            title: title.into(),
+            url: format!("https://github.com/{repo}/pull/{number}"),
+            repo: repo.into(),
+            repo_name: repo.rsplit('/').next().unwrap_or(repo).into(),
+            author: Some("alex".into()),
+            author_name: None,
+            author_avatar: None,
+            author_is_bot: false,
+            state: crate::prs::PrState::Open,
+            draft: false,
+            standing: None,
+            checks: None,
+            has_details: false,
+            reviewers: Vec::new(),
+            assignees: Vec::new(),
+            linked: Vec::new(),
+            additions: None,
+            deletions: None,
+            files: None,
+            branch: None,
+            created_at: now,
+            updated_at: now,
+            merged_at: None,
+            closed_at: None,
+            merged_by: None,
+            first_commit_at: None,
+            ready_at: None,
+            last_commit_at: None,
+            commits: Vec::new(),
+            reviews: Vec::new(),
+        };
+        Self {
+            pr,
+            org: String::new(),
+            part,
+            data: Some(sample(repo, number, title)),
+            error: None,
+            loading: false,
+            section: Section::Overview,
+            plans: Vec::new(),
+            related: Vec::new(),
+            width: Default::default(),
+            rounds_open: Default::default(),
+            noise_open: Default::default(),
+            _fetch: None,
+        }
+    }
+
+    /// The changed files' paths, for a file list before there's a review.
+    pub fn file_paths(&self) -> Vec<String> {
+        self.data.as_ref().map(|d| d.files.iter().map(|f| f.path.clone()).collect()).unwrap_or_default()
+    }
+
+    /// Commits, checks and failing checks, for the counts in a list.
+    pub fn counts(&self) -> (usize, usize, usize) {
+        self.data.as_ref().map_or((0, 0, 0), |d| (d.commit_total, d.checks.len(), d.checks.iter().filter(|c| c.outcome == "failure").count()))
+    }
+
+    /// Its state's word and colour, for a pill.
+    pub fn state_pill(&self, theme: &Theme) -> (&'static str, Hsla) {
+        self.state_tint(theme)
     }
 
     pub fn pr_id(&self) -> &str {
@@ -1326,6 +1495,21 @@ impl PullPage {
 impl Render for PullPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
+        if self.part != Part::Whole {
+            let Some(data) = &self.data else { return div().into_any_element() };
+            return match self.part {
+                Part::Attention => div().flex().flex_col().gap_4().child(self.decision_block(data, &theme)).child(self.attention(data, &theme, cx)).into_any_element(),
+                Part::Description => Self::card(&theme)
+                    .child(Self::card_head(&data.author, div().child("opened this").into_any_element(), data.created_at, None, &theme, cx))
+                    .child(div().p_3().child(markdown("pull-body", &data.body, &theme)))
+                    .into_any_element(),
+                Part::Timeline => div().flex().flex_col().gap_1().children(self.rounds_view(data, &theme, cx)).into_any_element(),
+                Part::Commits => self.commits(data, &theme, cx),
+                Part::Checks => self.checks(data, &theme, cx),
+                Part::Sidebar => self.sidebar(data, &theme, cx).into_any_element(),
+                Part::Whole => unreachable!(),
+            };
+        }
         // Narrow: one column, the sidebar under it. From 900 the sidebar
         // sits at the right edge and scrolls on its own; from 1500 Checks
         // and Files changed take a column between them.
@@ -1399,5 +1583,6 @@ impl Render for PullPage {
                     )
                     .child(body),
             )
+            .into_any_element()
     }
 }
