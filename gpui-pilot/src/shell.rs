@@ -196,7 +196,7 @@ fn sections() -> Vec<Section> {
                 Item(Scorecards),
                 // Item(PrFlow),
                 // Item(IssueFlow),
-                // Item(Releases),
+                Item(Releases),
                 // Item(Investments),
                 // Item(RdTime),
                 Item(Ci),
@@ -420,6 +420,7 @@ enum Page {
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
     AgentMetrics(Entity<crate::agent_metrics::AgentMetricsPage>),
+    Releases(Entity<crate::releases::ReleasesPage>),
     Pull(Entity<crate::pull_page::PullPage>),
     None,
 }
@@ -1114,6 +1115,7 @@ impl Workspace {
             Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             Nav::AgentMetrics => Page::AgentMetrics(cx.new(|cx| crate::agent_metrics::AgentMetricsPage::new(org.clone(), cx))),
+            Nav::Releases => Page::Releases(cx.new(|cx| crate::releases::ReleasesPage::new(org.clone(), window, cx))),
             _ => Page::None,
         };
         let subscriptions = Self::watch(&page, window, cx);
@@ -1190,6 +1192,13 @@ impl Workspace {
             ],
             // An issue or PR opens in its drawer, from its URL.
             Page::Activity(page) => vec![cx.subscribe(page, |this, _, event: &crate::activity::OpenItem, cx| match ItemLink::from_url(&event.url, event.issue_id.clone(), "") {
+                Some(link) => {
+                    this.drawers.clear();
+                    this.open_item(link, cx);
+                }
+                None => cx.open_url(&event.url),
+            })],
+            Page::Releases(page) => vec![cx.subscribe(page, |this, _, event: &crate::activity::OpenItem, cx| match ItemLink::from_url(&event.url, event.issue_id.clone(), "") {
                 Some(link) => {
                     this.drawers.clear();
                     this.open_item(link, cx);
@@ -2954,6 +2963,7 @@ impl Workspace {
                 Page::Activity(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::Harness(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::AgentMetrics(page) => page.update(cx, |page, cx| page.reload(cx)),
+                Page::Releases(page) => page.update(cx, |page, cx| page.reload(cx)),
                 _ => {}
             }
         }
@@ -4556,6 +4566,7 @@ impl Workspace {
                 Page::Harness(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::SchedulePreview(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::AgentMetrics(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
+                Page::Releases(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 _ => {}
             }
         }
@@ -6285,6 +6296,7 @@ impl Workspace {
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
                 Page::AgentMetrics(page) => page.into_any_element(),
+                Page::Releases(page) => page.into_any_element(),
                 Page::Pull(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
@@ -7636,6 +7648,7 @@ fn nav_icon(nav: Nav) -> &'static str {
         Nav::WorkflowsPreview => "icons/git_graph.svg",
         Nav::Settings => "icons/settings.svg",
         Nav::AgentMetrics => "icons/sparkle.svg",
+        Nav::Releases => "icons/box.svg",
         Nav::Session(_) => "icons/sparkle.svg",
         _ => "icons/file.svg",
     }

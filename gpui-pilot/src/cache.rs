@@ -23,6 +23,8 @@ pub enum Kind {
     WorkLog,
     /// The workload snapshot: the org's members and teams (`OrgSnapshot`).
     Snapshots,
+    /// Milestones, releases and stars (`ReleaseHistory`).
+    Releases,
 }
 
 impl Kind {
@@ -36,12 +38,13 @@ impl Kind {
             Kind::IssueHistory => "Issues",
             Kind::WorkLog => "WorkLog",
             Kind::Snapshots => "Snapshots",
+            Kind::Releases => "Releases",
         }
     }
 }
 
 /// The file name for an org, percent-encoded as `OrgJSONCache` does.
-fn file_name(org: &str) -> String {
+pub(crate) fn file_name(org: &str) -> String {
     let encoded = org.replace('%', "%25").replace(' ', "%20").replace('/', "%2F");
     format!("{encoded}.json")
 }

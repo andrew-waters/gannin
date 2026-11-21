@@ -69,6 +69,7 @@ mod work_live;
 mod work_panel;
 mod workflows;
 mod workflows_page;
+mod releases;
 mod scorecard;
 mod pr_diff;
 mod pr_picker;
