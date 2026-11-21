@@ -5234,14 +5234,15 @@ impl Workspace {
                 .flex_none()
                 .flex()
                 .flex_row()
-                .items_start()
+                .items_center()
                 .gap_2()
                 .px_3()
-                .py_2()
+                .min_h(px(FOOT_HEIGHT))
+                .py_1()
                 .bg(theme.selected.opacity(0.16))
                 .border_t_1()
                 .border_color(theme.selected.opacity(0.6))
-                .child(div().flex_none().pt_0p5().text_sm().font_weight(FontWeight::MEDIUM).child(format!("Message {count} of {}", all.len())))
+                .child(div().flex_none().text_sm().font_weight(FontWeight::MEDIUM).child(format!("Message {count} of {}", all.len())))
                 .child(
                     div()
                         .flex_1()
@@ -5279,11 +5280,6 @@ impl Workspace {
                     if let Some(b) = this.broadcast.as_mut() {
                         b.picked.clear();
                     }
-                    cx.notify();
-                })))
-                .child(button("broadcast-cancel", "Cancel".into(), false, true).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                    this.broadcast = None;
-                    this.focus_current(window, cx);
                     cx.notify();
                 })))
                 .child(button("broadcast-send", if count == 1 { "Send to 1".into() } else { format!("Send to {count}") }, true, ready).when(ready, |d| {
@@ -5344,16 +5340,22 @@ impl Workspace {
             // at the right.
             .map(|d| if vertical { d.flex_1().min_w_0() } else { d.flex_none() })
             .when(!vertical && (working > 0 || paused > 0 || can_message), |d| d.px_1().border_l_1().border_color(theme.border))
+            // Message, or while a message is being written, Cancel in its
+            // place (the strip along the foot is the composer's).
             .when(can_message || messaging, |d| {
                 d.child(
-                    button("message-sessions", "Message".into(), "Send one message to several Claude Code sessions: tick them in the tabs".into())
-                        .border_1()
-                        .border_color(theme.border)
-                        .when(messaging, |b| b.bg(theme.row_selected).text_color(theme.fg))
-                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                            cx.stop_propagation();
-                            this.toggle_broadcast(window, cx);
-                        })),
+                    button(
+                        "message-sessions",
+                        if messaging { "Cancel".into() } else { "Message".into() },
+                        if messaging { "Close the message without sending it".into() } else { "Send one message to several Claude Code sessions: tick them in the tabs".into() },
+                    )
+                    .border_1()
+                    .border_color(theme.border)
+                    .when(messaging, |b| b.bg(theme.bg).text_color(theme.fg))
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.toggle_broadcast(window, cx);
+                    })),
                 )
             })
             .when(vertical, |d| d.child(div().flex_1()))
@@ -5399,7 +5401,23 @@ impl Workspace {
             .child(self.tabs(true, theme, cx))
             // Pause, Resume and Message along the foot of the column, when
             // any of them would show.
-            .when(self.sessions.iter().any(|p| p.read(cx).state == State::Working || self.messageable(p.read(cx).id, cx)) || !self.paused_sessions.is_empty(), |d| d.child(div().flex_none().h(px(32.)).flex().flex_row().items_center().px_2().border_t_1().border_color(theme.border).child(self.pause_controls(true, theme, cx))))
+            .when(self.sessions.iter().any(|p| p.read(cx).state == State::Working || self.messageable(p.read(cx).id, cx)) || !self.paused_sessions.is_empty(), |d| {
+                // As tall as the composer beside it, and its tint while a
+                // message is written, so the two read as one strip.
+                let messaging = self.broadcast.is_some();
+                d.child(
+                    div()
+                        .flex_none()
+                        .h(px(FOOT_HEIGHT))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .px_2()
+                        .border_t_1()
+                        .map(|d| if messaging { d.bg(theme.selected.opacity(0.16)).border_color(theme.selected.opacity(0.6)) } else { d.border_color(theme.border) })
+                        .child(self.pause_controls(true, theme, cx)),
+                )
+            })
     }
 
     /// The "+" at the right of the tab bar, as the Claude Code window's in
@@ -7400,6 +7418,10 @@ fn work_brief(issue: &IssueItem, text: Option<&IssueText>, parent: Option<&Issue
     out.push_str(&crate::launch::working_here(&launch.harness_repo, &launch.harness_path, &launch.branch, Some(&reference), &issue.repo, false));
     out
 }
+
+/// The tab column's foot and the Message composer beside it: one height,
+/// so they line up as a strip.
+const FOOT_HEIGHT: f32 = 40.;
 
 /// What a tab's icon tells: claude working, claude asking you something,
 /// finished and not looked at since, or nothing to say.
