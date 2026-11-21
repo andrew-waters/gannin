@@ -1335,7 +1335,7 @@ impl ReviewPanel {
                 .flex_row()
                 .gap_2()
                 .when(self.running(), |d| {
-                    d.child(Self::button("review-conversation", "Terminal", false, true, theme).when(shown, |b| b.bg(theme.row_selected)).on_click(cx.listener(
+                    d.child(Self::icon_button("review-conversation", "icons/terminal.svg", "Terminal", false, true, theme).when(shown, |b| b.bg(theme.row_selected)).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             this.conversation = Some(!shown);
                             cx.notify();
@@ -1360,8 +1360,8 @@ impl ReviewPanel {
                         .child("Open on GitHub")
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))),
                 )
-                .child(Self::button("review-explain", "Explain", false, live || pull, theme).when(live || pull, |d| d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.explain(cx)))))
-                .child(Self::button("review-check", if pull { "Refresh" } else { "Check for Changes" }, false, !self.checking, theme).when(!self.checking, |d| {
+                .child(Self::icon_button("review-explain", "icons/book.svg", "Explain", false, live || pull, theme).when(live || pull, |d| d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.explain(cx)))))
+                .child(Self::icon_button("review-check", if pull { "icons/rotate_cw.svg" } else { "icons/history_rerun.svg" }, if pull { "Refresh" } else { "Check for Changes" }, false, !self.checking, theme).when(!self.checking, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.check_for_changes(cx)))
                 }))
                 // Merged with the PR page, these sit under the status in the
@@ -2762,6 +2762,24 @@ impl ReviewPanel {
             .gap_1p5()
             .text_color(theme.secondary)
             .child(Self::spinner("starting-spinner", 12., theme))
+            .child(label.to_string())
+    }
+
+    /// `button` with its icon on the left, for the header's.
+    fn icon_button(id: &'static str, icon: &'static str, label: &str, prominent: bool, enabled: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1p5()
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .map(|d| if prominent { d.bg(theme.selected).text_color(theme.on_selected) } else { d.border_1().border_color(theme.border) })
+            .when(enabled, |d| d.cursor_pointer().hover(|s| s.opacity(0.85)))
+            .when(!enabled, |d| d.opacity(0.4))
+            .child(gpui::svg().path(icon).size(px(14.)).flex_none().text_color(if prominent { theme.on_selected } else { theme.fg }))
             .child(label.to_string())
     }
 

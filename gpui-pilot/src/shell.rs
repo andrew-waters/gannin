@@ -4101,21 +4101,9 @@ impl Workspace {
     fn drawer_actions(&self, drawer: &Drawer, theme: &Theme, cx: &mut Context<Self>) -> Vec<AnyElement> {
         use crate::launch::Flow;
         let seq = drawer.seq;
-        let action = |id: &'static str, label: String, tip: String| {
-            div()
-                .id((id, seq))
-                .px_2()
-                .py_0p5()
-                .rounded_md()
-                .cursor_pointer()
-                .border_1()
-                .border_color(theme.border)
-                .hover(|s| s.bg(theme.row_selected))
-                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
-                .child(label)
-        };
-        // Open on GitHub, with GitHub's mark on its left.
-        let github = |id: &'static str, tip: String| {
+        // A button with its icon on the left; `lead` is the drawer's main
+        // one, filled blue.
+        let button = |id: &'static str, icon: &'static str, label: String, tip: String, lead: bool| {
             div()
                 .id((id, seq))
                 .flex()
@@ -4126,13 +4114,13 @@ impl Workspace {
                 .py_0p5()
                 .rounded_md()
                 .cursor_pointer()
-                .border_1()
-                .border_color(theme.border)
-                .hover(|s| s.bg(theme.row_selected))
+                .map(|d| if lead { d.bg(theme.selected).text_color(theme.on_selected).hover(|s| s.opacity(0.85)) } else { d.border_1().border_color(theme.border).hover(|s| s.bg(theme.row_selected)) })
                 .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
-                .child(gpui::svg().path("icons/github.svg").size(px(14.)).flex_none().text_color(theme.fg))
-                .child("Open on GitHub")
+                .child(gpui::svg().path(icon).size(px(14.)).flex_none().text_color(if lead { theme.on_selected } else { theme.fg }))
+                .child(label)
         };
+        let action = |id: &'static str, icon: &'static str, label: String, tip: String| button(id, icon, label, tip, false);
+        let github = |id: &'static str, tip: String| button(id, "icons/github.svg", "Open on GitHub".into(), tip, false);
         let mut actions: Vec<AnyElement> = Vec::new();
         match &drawer.item {
             DrawerItem::Issue(item) => {
@@ -4152,7 +4140,7 @@ impl Workspace {
                 };
                 let parent = issue.clone();
                 actions.push(
-                    action("new-sub-issue", "New Sub-issue".into(), "Create an issue under this one, drafted with Claude".into())
+                    action("new-sub-issue", "icons/square_plus.svg", "New Sub-issue".into(), "Create an issue under this one, drafted with Claude".into())
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_new_issue(Some(parent.clone()), window, cx)))
                         .into_any_element(),
                 );
@@ -4160,15 +4148,15 @@ impl Workspace {
                 let planned = issue.clone();
                 actions.push(
                     if has_plan {
-                        action("plan-this", "Open Planning".into(), "Show this issue's planning session".into())
+                        action("plan-this", "icons/list_todo.svg", "Open Planning".into(), "Show this issue's planning session".into())
                     } else {
-                        action("plan-this", "Plan This".into(), "Plan this issue with the team: requirements, design and tasks, then its sub-issues".into())
+                        action("plan-this", "icons/list_todo.svg", "Plan This".into(), "Plan this issue with the team: requirements, design and tasks, then its sub-issues".into())
                     }
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.plan_issue(planned.clone(), window, cx)))
                     .into_any_element(),
                 );
                 actions.push(
-                    action("work-on-this", label.into(), tip)
+                    action("work-on-this", "icons/sparkle.svg", label.into(), tip)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.work_on(issue.clone(), window, cx)))
                         .into_any_element(),
                 );
@@ -4187,7 +4175,7 @@ impl Workspace {
                 let url = pr.url.clone();
                 let paged = pr.clone();
                 actions.push(
-                    action("pr-page", "Open PR".into(), "Open this pull request's page: its review, checks, timeline and files".into())
+                    button("pr-page", "icons/pull_request.svg", "Open PR".into(), "Open this pull request's page: its review, checks, timeline and files".into(), true)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_pull_page(paged.clone(), window, cx)))
                         .into_any_element(),
                 );
