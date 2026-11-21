@@ -22,7 +22,9 @@ pub struct Note {
     pub category: Option<String>,
     /// As `Link` writes them.
     pub links: Vec<String>,
-    /// The org whose home harness has a copy; none while it's private.
+    /// The harness (`owner/name`) with a copy; none while it's private.
+    /// Notes shared before harnesses could be picked have the org, meaning
+    /// its home harness (`shared_harness`).
     pub shared: Option<String>,
     /// `fingerprint` of what was last committed, to tell when the shared
     /// copy is behind.
@@ -220,11 +222,19 @@ pub fn read_shared(org: &str, login: Option<&str>) -> Vec<Note> {
                 continue;
             }
             note.author = Some(note.author.unwrap_or(by));
-            note.shared = Some(org.to_string());
+            note.shared = Some(snapshot.repo.clone());
             out.push(note);
         }
     }
     out
+}
+
+/// The harness a shared note's copy is in.
+pub fn shared_harness(shared: &str) -> Option<String> {
+    if shared.contains('/') {
+        return Some(shared.to_string());
+    }
+    crate::projects::harness_repos(shared).into_iter().next()
 }
 
 pub struct NotesGlobal(pub Entity<NotesStore>);
@@ -278,27 +288,37 @@ impl NotesStore {
     /// harness, and those your notes are shared in.
     fn orgs(&self, cx: &App) -> Vec<String> {
         let mut orgs: Vec<String> = cx.try_global::<crate::marra_model::MarraGlobal>().map(|g| g.0.read(cx).harness_orgs.clone()).unwrap_or_default();
-        orgs.extend(self.notes.iter().filter_map(|n| n.shared.clone()));
+        // A harness's owner, as the org to read it with, when Marra doesn't know it.
+        orgs.extend(self.notes.iter().filter_map(|n| n.shared.as_deref()).map(|s| s.split('/').next().unwrap_or(s).to_string()));
         orgs.sort_by_key(|o| o.to_lowercase());
         orgs.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         orgs
     }
 
-    /// The org a note would be shared in: where it is already, else its
-    /// first PR's or issue's, else the first with a harness.
-    pub fn share_org(&self, id: &str, cx: &App) -> Option<String> {
-        let note = self.notes.iter().find(|n| n.id == id)?;
-        note.shared
-            .clone()
-            .or_else(|| crate::links::parse_all(&note.links).iter().find_map(|l| l.org().map(str::to_string)))
-            .or_else(|| cx.try_global::<crate::marra_model::MarraGlobal>().and_then(|g| g.0.read(cx).harness_orgs.first().cloned()))
+    /// The harnesses a note could be shared in, as (org, harness): those of
+    /// the orgs its PRs and issues are in first, each org's home harness
+    /// ahead of its others, then every other org with a harness. Reads each
+    /// org's settings file.
+    pub fn share_choices(&self, id: &str, cx: &App) -> Vec<(String, String)> {
+        let Some(note) = self.notes.iter().find(|n| n.id == id) else { return Vec::new() };
+        let mut orgs: Vec<String> = crate::links::parse_all(&note.links).iter().filter_map(|l| l.org().map(str::to_string)).collect();
+        orgs.extend(cx.try_global::<crate::marra_model::MarraGlobal>().map(|g| g.0.read(cx).harness_orgs.clone()).unwrap_or_default());
+        let mut out: Vec<(String, String)> = Vec::new();
+        for org in orgs {
+            for harness in crate::projects::harness_repos(&org) {
+                if !out.iter().any(|(_, h)| h.eq_ignore_ascii_case(&harness)) {
+                    out.push((org.clone(), harness));
+                }
+            }
+        }
+        out
     }
 
-    /// Marks a note shared in `org` as of `fingerprint`, or private again.
+    /// Marks a note shared in `harness` as of `fingerprint`, or private again.
     pub fn set_shared(&mut self, id: &str, shared: Option<(String, String)>, cx: &mut Context<Self>) {
         let Some(note) = self.notes.iter_mut().find(|n| n.id == id) else { return };
         (note.shared, note.published) = match shared {
-            Some((org, fingerprint)) => (Some(org), Some(fingerprint)),
+            Some((harness, fingerprint)) => (Some(harness), Some(fingerprint)),
             None => (None, None),
         };
         save(note);

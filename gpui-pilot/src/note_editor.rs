@@ -32,6 +32,8 @@ pub struct NoteEditor {
     /// The category whose name the field is changing, in place of adding one.
     renaming: Option<String>,
     link_error: Option<String>,
+    /// The harnesses to share in, open to pick one.
+    share_picker: bool,
     /// While a share, update or unshare is with GitHub.
     sharing: bool,
     /// What the last one said: a failure, or a pull request left open.
@@ -85,6 +87,7 @@ impl NoteEditor {
             categories_open: false,
             renaming: None,
             link_error: None,
+            share_picker: false,
             sharing: false,
             share_note: None,
             _save: None,
@@ -164,23 +167,29 @@ impl NoteEditor {
         .detach();
     }
 
-    /// Shares the note with the team, or updates its shared copy: committed
-    /// to the org's home harness as `notes/<login>/<id>.md`, once you've
-    /// said so.
-    fn share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Share: straight to the confirmation when there's one harness to
+    /// share in, else the harnesses to pick from.
+    fn start_share(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let choices = self.store.read(cx).share_choices(&self.id, cx);
+        match choices.len() {
+            0 => {
+                self.share_note = Some("There's no harness to share it in: open a folder with one first.".into());
+                None
+            }
+            1 => choices.into_iter().next().map(|(_, harness)| harness),
+            _ => {
+                self.share_picker = !self.share_picker;
+                None
+            }
+        }
+    }
+
+    /// Shares the note with the team in `harness`, or updates its shared
+    /// copy there: committed as `notes/<login>/<id>.md`, once you've said so.
+    fn share(&mut self, harness: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.share_picker = false;
         self.save(cx);
-        let store = self.store.read(cx);
-        let Some(note) = store.notes.iter().find(|n| n.id == self.id).cloned() else { return };
-        let Some(org) = store.share_org(&self.id, cx) else {
-            self.share_note = Some("Link it to a PR or issue first, so it's clear which team's harness it goes in.".into());
-            cx.notify();
-            return;
-        };
-        let Some(harness) = crate::projects::harness_repos(&org).into_iter().next() else {
-            self.share_note = Some(format!("{org} has no harness to share it in."));
-            cx.notify();
-            return;
-        };
+        let Some(note) = self.store.read(cx).notes.iter().find(|n| n.id == self.id).cloned() else { return };
         let Some(login) = crate::auth::saved_viewer().map(|v| v.login) else {
             self.share_note = Some("Sign in to GitHub to share it.".into());
             cx.notify();
@@ -197,6 +206,7 @@ impl NoteEditor {
         let text = crate::notes::render_shared(&note, &login);
         let fingerprint = crate::notes::fingerprint(&note.body, &note.links, note.category.as_deref());
         let headline = format!("{} note: {}", if first { "Share" } else { "Update" }, note.title());
+        let shared_in = harness.clone();
         cx.spawn(async move |this, cx| {
             if answer.await.ok() != Some(0) {
                 return;
@@ -218,7 +228,7 @@ impl NoteEditor {
                 match committed {
                     Ok(left_open) => {
                         let id = this.id.clone();
-                        this.store.update(cx, |store, cx| store.set_shared(&id, Some((org, fingerprint)), cx));
+                        this.store.update(cx, |store, cx| store.set_shared(&id, Some((shared_in, fingerprint)), cx));
                         this.share_note = left_open;
                     }
                     Err(error) => this.share_note = Some(format!("Couldn't share it: {error}")),
@@ -233,8 +243,8 @@ impl NoteEditor {
     /// note stays here.
     fn unshare(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(note) = self.store.read(cx).notes.iter().find(|n| n.id == self.id).cloned() else { return };
-        let (Some(org), Some(login)) = (note.shared.clone(), crate::auth::saved_viewer().map(|v| v.login)) else { return };
-        let Some(harness) = crate::projects::harness_repos(&org).into_iter().next() else { return };
+        let (Some(shared), Some(login)) = (note.shared.clone(), crate::auth::saved_viewer().map(|v| v.login)) else { return };
+        let Some(harness) = crate::notes::shared_harness(&shared) else { return };
         let path = crate::notes::shared_path(&login, &note.id);
         let detail = format!("It's removed from {harness}, and stays on this Mac. Git's history still has the versions you shared.");
         let answer = window.prompt(gpui::PromptLevel::Warning, "Stop sharing this note?", Some(&detail), &["Stop Sharing", "Cancel"], cx);
@@ -269,6 +279,27 @@ impl NoteEditor {
             });
         })
         .detach();
+    }
+
+    /// The harnesses to share in, the suggested one (the note's PR's or
+    /// issue's org's home harness) first.
+    fn share_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let choices = self.store.read(cx).share_choices(&self.id, cx);
+        let mut row = div().flex_none().flex().flex_row().flex_wrap().items_center().gap_1p5().px_4().py_2().border_b_1().border_color(theme.border).bg(theme.sidebar);
+        row = row.child(div().text_xs().text_color(theme.secondary).child("Share in"));
+        for (n, (org, harness)) in choices.into_iter().enumerate() {
+            let label = if harness.split('/').next().is_some_and(|owner| owner.eq_ignore_ascii_case(&org)) { harness.clone() } else { format!("{harness} ({org})") };
+            row = row.child(
+                chip(SharedString::from(format!("share-in-{n}")), Some("icons/user_group.svg"), label, n == 0, theme)
+                    .when(n == 0, |d| d.tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("Suggested: the harness of what it links to".into())).into()))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.share(harness.clone(), window, cx))),
+            );
+        }
+        row.child(div().id("share-cancel").text_xs().text_color(theme.selected).cursor_pointer().child("Cancel").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.share_picker = false;
+            cx.notify();
+        })))
+        .into_any_element()
     }
 
     fn categories_row(&self, current: Option<&str>, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -548,17 +579,23 @@ impl Render for NoteEditor {
         if mine {
             if self.sharing {
                 bar = bar.child(div().text_xs().text_color(theme.secondary).child("Talking to GitHub"));
-            } else if let Some(org) = &note.shared {
+            } else if let Some(shared) = &note.shared {
+                let harness = crate::notes::shared_harness(shared).unwrap_or_else(|| shared.clone());
                 bar = bar.child(
-                    chip("note-shared", Some("icons/user_group.svg"), format!("Shared with {org}"), false, &theme)
+                    chip("note-shared", Some("icons/user_group.svg"), format!("Shared in {harness}"), false, &theme)
                         .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("Stop sharing".into())).into())
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.unshare(window, cx))),
                 );
                 if note.unpublished() {
-                    bar = bar.child(button("note-update-shared", "Update Shared Copy", true, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.share(window, cx))));
+                    bar = bar.child(button("note-update-shared", "Update Shared Copy", true, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.share(harness.clone(), window, cx))));
                 }
             } else {
-                bar = bar.child(icon_button("note-share", "icons/user_group.svg", "Share with the team", false, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.share(window, cx))));
+                bar = bar.child(icon_button("note-share", "icons/user_group.svg", "Share with the team", self.share_picker, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    if let Some(harness) = this.start_share(cx) {
+                        this.share(harness, window, cx);
+                    }
+                    cx.notify();
+                })));
             }
         }
         bar = bar.child(button("note-preview", if self.preview { "Edit" } else { "Preview" }, false, &theme).when(mine, |b| {
@@ -588,6 +625,7 @@ impl Render for NoteEditor {
             .child(bar)
             .when_some(error, |d, e| d.child(div().px_4().py_1().text_xs().text_color(theme.critical()).child(e)))
             .when(self.categories_open && mine, |d| d.child(self.categories_row(note.category.as_deref(), &theme, cx)))
+            .when(self.share_picker && mine && note.shared.is_none(), |d| d.child(self.share_row(&theme, cx)))
             .child(body)
             .child(self.todos_section(todos, mine, &theme, cx))
             .into_any_element()
