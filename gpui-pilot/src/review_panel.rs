@@ -1172,15 +1172,10 @@ impl ReviewPanel {
         let (repo, number) = self.subject();
         let url = self.url();
         let link = url.clone();
-        let has_result = self.result.is_some();
-        let can_again = self.can_again();
         let (_, status_tint) = self.status(theme);
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
         let live = matches!(self.source, Source::Live { .. });
-        // Posting is for a result not posted yet: the button says so by
-        // whether it's enabled.
-        let can_post = has_result && self.posted_latest().is_none();
         let dot = if self.working() { theme.good() } else if status_tint == theme.orange() { theme.orange() } else if self.running() { theme.selected } else { theme.tertiary };
         let controls = match &self.post {
             Some(post) => self.post_controls(post, theme, cx).into_any_element(),
@@ -1202,19 +1197,9 @@ impl ReviewPanel {
                 .child(Self::button("review-check", "Check for Changes", false, !self.checking, theme).when(!self.checking, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.check_for_changes(cx)))
                 }))
-                .map(|d| {
-                    if live && ((self.running() && !self.takes_input()) || self.again_pending()) {
-                        // Claude Code is still starting: its terminal won't take the prompt yet.
-                        d.child(Self::busy_button("review-again", "Review Again", theme))
-                    } else {
-                        d.child(Self::button("review-again", "Review Again", false, can_again, theme).when(can_again, |d| {
-                            d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx)))
-                        }))
-                    }
-                })
-                .child(Self::button("review-post", "Post Review", true, can_post, theme).when(can_post, |d| {
-                    d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
-                }))
+                // Merged with the PR page, these sit under the status in the
+                // right-hand column instead.
+                .when(self.pull.is_none(), |d| d.child(self.again_button(theme, cx)).child(self.post_button(theme, cx)))
                 .into_any_element(),
         };
         div()
@@ -1278,6 +1263,94 @@ impl ReviewPanel {
                     }),
             )
             .child(controls)
+    }
+
+    /// Review Again, or a busy one while Claude Code is still starting (its
+    /// terminal won't take the prompt yet).
+    fn again_button(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let live = matches!(self.source, Source::Live { .. });
+        if live && ((self.running() && !self.takes_input()) || self.again_pending()) {
+            return Self::busy_button("review-again", "Review Again", theme).into_any_element();
+        }
+        let can_again = self.can_again();
+        Self::button("review-again", "Review Again", false, can_again, theme)
+            .when(can_again, |d| d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx))))
+            .into_any_element()
+    }
+
+    /// Post Review, enabled for a result not posted yet.
+    fn post_button(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let can_post = self.result.is_some() && self.posted_latest().is_none();
+        Self::button("review-post", "Post Review", true, can_post, theme)
+            .when(can_post, |d| d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx))))
+            .into_any_element()
+    }
+
+    /// Merged with the PR page: where the review stands, one fact a row
+    /// (your review, blockers, checks, merge risk, effort), with Review
+    /// Again and Post Review under it. Heads the right-hand column.
+    fn status_column(&self, parts: &PullParts, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let failing = parts.sidebar.read(cx).counts().2;
+        let blockers = self.result.as_ref().map(|r| r.findings.iter().filter(|f| f.rank() == 0 && !self.dismissed.contains(&f.key())).count());
+        let icon = |path: &'static str, tint: Hsla| gpui::svg().path(path).size(px(14.)).flex_none().text_color(tint);
+        // A row: a fixed slot for its mark, a label, then the value.
+        let row = |mark: gpui::AnyElement, label: &str, value: gpui::AnyElement| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .child(div().w(px(28.)).flex_none().flex().justify_center().child(mark))
+                .child(div().w(px(84.)).flex_none().text_color(theme.secondary).child(label.to_string()))
+                .child(div().flex_1().min_w_0().child(value))
+        };
+        let text = |s: String, tint: Hsla| div().truncate().text_color(tint).child(s).into_any_element();
+        let (review, review_tint) = match (self.verdict_word(theme), self.working()) {
+            (Some((word, tint)), _) => (word.to_string(), tint),
+            (None, true) => ("Reviewing".into(), theme.secondary),
+            (None, false) => ("Not reviewed yet".into(), theme.secondary),
+        };
+        let review_mark = if self.working() { Self::spinner("status-spinner", 14., theme).into_any_element() } else { icon("icons/user_check.svg", review_tint).into_any_element() };
+        let mut rows: Vec<gpui::AnyElement> = vec![row(review_mark, "Your review", text(review, review_tint)).into_any_element()];
+        if let Some(n) = blockers {
+            let tint = if n > 0 { theme.critical() } else { theme.tertiary };
+            rows.push(row(icon("icons/x_circle_filled.svg", tint).into_any_element(), "Blockers", text(if n > 0 { n.to_string() } else { "None".into() }, if n > 0 { tint } else { theme.secondary })).into_any_element());
+        }
+        let (checks, checks_tint) = if failing > 0 { (format!("{failing} failing"), theme.critical()) } else { ("Passing".into(), theme.secondary) };
+        rows.push(row(icon(if failing > 0 { "icons/warning.svg" } else { "icons/check.svg" }, if failing > 0 { checks_tint } else { theme.tertiary }).into_any_element(), "Checks", text(checks, checks_tint)).into_any_element());
+        if let Some(level) = self.risk().and_then(|r| r.level()) {
+            rows.push(row(Self::risk_meter(level, 8., theme).into_any_element(), "Merge risk", text(level.title().to_string(), risk_tint(level, theme))).into_any_element());
+        }
+        if let Some(e) = self.result.as_ref().and_then(|r| r.effort) {
+            rows.push(row(Self::effort_pips(e, theme).into_any_element(), "Effort", text(format!("{e}/5"), theme.secondary)).into_any_element());
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(rows)
+            // What was posted, and what Check for Changes last found.
+            .when_some(self.posted_latest().cloned(), |d, posted| {
+                let url = posted.url.clone();
+                d.child(
+                    div()
+                        .id("status-posted")
+                        .pl(px(36.))
+                        .text_xs()
+                        .text_color(theme.selected)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.8))
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                        .child(format!("{} {}", posted_label(&posted.event), ago(posted.at))),
+                )
+            })
+            .when_some(self.check_text(), |d, t| d.child(div().pl(px(36.)).text_xs().text_color(if self.has_changes() { theme.selected } else { theme.secondary }).child(t)))
+            .child(div().pt_2().flex().flex_row().gap_2().child(self.again_button(theme, cx)).child(self.post_button(theme, cx)))
+            .pb_5()
+            .border_b_1()
+            .border_color(theme.border)
+            .into_any_element()
     }
 
     /// A row in the file list.
@@ -2001,55 +2074,14 @@ impl ReviewPanel {
             let pull = parts.sidebar.read(cx);
             (pull.standing_facts(theme), pull.open_items())
         };
-        let (whose, _threads, failing, _approvals) = facts.unwrap_or_default();
+        let (whose, _threads, _failing, _approvals) = facts.unwrap_or_default();
         let result = self.result.clone();
         let mut kept: Vec<Finding> = result.iter().flat_map(|r| r.findings.iter()).filter(|f| !self.dismissed.contains(&f.key())).cloned().collect();
         kept.sort_by_key(|f| f.rank());
-        let blockers = kept.iter().filter(|f| f.rank() == 0).count();
 
-        // The status: whose move it is, then the review in a quiet line.
-        let review = match (&result, self.working()) {
-            (Some(_), _) => format!("Your review: {}", self.verdict_word(theme).map_or("comment", |v| v.0).to_lowercase()),
-            (None, true) => "Reviewing".into(),
-            (None, false) => "Not reviewed yet".into(),
-        };
-        let mut meta: Vec<(String, Hsla)> = vec![(review, theme.fg)];
-        if blockers > 0 {
-            meta.push((plural(blockers, "blocker", "blockers"), theme.critical()));
-        }
-        if failing > 0 {
-            meta.push((plural(failing, "check failing", "checks failing"), theme.critical()));
-        }
-        if let Some(level) = self.risk().and_then(|r| r.level()) {
-            meta.push((format!("Merge risk {}", level.title().to_lowercase()), theme.secondary));
-        }
-        if let Some(e) = result.as_ref().and_then(|r| r.effort) {
-            meta.push((format!("Effort {e}/5"), theme.secondary));
-        }
-        if let Some(posted) = self.posted_latest() {
-            meta.push((format!("{} {}", posted_label(&posted.event), ago(posted.at)), theme.secondary));
-        }
-        if let Some(text) = self.check_text() {
-            meta.push((text, if self.has_changes() { theme.selected } else { theme.secondary }));
-        }
-        let status = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if whose.is_empty() { "Loading the pull request".to_string() } else { whose }))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_x_2()
-                    .text_sm()
-                    .when(self.working(), |d| d.child(Self::spinner("merged-spinner", 12., theme)))
-                    .children(meta.into_iter().enumerate().map(|(i, (text, tint))| {
-                        div().flex().flex_row().gap_2().when(i > 0, |d| d.child(div().text_color(theme.tertiary).child("·"))).child(div().text_color(tint).child(text))
-                    })),
-            );
+        // Whose move it is; the review's own standing is in the right-hand
+        // column (`status_column`).
+        let status = div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if whose.is_empty() { "Loading the pull request".to_string() } else { whose });
 
         // Needs attention: the review's findings are the reviewer's until
         // posted; GitHub's items go to whoever's move it is.
@@ -2690,7 +2722,10 @@ impl Render for ReviewPanel {
         let risk_side = (self.pull.is_none() && wide && draft.is_none() && self.selected == Selected::Overview).then(|| self.risk()).flatten().map(|risk| self.risk_panel(&risk, false, &theme, cx));
         // The PR page's sidebar (reviewers, labels, linked issues) beside
         // everything but a file, whose diff wants the width.
-        let pull_side = self.pull.as_ref().filter(|_| wide && draft.is_none() && !matches!(self.selected, Selected::File(_))).map(|p| p.sidebar.clone());
+        let pull_side = self.pull.as_ref().filter(|_| draft.is_none() && !matches!(self.selected, Selected::File(_))).map(|p| p.sidebar.clone());
+        // Merged: the review's standing and its buttons head that column,
+        // on every page.
+        let status_side = self.pull.as_ref().filter(|_| draft.is_none()).map(|p| self.status_column(p, &theme, cx));
         let pull_part = |pick: fn(&PullParts) -> &Entity<crate::pull_page::PullPage>| self.pull.as_ref().map(|p| pick(p).clone().into_any_element()).unwrap_or_else(|| div().into_any_element());
         let detail = match self.selected.clone() {
             _ if draft.is_some() => draft.unwrap(),
@@ -2780,7 +2815,7 @@ impl Render for ReviewPanel {
                                 ),
                                 None => d.child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail)),
                             })
-                            .when(risk_side.is_some() || pull_side.is_some(), |d| {
+                            .when(risk_side.is_some() || pull_side.is_some() || status_side.is_some(), |d| {
                                 d.child(
                                     div()
                                         .id("review-risk")
@@ -2792,7 +2827,7 @@ impl Render for ReviewPanel {
                                         .border_l_1()
                                         .border_color(theme.border)
                                         .bg(theme.sidebar)
-                                        .child(div().flex().flex_col().gap_6().children(risk_side).children(pull_side)),
+                                        .child(div().flex().flex_col().gap_6().children(status_side).children(risk_side).children(pull_side)),
                                 )
                             }),
                     ),
