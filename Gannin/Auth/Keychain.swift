@@ -5,7 +5,7 @@ import Security
 /// sandbox's credentials (`SandboxCredentials`), each under its own service
 /// and account. The demo build never touches it: it reads nothing and
 /// writes nothing.
-enum Keychain {
+nonisolated enum Keychain {
     private static let service = "dev.andon.gannin.github"
     private static let account = "access_token"
 

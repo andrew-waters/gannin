@@ -7,9 +7,12 @@ import Foundation
 /// Application Support folder, so it needs no moving. Nothing old is
 /// deleted.
 enum BundleMove {
-    static let oldIdentifier = "dev.andon.getgannin"
-    private static let doneKey = "movedFromGetgannin"
+    nonisolated static let oldIdentifier = "dev.andon.getgannin"
+    nonisolated private static let doneKey = "movedFromGetgannin"
 
+    /// Moves the preferences and the folder, which must be there before
+    /// anything reads them. `finish` moves the token and marks the move
+    /// done, so this repeats until it has.
     static func run() {
         let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: doneKey), Bundle.main.bundleIdentifier != oldIdentifier else { return }
@@ -28,6 +31,14 @@ enum BundleMove {
                 try? FileManager.default.copyItem(at: from, to: to)
             }
         }
+    }
+
+    /// Moves the token and marks the move done. The keychain may ask to
+    /// allow the old item, so this runs off the main actor, and before the
+    /// token is read (`AuthStore.loadToken`).
+    @concurrent static func finish() async {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: doneKey), Bundle.main.bundleIdentifier != oldIdentifier else { return }
         Keychain.moveToken(fromService: "\(oldIdentifier).github")
         defaults.set(true, forKey: doneKey)
     }

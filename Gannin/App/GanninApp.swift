@@ -428,13 +428,19 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if auth.isSignedIn {
+            if auth.isLoadingToken {
+                // Neither screen is right until the keychain has answered.
+                Color.clear
+            } else if auth.isSignedIn {
                 MainView()
             } else {
                 SignInView()
             }
         }
-        .task { await auth.validate() }
+        .task {
+            await auth.loadToken()
+            await auth.validate()
+        }
         .onChange(of: auth.isSignedIn) {
             if !auth.isSignedIn {
                 details.clear()
