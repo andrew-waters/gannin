@@ -80,7 +80,7 @@ impl NoteEditor {
             id,
             store,
             editor,
-            link_field: field("Paste a PR or issue link", window, cx),
+            link_field: field("Link a PR or issue: paste its address", window, cx),
             todo_field: field("Add a todo for this note", window, cx),
             category_field: field("New category", window, cx),
             preview: read_only,
@@ -545,6 +545,16 @@ impl Render for NoteEditor {
                     }),
             );
         }
+        // PRs and issues the text mentions count too.
+        for (n, link) in note.mentioned().into_iter().enumerate() {
+            let opened = link.clone();
+            bar = bar.child(
+                chip(SharedString::from(format!("note-mention-{n}")), Some(link.icon()), link.short(), false, &theme)
+                    .opacity(0.8)
+                    .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("Mentioned in the text".into())).into())
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(NoteEvent::Open(opened.clone())))),
+            );
+        }
         for (id, title) in from {
             let opened = Link::Note(id.clone());
             bar = bar.child(
@@ -650,7 +660,7 @@ pub fn linked_section(link: &Link, field: Option<&Entity<Editor>>, theme: &Theme
     let (notes, todos) = {
         let s = store.read(cx);
         let (notes, todos) = s.linked(link);
-        let notes: Vec<(String, String, Option<String>, Option<gpui::Hsla>)> = notes.into_iter().map(|n| (n.id.clone(), n.title(), n.author.clone(), s.category(n.category.as_deref()).map(|c| theme.slot(c.colour)))).collect();
+        let notes: Vec<(crate::notes::Note, Option<gpui::Hsla>, bool)> = notes.into_iter().map(|n| (n.clone(), s.category(n.category.as_deref()).map(|c| theme.slot(c.colour)), s.expanded.contains(&n.id))).collect();
         let mut todos: Vec<Todo> = todos.into_iter().cloned().collect();
         todos.sort_by_key(|t| (t.done.is_some(), t.added));
         (notes, todos)
@@ -680,23 +690,64 @@ pub fn linked_section(link: &Link, field: Option<&Entity<Editor>>, theme: &Theme
             .child(div().flex_1().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(if count == 0 { "Notes and todos".to_string() } else { format!("Notes and todos · {count}") }))
             .child(button(SharedString::from(format!("linked-new-note-{key}")), "New Note", false, theme).on_click(new_note)),
     );
-    for (id, title, author, dot) in notes {
+    // Each note opens out to read here; the arrow opens it in Marra.
+    for (note, dot, open) in notes {
+        let (toggle_store, toggle_id) = (store.clone(), note.id.clone());
+        let id = note.id.clone();
         section = section.child(
             div()
-                .id(SharedString::from(format!("linked-note-{key}-{id}")))
                 .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .py_0p5()
-                .px_1()
+                .flex_col()
                 .rounded_md()
-                .cursor_pointer()
-                .hover(|s| s.bg(theme.tile))
-                .on_click(open_note(id))
-                .child(gpui::svg().path(crate::icons::NOTE).size(px(12.)).text_color(dot.unwrap_or(theme.secondary)))
-                .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.fg).child(title))
-                .when_some(author, |d, a| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child(a))),
+                .when(open, |d| d.bg(theme.tile))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("linked-note-{key}-{id}")))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .py_0p5()
+                        .px_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme.tile))
+                        .on_click(move |_, _, cx| toggle_store.update(cx, |s, cx| s.toggle_expanded(&toggle_id, cx)))
+                        .child(gpui::svg().path(if open { "icons/chevron_down.svg" } else { "icons/chevron_right.svg" }).size(px(10.)).text_color(theme.tertiary))
+                        .child(gpui::svg().path(crate::icons::NOTE).size(px(12.)).text_color(dot.unwrap_or(theme.secondary)))
+                        .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.fg).child(note.title()))
+                        .when_some(note.author.clone(), |d, a| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child(a)))
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("linked-note-open-{key}-{id}")))
+                                .flex_none()
+                                .px_0p5()
+                                .rounded_sm()
+                                .hover(|s| s.bg(theme.row_selected))
+                                .child(gpui::svg().path("icons/arrow_up_right.svg").size(px(12.)).text_color(theme.secondary))
+                                .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("Open in Marra".into())).into())
+                                .on_click({
+                                    let open = open_note(id.clone());
+                                    move |event, window, cx| {
+                                        cx.stop_propagation();
+                                        open(event, window, cx);
+                                    }
+                                }),
+                        ),
+                )
+                .when(!open && !note.preview().is_empty(), |d| d.child(div().pl(px(30.)).pr_1().truncate().text_xs().text_color(theme.secondary).child(note.preview())))
+                .when(open, |d| {
+                    d.child(
+                        div()
+                            .id(SharedString::from(format!("linked-note-body-{key}-{id}")))
+                            .max_h(px(320.))
+                            .overflow_y_scroll()
+                            .px_3()
+                            .pb_2()
+                            .text_sm()
+                            .child(crate::markdown::markdown(&format!("linked-note-md-{key}-{id}"), &note.body, theme)),
+                    )
+                }),
         );
     }
     for todo in todos {

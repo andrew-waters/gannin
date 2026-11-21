@@ -55,6 +55,24 @@ impl Note {
         self.links.iter().any(|l| l == link)
     }
 
+    /// What it's about: its links, then the PRs and issues its text
+    /// mentions (GitHub addresses, `owner/repo#12`), once each.
+    pub fn refs(&self) -> Vec<Link> {
+        let mut out = crate::links::parse_all(&self.links);
+        for link in crate::links::mentions(&self.body) {
+            if !out.iter().any(|l| l.key() == link.key()) {
+                out.push(link);
+            }
+        }
+        out
+    }
+
+    /// The PRs and issues its text mentions that aren't among its links.
+    pub fn mentioned(&self) -> Vec<Link> {
+        let linked: Vec<String> = crate::links::parse_all(&self.links).iter().map(Link::key).collect();
+        crate::links::mentions(&self.body).into_iter().filter(|l| !linked.contains(&l.key())).collect()
+    }
+
     /// Whether the shared copy is behind this one.
     pub fn unpublished(&self) -> bool {
         self.shared.is_some() && self.published.as_deref() != Some(&fingerprint(&self.body, &self.links, self.category.as_deref()))
@@ -247,6 +265,9 @@ pub struct NotesStore {
     pub categories: Vec<Category>,
     pub todos: Vec<Todo>,
     pub shared: Vec<Note>,
+    /// Notes opened out to read where they're listed beside what they're
+    /// about (`note_editor::linked_section`); not kept.
+    pub expanded: std::collections::HashSet<String>,
     _refresh: gpui::Task<()>,
 }
 
@@ -278,7 +299,7 @@ impl NotesStore {
                     cx.background_executor().timer(std::time::Duration::from_secs(300)).await;
                 }
             });
-            NotesStore { notes: load_all(), categories: load_categories(), todos: crate::todos::load(), shared: Vec::new(), _refresh: refresh }
+            NotesStore { notes: load_all(), categories: load_categories(), todos: crate::todos::load(), shared: Vec::new(), expanded: Default::default(), _refresh: refresh }
         });
         cx.set_global(NotesGlobal(entity.clone()));
         entity
@@ -301,7 +322,7 @@ impl NotesStore {
     /// org's settings file.
     pub fn share_choices(&self, id: &str, cx: &App) -> Vec<(String, String)> {
         let Some(note) = self.notes.iter().find(|n| n.id == id) else { return Vec::new() };
-        let mut orgs: Vec<String> = crate::links::parse_all(&note.links).iter().filter_map(|l| l.org().map(str::to_string)).collect();
+        let mut orgs: Vec<String> = note.refs().iter().filter_map(|l| l.org().map(str::to_string)).collect();
         orgs.extend(cx.try_global::<crate::marra_model::MarraGlobal>().map(|g| g.0.read(cx).harness_orgs.clone()).unwrap_or_default());
         let mut out: Vec<(String, String)> = Vec::new();
         for org in orgs {
@@ -325,6 +346,13 @@ impl NotesStore {
         cx.notify();
     }
 
+    pub fn toggle_expanded(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(id) {
+            self.expanded.insert(id.to_string());
+        }
+        cx.notify();
+    }
+
     pub fn note(&self, id: &str) -> Option<&Note> {
         self.notes.iter().find(|n| n.id == id).or_else(|| self.shared.iter().find(|n| n.id == id))
     }
@@ -333,11 +361,12 @@ impl NotesStore {
         self.categories.iter().find(|c| Some(c.id.as_str()) == id)
     }
 
-    /// Notes (yours, then teammates') and todos that link to `link`.
+    /// Notes (yours, then teammates') and todos that link to `link`, or
+    /// mention it in their text.
     pub fn linked(&self, link: &Link) -> (Vec<&Note>, Vec<&Todo>) {
-        let text = link.to_string();
-        let notes = self.notes.iter().chain(self.shared.iter()).filter(|n| n.has_link(&text)).collect();
-        let todos = self.todos.iter().filter(|t| t.links.iter().any(|l| *l == text)).collect();
+        let key = link.key();
+        let notes = self.notes.iter().chain(self.shared.iter()).filter(|n| n.refs().iter().any(|l| l.key() == key)).collect();
+        let todos = self.todos.iter().filter(|t| crate::links::parse_all(&t.links).into_iter().chain(crate::links::mentions(&t.text)).any(|l| l.key() == key)).collect();
         (notes, todos)
     }
 
@@ -392,8 +421,9 @@ impl NotesStore {
 
     pub fn link(&mut self, id: &str, link: &Link, cx: &mut Context<Self>) {
         let text = link.to_string();
+        let key = link.key();
         self.update(id, cx, |n| {
-            if !n.has_link(&text) {
+            if !crate::links::parse_all(&n.links).iter().any(|l| l.key() == key) {
                 n.links.push(text);
             }
         });

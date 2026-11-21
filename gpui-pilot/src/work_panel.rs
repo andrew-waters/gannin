@@ -1589,6 +1589,8 @@ impl WorkPanel {
                         ),
                 )
             })
+            // Your notes and todos about the issue, where they won't be missed.
+            .when_some(crate::links::from_input(&d.issue_url), |el, link| el.child(div().p_3().rounded_lg().bg(theme.bg).border_1().border_color(theme.border).child(crate::note_editor::linked_section(&link, Some(&self.linked_todo), theme, cx))))
             // The plans first: how far the work has got against them.
             .when(self.live.is_some() && !d.reference.is_empty(), |el| el.child(self.plans_section(theme, cx)))
             // Then the pull requests: where the work stands.
@@ -1609,8 +1611,6 @@ impl WorkPanel {
                     })
                     .child(markdown("work-issue-body", &d.issue_body, theme)),
             )
-            // Your notes and todos about the issue.
-            .when_some(crate::links::from_input(&d.issue_url), |el, link| el.child(div().p_3().rounded_lg().bg(theme.bg).border_1().border_color(theme.border).child(crate::note_editor::linked_section(&link, Some(&self.linked_todo), theme, cx))))
             .child(
                 Self::section("Claude Code", theme)
                     .child(Self::fact("State", div().flex().flex_row().items_center().gap_1p5().child(Self::dot(state.tint(theme), 8.)).child(state.label()), theme))

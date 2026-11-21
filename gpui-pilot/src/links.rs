@@ -56,6 +56,16 @@ impl Link {
         }
     }
 
+    /// What two links to the same thing share. A PR and an issue in one
+    /// repo never share a number, so `owner/repo#12` written in a note finds
+    /// either, whichever it turns out to be.
+    pub fn key(&self) -> String {
+        match self {
+            Link::Pr { repo, number } | Link::Issue { repo, number } => format!("{}#{number}", repo.to_lowercase()),
+            Link::Note(id) => format!("note:{id}"),
+        }
+    }
+
     pub fn url(&self) -> Option<String> {
         match self {
             Link::Pr { repo, number } => Some(format!("https://github.com/{repo}/pull/{number}")),
@@ -75,12 +85,70 @@ impl fmt::Display for Link {
     }
 }
 
-/// A link from what someone pasted: a GitHub PR or issue address, or a
-/// link as written here.
+/// The PRs and issues mentioned in text: GitHub addresses (`/pull/12`,
+/// `/issues/12`) and `owner/repo#12`, once each.
+pub fn mentions(text: &str) -> Vec<Link> {
+    let b = text.as_bytes();
+    let name_char = |c: u8| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b'-';
+    let owner_char = |c: u8| c.is_ascii_alphanumeric() || c == b'-';
+    let mut out: Vec<Link> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let (sep, pull) = if b[i] == b'#' {
+            (1, false)
+        } else if b[i..].starts_with(b"/issues/") {
+            (8, false)
+        } else if b[i..].starts_with(b"/pull/") {
+            (6, true)
+        } else {
+            i += 1;
+            continue;
+        };
+        let digits_end = (i + sep..b.len()).find(|&j| !b[j].is_ascii_digit()).unwrap_or(b.len());
+        // The name runs back from the separator to a slash; the owner back
+        // from that slash.
+        let mut name_start = i;
+        while name_start > 0 && name_char(b[name_start - 1]) {
+            name_start -= 1;
+        }
+        let found = (|| {
+            if digits_end == i + sep || name_start == i || name_start == 0 || b[name_start - 1] != b'/' {
+                return None;
+            }
+            let slash = name_start - 1;
+            let mut owner_start = slash;
+            while owner_start > 0 && owner_char(b[owner_start - 1]) {
+                owner_start -= 1;
+            }
+            if owner_start == slash {
+                return None;
+            }
+            let number = text[i + sep..digits_end].parse().ok()?;
+            let repo = format!("{}/{}", &text[owner_start..slash], &text[name_start..i]);
+            Some(if pull { Link::Pr { repo, number } } else { Link::Issue { repo, number } })
+        })();
+        match found {
+            Some(link) => {
+                if !out.iter().any(|l| l.key() == link.key()) {
+                    out.push(link);
+                }
+                i = digits_end;
+            }
+            None => i += sep,
+        }
+    }
+    out
+}
+
+/// A link from what someone pasted: a GitHub PR or issue address,
+/// `owner/repo#12`, or a link as written here.
 pub fn from_input(text: &str) -> Option<Link> {
     let text = text.trim().trim_end_matches('/');
     if let Some(link) = Link::parse(text) {
         return Some(link);
+    }
+    if !text.contains("github.com/") {
+        return mentions(text).into_iter().next();
     }
     let path = text.split_once("github.com/")?.1;
     let path = path.split(['?', '#']).next()?;
@@ -116,5 +184,9 @@ mod tests {
         assert_eq!(from_input("https://github.com/ctrl-hub/clients/pull/2581/files").unwrap().to_string(), "pr:ctrl-hub/clients#2581");
         assert_eq!(from_input("https://github.com/ctrl-hub/product/issues/45#issuecomment-1").unwrap().to_string(), "issue:ctrl-hub/product#45");
         assert_eq!(from_input("https://github.com/ctrl-hub/product"), None);
+        assert_eq!(from_input("ctrl-hub/clients#12").unwrap().key(), "ctrl-hub/clients#12");
+        let found: Vec<String> = mentions("See https://github.com/ctrl-hub/clients/pull/2581/files and ctrl-hub/product#45, and #3 alone; ctrl-hub/Clients#2581 again.").iter().map(|l| l.to_string()).collect();
+        assert_eq!(found, ["pr:ctrl-hub/clients#2581", "issue:ctrl-hub/product#45"]);
+        assert!(mentions("https://github.com/ctrl-hub/product/issues/45#issuecomment-1").len() == 1);
     }
 }

@@ -7150,11 +7150,11 @@ impl Workspace {
                 .when_some(note, |d, note| d.child(div().text_xs().text_color(theme.secondary).child(note)))
         };
         let mut right = div().w(px(280.)).flex_none().flex().flex_col().gap_5().p_4().border_l_1().border_color(theme.border);
-        // What it relates to first, as on the PR's page.
+        // Your notes and todos first, then what it relates to, as on the PR's page.
+        right = right.child(crate::note_editor::linked_section(&crate::links::Link::Pr { repo: pr.repo.clone(), number: pr.number as u64 }, Some(&self.linked_todo), theme, cx));
         if let Some(related) = drawer.related.clone() {
             right = right.child(related);
         }
-        right = right.child(crate::note_editor::linked_section(&crate::links::Link::Pr { repo: pr.repo.clone(), number: pr.number as u64 }, Some(&self.linked_todo), theme, cx));
         if let Some(login) = &pr.author {
             right = right.child(
                 div().flex().flex_col().child(group("Author")).child(person(login, pr.author_avatar.as_deref(), pr.author_name.clone(), pr.author_is_bot.then(|| "bot".into()), cx)),

@@ -2040,7 +2040,9 @@ impl MarraView {
             let (toggle_id, remove_id) = (todo.id.clone(), todo.id.clone());
             let is_done = todo.done.is_some();
             // What it's about, each opening where it lives.
-            let links: Vec<AnyElement> = crate::links::parse_all(&todo.links)
+            let mut todo_links = crate::links::parse_all(&todo.links);
+            todo_links.extend(crate::links::mentions(&todo.text).into_iter().filter(|m| !todo_links.iter().any(|l| l.key() == m.key())).collect::<Vec<_>>());
+            let links: Vec<AnyElement> = todo_links
                 .into_iter()
                 .enumerate()
                 .map(|(n, link)| {
@@ -2222,7 +2224,8 @@ impl MarraView {
         let row = |note: crate::notes::Note, cx: &mut Context<Self>| {
             let store = self.notes.read(cx);
             let dot = store.category(note.category.as_deref()).map(|c| theme.slot(c.colour));
-            let links: Vec<String> = crate::links::parse_all(&note.links)
+            let links: Vec<String> = note
+                .refs()
                 .into_iter()
                 .map(|l| match &l {
                     crate::links::Link::Note(id) => store.note(id).map(|n| n.title()).unwrap_or_default(),

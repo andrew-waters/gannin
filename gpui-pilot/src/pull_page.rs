@@ -1686,13 +1686,14 @@ impl PullPage {
             .flex()
             .flex_col()
             .gap_3()
+            // Your notes and todos about it, first so they're seen.
+            .child(crate::note_editor::linked_section(&crate::links::Link::Pr { repo: self.pr.repo.clone(), number: self.pr.number as u64 }, None, theme, cx))
             // Laid beside a review, its Needs attention says all this.
             .when(self.part != Part::Sidebar, |d| {
                 d.child(group("Activity").child(row("Approvals", approvals)).child(row("Changes requested", changes)).child(row("Unresolved threads", unresolved)).child(row("Commits", data.commit_total)))
             })
             // What it relates to first: each opens in a drawer.
             .child(related)
-            .child(crate::note_editor::linked_section(&crate::links::Link::Pr { repo: self.pr.repo.clone(), number: self.pr.number as u64 }, None, theme, cx))
             .child(reviewers)
             .child(assignees)
             .child(labels)
