@@ -323,6 +323,8 @@ pub struct Snapshot {
     pub viewer: String,
     /// path -> new-side line numbers the diff shows.
     lines: std::collections::HashMap<String, HashSet<i64>>,
+    /// path -> its unified diff, for the lines around a comment.
+    patches: std::collections::HashMap<String, String>,
     comments: Vec<Existing>,
     /// Earlier reviews' bodies.
     reviews: Vec<(String, String, String, String)>,
@@ -338,6 +340,7 @@ impl Snapshot {
             author: if own { "you".into() } else { "someone".into() },
             viewer: "you".into(),
             lines: lines.iter().map(|(path, range)| (path.to_string(), range.clone().collect())).collect(),
+            patches: Default::default(),
             comments: Vec::new(),
             reviews: Vec::new(),
         }
@@ -345,6 +348,40 @@ impl Snapshot {
 
     pub fn is_own(&self) -> bool {
         self.author.eq_ignore_ascii_case(&self.viewer)
+    }
+
+    /// The diff's lines ending at new-side `line` of `path`, up to `before`
+    /// more above it within its hunk, as GitHub shows above a review
+    /// comment: each line's mark (' ', '+' or '-'), its new-side number
+    /// (none for a removed line) and its text. Empty when the diff doesn't
+    /// show the line.
+    pub fn context(&self, path: &str, line: i64, before: usize) -> Vec<(char, Option<i64>, String)> {
+        let Some(patch) = self.patches.get(path) else { return Vec::new() };
+        let mut hunk: Vec<(char, Option<i64>, String)> = Vec::new();
+        let mut new = 0i64;
+        for raw in patch.lines() {
+            if let Some(header) = raw.strip_prefix("@@") {
+                // "@@ -12,7 +12,9 @@": the new side starts at 12.
+                new = header.split_whitespace().find_map(|part| part.strip_prefix('+')).and_then(|n| n.split(',').next()?.parse().ok()).unwrap_or(1);
+                hunk.clear();
+                continue;
+            }
+            let mark = raw.chars().next().unwrap_or(' ');
+            let text = raw.get(1..).unwrap_or("").to_string();
+            match mark {
+                '-' => hunk.push(('-', None, text)),
+                '\\' => {}
+                _ => {
+                    hunk.push((if mark == '+' { '+' } else { ' ' }, Some(new), text));
+                    if new == line {
+                        let from = hunk.len().saturating_sub(before + 1);
+                        return hunk[from..].to_vec();
+                    }
+                    new += 1;
+                }
+            }
+        }
+        Vec::new()
     }
 }
 
@@ -377,6 +414,7 @@ pub fn snapshot(token: &str, repo: &str, number: i64) -> Result<Snapshot, String
         .iter()
         .filter_map(|f| Some((f["filename"].as_str()?.to_string(), shown_lines(f["patch"].as_str().unwrap_or("")))))
         .collect();
+    let patches = files.iter().filter_map(|f| Some((f["filename"].as_str()?.to_string(), f["patch"].as_str()?.to_string()))).collect();
     let comments = rest_pages(token, &format!("repos/{repo}/pulls/{number}/comments"))?
         .iter()
         .filter_map(|c| {
@@ -408,6 +446,7 @@ pub fn snapshot(token: &str, repo: &str, number: i64) -> Result<Snapshot, String
         author: pr["user"]["login"].as_str().unwrap_or_default().to_string(),
         viewer,
         lines,
+        patches,
         comments,
         reviews,
     })

@@ -2790,7 +2790,8 @@ impl ReviewPanel {
             }))
         };
         let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
-        let column = div().pt_3().flex().flex_col().gap_2().text_sm();
+        // In a well of its own, under the review's facts.
+        let column = Self::well(theme).mt_3().mb_0().gap_2().text_sm();
         match post {
             Post::Loading => column.child(quiet("Loading the pull request".into())).child(div().flex().flex_row().child(close("post-cancel", "Cancel", cx))).into_any_element(),
             Post::Posting => column.child(quiet("Posting to GitHub".into())).into_any_element(),
@@ -2809,7 +2810,7 @@ impl ReviewPanel {
                     .into_any_element()
             }
             Post::Failed(error) => column.child(div().text_color(theme.critical()).child(error.clone())).child(div().flex().flex_row().child(close("post-close", "Close", cx))).into_any_element(),
-            Post::Ready { snapshot, draft, event, .. } => {
+            Post::Ready { snapshot, event, .. } => {
                 let own = snapshot.is_own();
                 let stale = self.stale(Some(snapshot));
                 let event_now = *event;
@@ -2839,44 +2840,46 @@ impl ReviewPanel {
                     events = events.child(choice("event-approve", "Approve", "APPROVE", cx)).child(choice("event-changes", "Request Changes", "REQUEST_CHANGES", cx));
                 }
                 let recording = self.record_with_post;
-                column
-                    .child(events)
-                    .child(quiet(if own {
-                        "Your own PR: only a comment".into()
-                    } else if stale.is_some() {
-                        "Out of date: only a comment".into()
-                    } else {
-                        plural(draft.comments.len(), "inline comment", "inline comments")
+                let record = div()
+                    .id("post-record")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1p5()
+                    .pt_1()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.record_with_post = !recording;
+                        crate::review_record::set_recording(!recording);
+                        cx.notify();
                     }))
                     .child(
                         div()
-                            .id("post-record")
+                            .size(px(14.))
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(if recording { theme.selected } else { theme.secondary })
+                            .when(recording, |d| d.bg(theme.selected))
                             .flex()
-                            .flex_row()
                             .items_center()
-                            .gap_1p5()
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.record_with_post = !recording;
-                                crate::review_record::set_recording(!recording);
-                                cx.notify();
-                            }))
-                            .child(
-                                div()
-                                    .size(px(14.))
-                                    .rounded(px(3.))
-                                    .border_1()
-                                    .border_color(if recording { theme.selected } else { theme.secondary })
-                                    .when(recording, |d| d.bg(theme.selected))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_xs()
-                                    .text_color(theme.on_selected)
-                                    .child(if recording { "✓" } else { "" }),
-                            )
-                            .child("Record in harness"),
+                            .justify_center()
+                            .text_xs()
+                            .text_color(theme.on_selected)
+                            .child(if recording { "✓" } else { "" }),
                     )
+                    .child("Record in harness");
+                // Why only a comment, when it's limited; the inline comments
+                // are on the page.
+                let limit = if own {
+                    Some("Your own PR: only a comment")
+                } else if stale.is_some() {
+                    Some("Out of date: only a comment")
+                } else {
+                    None
+                };
+                column
+                    .child(events)
+                    .children(limit.map(|text| quiet(text.into())))
                     .child(
                         div()
                             .flex()
@@ -2885,6 +2888,7 @@ impl ReviewPanel {
                             .child(close("post-cancel", "Cancel", cx))
                             .child(Self::button("post-confirm", "Post to GitHub", true, true, theme).flex_1().flex().justify_center().on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.confirm_post(cx)))),
                     )
+                    .child(record)
                     .into_any_element()
             }
         }
@@ -3153,7 +3157,35 @@ impl ReviewPanel {
                         .child(div().font_family(crate::zed::MONO).text_xs().text_color(theme.selected).child(format!("{path}:{line}")))
                         .into_any_element();
                     let segments = crate::markdown::github_segments(body);
-                    card(head, div().flex().flex_col().gap_2().children(self.github_text(&format!("post-inline-{i}"), &segments, theme, cx)).into_any_element())
+                    // The lines it's on, as GitHub shows above the comment:
+                    // up to three before it in its hunk, then the line.
+                    let context = snapshot.context(path, *line, 3);
+                    let code = (!context.is_empty()).then(|| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .rounded_md()
+                            .overflow_hidden()
+                            .border_1()
+                            .border_color(theme.border)
+                            .font_family(crate::zed::MONO)
+                            .text_xs()
+                            .children(context.into_iter().map(|(mark, number, text)| {
+                                let tint = match mark {
+                                    '+' => Some(theme.good()),
+                                    '-' => Some(theme.critical()),
+                                    _ => None,
+                                };
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .when_some(tint, |d, t| d.bg(t.opacity(0.12)))
+                                    .child(div().flex_none().w(px(44.)).pr_2().text_right().text_color(theme.tertiary).children(number.map(|n| n.to_string())))
+                                    .child(div().flex_none().w(px(14.)).text_color(tint.unwrap_or(theme.tertiary)).child(mark.to_string()))
+                                    .child(div().flex_1().min_w_0().truncate().child(if text.is_empty() { " ".to_string() } else { text.replace('\t', "    ") }))
+                            }))
+                    });
+                    card(head, div().flex().flex_col().gap_2().children(code).children(self.github_text(&format!("post-inline-{i}"), &segments, theme, cx)).into_any_element())
                 }))
                 .when(!draft.left_out.is_empty(), |d| {
                     let open = self.open_details.contains("post-left-out");
