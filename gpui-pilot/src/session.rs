@@ -520,6 +520,15 @@ impl SessionPage {
         self.changes.update(cx, |changes, _| changes.set_visible(show_changes));
     }
 
+    /// An Ask, or a plain Claude Code tab: what the tab column files under
+    /// Asks.
+    fn is_ask(&self) -> bool {
+        match &self.launch {
+            Some(launch) => launch.flow == crate::launch::Flow::Ask,
+            None => self.kind == Kind::Claude,
+        }
+    }
+
     fn switch(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let option = |id: &'static str, label: &'static str, value: Show, cx: &mut Context<Self>| {
             let on = self.show == value;
@@ -652,8 +661,10 @@ impl Render for SessionPage {
             })
             .child(div().flex_1())
             // A review lays out its own conversation pane, so has no switch;
-            // an Ask changes no code, so it has no Changes to switch to.
-            .when(self.review.is_none() && self.server.is_none() && !self.launch.as_ref().is_some_and(|l| l.flow == crate::launch::Flow::Ask), |d| d.child(self.switch(&theme, cx)));
+            // nor has an Ask, filed under Asks with the plain Claude Code
+            // tabs (the tab column's kind): they're a conversation, shown
+            // as their terminal.
+            .when(self.review.is_none() && self.server.is_none() && !self.is_ask(), |d| d.child(self.switch(&theme, cx)));
         let terminal = div().flex_1().min_w_0().h_full().child(self.view.clone());
         let changes = div().flex_1().min_w_0().h_full().map(|d| match (&self.review, &self.planning) {
             (Some(review), _) => d.child(review.clone()),
