@@ -2291,104 +2291,122 @@ impl ReviewPanel {
 
         // Whose move it is; the review's own standing is in the right-hand
         // column (`status_column`).
-        let status = div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if whose.is_empty() { "Loading the pull request".to_string() } else { whose });
+        let status = div().text_lg().font_weight(FontWeight::SEMIBOLD).child(if whose.is_empty() { "Loading the pull request".to_string() } else { whose });
 
-        // Needs attention: the review's findings are the reviewer's until
-        // posted; GitHub's items go to whoever's move it is.
-        let mut groups: Vec<(String, Vec<Row>)> = Vec::new();
-        if !kept.is_empty() {
-            let title = if self.posted_latest().is_some() { "In your posted review" } else { "In your review, to post" };
-            let rows = kept
-                .iter()
-                .map(|f| Row {
-                    blocking: f.rank() == 0,
-                    text: f.comment.split(". ").next().unwrap_or(&f.comment).to_string(),
-                    detail: Some(match f.line {
-                        Some(line) => format!("{}:{line}", f.path),
-                        None => f.path.clone(),
-                    }),
-                    aside: f.severity.as_deref().map(capitalised),
-                    action: Action::Select(if result.as_ref().is_some_and(|r| r.area_of(&f.path).is_some()) { Selected::File(f.path.clone()) } else { Selected::General }),
-                })
-                .collect();
-            groups.push((title.into(), rows));
-        }
-        for item in open {
-            let title = format!("On {}", item.owner);
-            let row = Row {
-                blocking: item.kind == crate::pull_page::AttentionKind::Failing,
-                text: item.text,
-                detail: item.detail,
-                aside: item.since.map(ago),
-                action: item.url.map_or(Action::Nothing, Action::Url),
-            };
-            match groups.iter_mut().find(|(t, _)| *t == title) {
-                Some((_, rows)) => rows.push(row),
-                None => groups.push((title, vec![row])),
-            }
-        }
-        // Blockers first, wherever they are; the order otherwise kept.
-        groups.sort_by_key(|(_, rows)| !rows.iter().any(|r| r.blocking));
-        for (_, rows) in groups.iter_mut() {
-            rows.sort_by_key(|r| !r.blocking);
-        }
-        let attention: Vec<gpui::AnyElement> = groups
-            .into_iter()
-            .enumerate()
-            .map(|(g, (title, rows))| {
-                let count = rows.len();
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(div().flex().flex_row().gap_1p5().text_sm().child(div().font_weight(FontWeight::MEDIUM).text_color(theme.secondary).child(title)).child(div().text_color(theme.tertiary).child(count.to_string())))
-                    .child(div().flex().flex_col().rounded_lg().border_1().border_color(theme.border).children(rows.into_iter().enumerate().map(|(i, row)| {
-                        div()
-                            .id(SharedString::from(format!("merged-attention-{g}-{i}")))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .px(px(10.))
-                            .py(px(7.))
-                            .when(i > 0, |d| d.border_t_1().border_color(theme.border))
-                            .map(|d| match row.action {
-                                Action::Select(target) => d.cursor_pointer().hover(|s| s.bg(theme.row_selected.opacity(0.5))).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.selected = target.clone();
-                                    cx.notify();
-                                })),
-                                Action::Url(url) => d.cursor_pointer().hover(|s| s.bg(theme.row_selected.opacity(0.5))).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))),
-                                Action::Nothing => d,
-                            })
-                            // A slot for the mark, so the text lines up
-                            // whether or not the row blocks.
-                            .child(div().flex_none().size(px(6.)).rounded_full().when(row.blocking, |d| d.bg(theme.critical())))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .child(div().truncate().text_sm().child(row.text))
-                                    .when_some(row.detail, |d, detail| d.child(div().truncate().text_xs().text_color(theme.secondary).child(detail))),
-                            )
-                            .when_some(row.aside, |d, aside| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child(aside)))
-                    })))
-                    .into_any_element()
+        // Needs attention, one line each: what blocks the merge first, then
+        // the review's findings (yours until posted), then what's open on
+        // GitHub with whose move it is. Reviewers yet to review are one row.
+        let mut rows: Vec<Row> = kept
+            .iter()
+            .map(|f| Row {
+                blocking: f.rank() == 0,
+                text: match f.line {
+                    Some(line) => format!("{}:{line}", f.path),
+                    None => f.path.clone(),
+                },
+                detail: Some(f.comment.split(". ").next().unwrap_or(&f.comment).to_string()),
+                aside: Some(format!("{}, {}", f.severity.as_deref().map(capitalised).unwrap_or_else(|| "Finding".into()), if self.posted_latest().is_some() { "posted" } else { "to post" })),
+                action: Action::Select(if result.as_ref().is_some_and(|r| r.area_of(&f.path).is_some()) { Selected::File(f.path.clone()) } else { Selected::General }),
             })
             .collect();
+        let mut unreviewed: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = Vec::new();
+        for item in open {
+            if item.kind == crate::pull_page::AttentionKind::Unreviewed {
+                unreviewed.push((item.owner, item.since));
+                continue;
+            }
+            let when = item.since.map(ago);
+            rows.push(Row {
+                blocking: item.kind == crate::pull_page::AttentionKind::Failing,
+                text: item.text,
+                // "sam: the comment", the owner's name already at the right.
+                detail: item.detail,
+                aside: Some(match when {
+                    Some(when) => format!("on {}, {when}", item.owner),
+                    None => format!("on {}", item.owner),
+                }),
+                action: item.url.map_or(Action::Nothing, Action::Url),
+            });
+        }
+        if !unreviewed.is_empty() {
+            let since = unreviewed.iter().filter_map(|(_, at)| *at).min();
+            rows.push(Row {
+                blocking: false,
+                text: "Yet to review".into(),
+                detail: Some(unreviewed.iter().map(|(who, _)| who.as_str()).collect::<Vec<_>>().join(", ")),
+                aside: since.map(|at| format!("asked {}", ago(at))),
+                action: Action::Nothing,
+            });
+        }
+        rows.sort_by_key(|r| !r.blocking);
+        let attention = (!rows.is_empty()).then(|| {
+            div().flex().flex_col().rounded_lg().border_1().border_color(theme.border).children(rows.into_iter().enumerate().map(|(i, row)| {
+                div()
+                    .id(SharedString::from(format!("merged-attention-{i}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px(px(10.))
+                    .py(px(4.))
+                    .text_sm()
+                    .when(i > 0, |d| d.border_t_1().border_color(theme.border))
+                    .map(|d| match row.action {
+                        Action::Select(target) => d.cursor_pointer().hover(|s| s.bg(theme.row_selected.opacity(0.5))).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.selected = target.clone();
+                            cx.notify();
+                        })),
+                        Action::Url(url) => d.cursor_pointer().hover(|s| s.bg(theme.row_selected.opacity(0.5))).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))),
+                        Action::Nothing => d,
+                    })
+                    // A slot for the mark, so the text lines up whether or
+                    // not the row blocks.
+                    .child(div().flex_none().size(px(6.)).rounded_full().when(row.blocking, |d| d.bg(theme.critical())))
+                    .child(div().flex_shrink(1.).max_w(gpui::relative(0.45)).truncate().child(row.text))
+                    .child(div().flex_1().min_w_0().truncate().text_color(theme.secondary).children(row.detail))
+                    .when_some(row.aside, |d, aside| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child(aside)))
+            }))
+        });
 
-        let prose = match &result {
-            Some(r) => div()
+        // What claude is doing, while there's no result yet: one line at the
+        // top, not a page of its own under everything else.
+        let activity = (result.is_none() && !matches!(self.source, Source::Pull { .. })).then(|| {
+            let (said, tint) = self.status(theme);
+            let needs_you = self.claude_state().as_deref() == Some("needs-you");
+            let shown = self.shows_conversation();
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .rounded_lg()
+                .bg(theme.tile)
+                .text_sm()
+                .when(self.working(), |d| d.child(Self::spinner("merged-activity", 14., theme)))
+                .child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(if needs_you { tint } else { theme.fg }).child(if said.is_empty() { "Reviewing".to_string() } else { said }))
+                .child(div().flex_1().min_w_0().truncate().text_color(theme.secondary).child(match (&self.activity, needs_you) {
+                    (_, true) => "Claude is asking something in its terminal.".to_string(),
+                    (Some(activity), _) => activity.clone(),
+                    (None, _) => "The summary, walkthrough and findings show here once it's done.".to_string(),
+                }))
+                .when(needs_you || !shown, |d| {
+                    d.child(Self::button("merged-activity-terminal", if needs_you { "Answer in Terminal" } else { "Show Terminal" }, needs_you, true, theme).flex_none().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.conversation = Some(true);
+                        cx.notify();
+                    })))
+                })
+        });
+
+        let prose = result.as_ref().map(|r| {
+            div()
                 .flex()
                 .flex_col()
                 .gap_2()
                 .when_some(r.headline.clone(), |d, h| d.child(div().text_base().font_weight(FontWeight::SEMIBOLD).child(h)))
                 .child(markdown("review-summary", &Self::prose_only(&r.summary), theme))
-                .into_any_element(),
-            None if matches!(self.source, Source::Pull { .. }) => div().into_any_element(),
-            None => self.waiting(theme, cx).into_any_element(),
-        };
+        });
         let before = result.as_ref().and_then(|_| self.risk()).map(|risk| self.risk_panel(&risk, true, theme, cx));
         let (flow, walkthrough) = match &result {
             Some(r) => (Self::flow_section(r, theme), self.walkthrough_section(r, theme, cx)),
@@ -2397,18 +2415,21 @@ impl ReviewPanel {
         div()
             .flex()
             .flex_col()
-            .gap(px(28.))
+            .gap(px(24.))
+            .children(activity)
             .child(status)
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_3()
+                    .gap_2()
                     .child(Self::section_heading("Needs attention"))
-                    .when(attention.is_empty(), |d| d.child(div().text_sm().text_color(theme.secondary).child("Nothing open.")))
-                    .children(attention),
+                    .map(|d| match attention {
+                        Some(list) => d.child(list),
+                        None => d.child(div().text_sm().text_color(theme.secondary).child("Nothing open.")),
+                    }),
             )
-            .child(prose)
+            .children(prose)
             .children(before)
             .children(flow)
             .children(walkthrough)
