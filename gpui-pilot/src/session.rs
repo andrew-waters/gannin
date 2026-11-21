@@ -651,8 +651,9 @@ impl Render for SessionPage {
                     }))
             })
             .child(div().flex_1())
-            // A review lays out its own conversation pane, so has no switch.
-            .when(self.review.is_none() && self.server.is_none(), |d| d.child(self.switch(&theme, cx)));
+            // A review lays out its own conversation pane, so has no switch;
+            // an Ask changes no code, so it has no Changes to switch to.
+            .when(self.review.is_none() && self.server.is_none() && !self.launch.as_ref().is_some_and(|l| l.flow == crate::launch::Flow::Ask), |d| d.child(self.switch(&theme, cx)));
         let terminal = div().flex_1().min_w_0().h_full().child(self.view.clone());
         let changes = div().flex_1().min_w_0().h_full().map(|d| match (&self.review, &self.planning) {
             (Some(review), _) => d.child(review.clone()),
