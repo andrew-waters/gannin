@@ -86,6 +86,9 @@ enum Selected {
     Checks,
 }
 
+impl gpui::EventEmitter<crate::pull_page::OpenLinked> for ReviewPanel {}
+impl gpui::EventEmitter<crate::pull_page::OpenPull> for ReviewPanel {}
+
 /// The PR page laid into the panel, each part its own `PullPage`: the
 /// merged PR and review sketch in Review Preview.
 pub struct PullParts {
@@ -440,10 +443,15 @@ impl ReviewPanel {
         }
     }
 
-    /// Merges the PR page in: the sketch in Review Preview.
-    pub fn with_pull(mut self, parts: PullParts) -> Self {
+    /// Merges the PR page in: the sketch in Review Preview. What its
+    /// sidebar opens (Related's issues, PRs and plans) goes on to the
+    /// window, to open in a drawer.
+    pub fn set_pull(&mut self, parts: PullParts, cx: &mut Context<Self>) {
+        use crate::pull_page::{OpenLinked, OpenPull};
+        cx.subscribe(&parts.sidebar, |_, _, e: &OpenLinked, cx| cx.emit(OpenLinked { id: e.id.clone(), url: e.url.clone() })).detach();
+        cx.subscribe(&parts.sidebar, |_, _, e: &OpenPull, cx| cx.emit(OpenPull(e.0.clone()))).detach();
+        cx.subscribe(&parts.sidebar, |_, _, e: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(e.0.clone()))).detach();
         self.pull = Some(parts);
-        self
     }
 
     fn subject(&self) -> (String, i64) {

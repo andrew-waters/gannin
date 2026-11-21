@@ -1098,8 +1098,31 @@ impl Workspace {
                     }
                     None => cx.open_url(&event.url),
                 }),
-                cx.subscribe_in(page, window, |this, _, event: &crate::pull_page::OpenPull, window, cx| this.open_pull_page(event.0.clone(), window, cx)),
+                // A related PR opens in its drawer; Open in Page is there.
+                cx.subscribe(page, |this, _, event: &crate::pull_page::OpenPull, cx| {
+                    this.drawers.clear();
+                    this.push_pr_drawer(event.0.clone(), cx);
+                }),
                 cx.subscribe_in(page, window, |this, _, event: &crate::issues::ShowSession, window, cx| this.show_session_tab(event.0, window, cx)),
+                cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
+                    this.drawers.clear();
+                    let id = event.0.path.clone();
+                    this.open_drawer(DrawerItem::Doc(event.0.clone()), id, cx);
+                }),
+            ],
+            // The merged PR and review sketch: Related opens as the PR page's does.
+            Page::ReviewPreview(page) => vec![
+                cx.subscribe(page, |this, _, event: &crate::pull_page::OpenLinked, cx| match this.issues.read(cx).issue(&event.id) {
+                    Some(issue) => {
+                        this.drawers.clear();
+                        this.push_drawer(issue, cx);
+                    }
+                    None => cx.open_url(&event.url),
+                }),
+                cx.subscribe(page, |this, _, event: &crate::pull_page::OpenPull, cx| {
+                    this.drawers.clear();
+                    this.push_pr_drawer(event.0.clone(), cx);
+                }),
                 cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
                     this.drawers.clear();
                     let id = event.0.path.clone();

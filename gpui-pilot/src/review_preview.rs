@@ -139,6 +139,10 @@ fn snapshot(own: bool) -> Snapshot {
     Snapshot::sample(own, &[("src/api/payments.rs", 80..=145), ("src/store/keys.rs", 1..=60), ("src/api/errors.rs", 50..=62)])
 }
 
+impl gpui::EventEmitter<crate::pull_page::OpenLinked> for ReviewPreview {}
+impl gpui::EventEmitter<crate::pull_page::OpenPull> for ReviewPreview {}
+impl gpui::EventEmitter<crate::harness::OpenDoc> for ReviewPreview {}
+
 pub struct ReviewPreview {
     state: State,
     /// The sketch of the PR page merged into the review: its parts in the
@@ -175,14 +179,20 @@ impl ReviewPreview {
             State::PostFailed => Some(Post::Failed("GitHub refused the review (422): the commit it's for is no longer the head of the pull request.".into())),
             _ => None,
         };
-        cx.new(|cx| {
-            let panel = ReviewPanel::preview(REPO, NUMBER, result, idle, working, snapshot(own), post, window, cx);
+        let panel = cx.new(|cx| {
+            let mut panel = ReviewPanel::preview(REPO, NUMBER, result, idle, working, snapshot(own), post, window, cx);
             if merged {
-                panel.with_pull(PullParts::preview(REPO, NUMBER, "Add idempotency keys to the payments API", cx))
-            } else {
-                panel
+                let parts = PullParts::preview(REPO, NUMBER, "Add idempotency keys to the payments API", cx);
+                panel.set_pull(parts, cx);
             }
-        })
+            panel
+        });
+        // What the merged sidebar opens goes on to the window's drawers.
+        use crate::pull_page::{OpenLinked, OpenPull};
+        cx.subscribe(&panel, |_, _, e: &OpenLinked, cx| cx.emit(OpenLinked { id: e.id.clone(), url: e.url.clone() })).detach();
+        cx.subscribe(&panel, |_, _, e: &OpenPull, cx| cx.emit(OpenPull(e.0.clone()))).detach();
+        cx.subscribe(&panel, |_, _, e: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(e.0.clone()))).detach();
+        panel
     }
 
     fn pick(&mut self, state: State, window: &mut Window, cx: &mut Context<Self>) {

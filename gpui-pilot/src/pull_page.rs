@@ -50,7 +50,7 @@ pub struct LocalIssue {
     pub closes: bool,
 }
 
-/// A PR in Related was clicked: its page, in a tab.
+/// A PR in Related was clicked: its drawer.
 pub struct OpenPull(pub PrItem);
 
 impl EventEmitter<PullAction> for PullPage {}
@@ -1411,8 +1411,7 @@ impl PullPage {
         });
         // Related: what it closes, the issues and PRs that mention it, and
         // the harness's plans and requirements about it or what it closes.
-        // Each opens in the app: an issue's drawer, a PR's page, a plan's
-        // drawer.
+        // Each opens in its drawer: an issue's, a PR's, a plan's.
         let caption = |text: &str| div().pt_1().text_xs().text_color(theme.tertiary).child(text.to_string());
         let own_repo = self.pr.repo.clone();
         let item_row = |key: (&'static str, usize), l: &Linked, cx: &mut Context<Self>| {
@@ -1486,11 +1485,12 @@ impl PullPage {
             .when(self.part != Part::Sidebar, |d| {
                 d.child(group("Activity").child(row("Approvals", approvals)).child(row("Changes requested", changes)).child(row("Unresolved threads", unresolved)).child(row("Commits", data.commit_total)))
             })
+            // What it relates to first: each opens in a drawer.
+            .child(related)
             .child(reviewers)
             .child(assignees)
             .child(labels)
             .child(milestone)
-            .child(related)
             .child(group(&if data.participants.len() == 1 { "1 participant".to_string() } else { format!("{} participants", data.participants.len()) }).child(participants))
     }
 
