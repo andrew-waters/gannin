@@ -7,6 +7,10 @@ final class AuthStore {
 
     private(set) var viewer: Viewer?
     private(set) var token: String?
+    /// True until `loadToken` has read the token from the keychain. The
+    /// token is nil meanwhile, which isn't the same as signed out.
+    private(set) var isLoadingToken: Bool
+    @ObservationIgnored private var loading: Task<Void, Never>?
     /// GitHub's GraphQL budget as of the latest query.
     private(set) var rateLimit: RateLimit?
     /// GitHub's REST budget (Actions runs and jobs) as of the latest request.
@@ -71,12 +75,34 @@ final class AuthStore {
         #if DEMO
         token = "demo"
         viewer = DemoFixture.viewer
+        isLoadingToken = false
         #else
-        token = Keychain.token()
-        if token != nil, let data = UserDefaults.standard.data(forKey: Self.viewerKey) {
-            viewer = try? JSONDecoder().decode(Viewer.self, from: data)
-        }
+        isLoadingToken = true
         #endif
+    }
+
+    /// Reads the stored token, and the cached profile that goes with it, once.
+    /// A keychain access prompt can wait on the user, so the read is off the
+    /// main actor and nothing here blocks the first window. Windows that ask
+    /// together wait on the same read.
+    func loadToken() async {
+        guard isLoadingToken else { return }
+        if loading == nil {
+            loading = Task {
+                await BundleMove.finish()
+                let stored = await Self.storedToken()
+                token = stored
+                if stored != nil, let data = UserDefaults.standard.data(forKey: Self.viewerKey) {
+                    viewer = try? JSONDecoder().decode(Viewer.self, from: data)
+                }
+                isLoadingToken = false
+            }
+        }
+        await loading?.value
+    }
+
+    @concurrent private static func storedToken() async -> String? {
+        Keychain.token()
     }
 
     func completeSignIn(token: String) async throws {

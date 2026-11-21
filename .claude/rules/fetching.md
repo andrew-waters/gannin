@@ -9,6 +9,7 @@ paths:
 
 ## Auth and writes
 - Keep the token in the keychain only (`Keychain`, by service and account); sandboxes use a different service.
+- Never read a keychain secret on the main actor: an access prompt waits on the user and froze launch. `AuthStore.loadToken` reads the token off it, and `RootView` shows neither screen until `isLoadingToken` is false; a token of nil before that isn't signed out. Check that a sandbox credential exists with `Keychain.exists`, which reads no secret.
 - All GitHub calls are reads except the listed writes (`ProjectFields.swift`, `InvestmentWrites.swift`, `ReviewRequests.swift`, `HarnessWrites.swift`). Every write must be confirmed by the user first, and mutations must skip the injected `rateLimit` field.
 - Keep raw GraphQL shapes private to `Queries.swift` and map them onto models.
 - Board reads and writes need the `project` scope.

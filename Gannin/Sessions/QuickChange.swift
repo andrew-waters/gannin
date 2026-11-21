@@ -587,7 +587,7 @@ struct NewQuickChangeView: View {
         SandboxPlacement.decide(
             enabled: SandboxCredentials.isEnabled, repos: repo.isEmpty ? [] : [repo],
             reposNeedingMac: configs.config(for: org).reposNeedingMac, org: org,
-            hasGitHubToken: SandboxCredentials.gitHubToken(org: org) != nil,
+            hasGitHubToken: SandboxCredentials.hasGitHubToken(org: org),
             connectsBySSH: SessionStore.connectCommand.map { Shell.sshArguments($0) != nil } ?? true
         )
     }

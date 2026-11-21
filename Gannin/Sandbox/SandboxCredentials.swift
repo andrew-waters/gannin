@@ -65,6 +65,11 @@ nonisolated enum SandboxCredentials {
         Keychain.value(service: service, account: "claude-apiKey")
     }
 
+    /// Whether an API key is stored, without reading it.
+    static var hasAPIKey: Bool {
+        Keychain.exists(service: service, account: "claude-apiKey")
+    }
+
     static func setAPIKey(_ value: String?) {
         if let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
             Keychain.setValue(value, service: service, account: "claude-apiKey")
@@ -115,6 +120,11 @@ nonisolated enum SandboxCredentials {
         Keychain.value(service: service, account: "github-\(org.lowercased())")
     }
 
+    /// Whether the org's token is stored, without reading it.
+    static func hasGitHubToken(org: String) -> Bool {
+        Keychain.exists(service: service, account: "github-\(org.lowercased())")
+    }
+
     static func setGitHubToken(_ value: String?, org: String) {
         let account = "github-\(org.lowercased())"
         if let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
@@ -152,6 +162,11 @@ nonisolated enum SandboxCredentials {
 
     static var signingKey: String? {
         Keychain.value(service: service, account: "signing-key")
+    }
+
+    /// Whether the signing key is stored, without reading it.
+    static var hasSigningKey: Bool {
+        Keychain.exists(service: service, account: "signing-key")
     }
 
     static var publicSigningKey: String? {

@@ -1056,8 +1056,11 @@ final class SessionStore {
         // the next one.
         let rules = SessionRules.current
         /// A sandbox on a server gets its credentials over ssh before the
-        /// terminal starts: nil there removes any left from before.
-        var remoteSecrets: (runner: Shell.Runner, directory: String, text: String?)?
+        /// terminal starts; none found there removes any left from before.
+        var remoteSecrets: (runner: Shell.Runner, directory: String, org: String)?
+        /// A sandbox on this Mac gets its credentials written to the file
+        /// before the terminal starts; none found removes any left from before.
+        var localSecrets: (org: String, file: URL)?
         /// A quick change's screenshots, sent to a server the same way.
         var remoteAttachments: (runner: Shell.Runner, directory: String, files: [URL])?
         if let connect = session.connect {
@@ -1078,8 +1081,7 @@ final class SessionStore {
                 remoteAttachments = (.ssh(arguments), remoteDirectory, names.map { folder.appending(path: $0) })
             }
             if session.isSandboxed, let arguments = Shell.sshArguments(connect) {
-                let text = try? SandboxLaunch.credentials(org: session.org).get()
-                remoteSecrets = (.ssh(arguments), remoteDirectory, text.map(SandboxLaunch.secretsFile))
+                remoteSecrets = (.ssh(arguments), remoteDirectory, session.org)
             }
         } else {
             let root = session.harnessPath.map(Self.expanded) ?? Self.workspaceRoot
@@ -1089,7 +1091,10 @@ final class SessionStore {
             // write to from inside.
             let real = session.isSandboxed ? URL(filePath: SandboxGitGuard.realPath(directory.path), directoryHint: .isDirectory) : directory
             let local = SessionScript.quoted(real.path)
-            if session.isSandboxed { prepareSandbox(session, directory: real) }
+            if session.isSandboxed {
+                prepareSandbox(session, directory: real)
+                localSecrets = (session.org, real.appending(path: "secrets.env"))
+            }
             // A sandbox's statusLine can't run the user's own command, which is on the Mac.
             try? Data(session.agent.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed, concise: session.isReviewer, remoteControl: !session.isReviewer).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
@@ -1128,21 +1133,31 @@ final class SessionStore {
         // A stop of its sandbox still on its way would land after the start
         // script found it running: wait for it, so the script starts afresh.
         let stopping = session.sandbox.flatMap { stoppingSandboxes[$0] }
-        guard remoteSecrets != nil || remoteAttachments != nil || stopping != nil else { return start() }
+        guard remoteSecrets != nil || localSecrets != nil || remoteAttachments != nil || stopping != nil else { return start() }
         launching.insert(id)
         var waitingOn: [String] = []
         if stopping != nil { waitingOn.append("sandbox stop") }
+        if localSecrets != nil { waitingOn.append("local secrets") }
         if remoteSecrets != nil { waitingOn.append("remote secrets") }
         if remoteAttachments != nil { waitingOn.append("remote attachments") }
         Self.log.debug("launch \(id.uuidString, privacy: .public) waiting on \(waitingOn.joined(separator: ", "), privacy: .public) before starting")
         Task {
             await stopping?.value
+            if let localSecrets {
+                let credentials = await Self.loadCredentials(org: localSecrets.org)
+                if let credentials {
+                    try? SandboxLaunch.writeSecrets(SandboxLaunch.secretsFile(credentials), to: localSecrets.file)
+                } else {
+                    try? FileManager.default.removeItem(at: localSecrets.file)
+                }
+            }
             if let remoteSecrets {
                 // Over the shared connection, on standard input, so no secret
                 // is on a command line on either box. The start script says
                 // if they didn't arrive.
-                let script = SandboxLaunch.remoteSecretsScript(directory: remoteSecrets.directory, writing: remoteSecrets.text != nil)
-                let input = remoteSecrets.text.map { Data($0.utf8) }
+                let text = await Self.loadCredentials(org: remoteSecrets.org).map(SandboxLaunch.secretsFile)
+                let script = SandboxLaunch.remoteSecretsScript(directory: remoteSecrets.directory, writing: text != nil)
+                let input = text.map { Data($0.utf8) }
                 let result = await Task.detached { Shell.run(script, remoteSecrets.runner, input: input) }.value
                 Self.log.debug("launch \(id.uuidString, privacy: .public) sent remote secrets, ok=\(result.ok, privacy: .public)")
             }
@@ -1186,18 +1201,17 @@ final class SessionStore {
     /// Sandboxes being stopped, by name, for a start to wait on.
     private var stoppingSandboxes: [String: Task<Void, Never>] = [:]
 
-    /// What a sandboxed session on this Mac needs beside its start script:
-    /// the script run inside, and its credentials for that start (removed
-    /// inside once read; without them the start script says what's
-    /// missing).
+    /// The script a sandboxed session on this Mac runs inside. Its credentials
+    /// (`secrets.env`, removed inside once read; without them the start
+    /// script says what's missing) are written by `launch` before the
+    /// terminal starts.
     private func prepareSandbox(_ session: CodeSession, directory: URL) {
         try? Data(SandboxLaunch.innerScript(session).utf8).write(to: directory.appending(path: "inner.sh"))
-        let secrets = directory.appending(path: "secrets.env")
-        if let credentials = try? SandboxLaunch.credentials(org: session.org).get() {
-            try? SandboxLaunch.writeSecrets(SandboxLaunch.secretsFile(credentials), to: secrets)
-        } else {
-            try? FileManager.default.removeItem(at: secrets)
-        }
+    }
+
+    /// A sandbox's credentials for the org, or nil when any is missing.
+    private static func loadCredentials(org: String) async -> SandboxLaunch.Credentials? {
+        try? await SandboxLaunch.credentials(org: org).get()
     }
 
     /// What a session's claude runs without asking: the pair review's script.
