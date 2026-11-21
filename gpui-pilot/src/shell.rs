@@ -1098,6 +1098,7 @@ impl Workspace {
                     }
                     None => cx.open_url(&event.url),
                 }),
+                cx.subscribe_in(page, window, |this, _, event: &crate::pull_page::OpenPull, window, cx| this.open_pull_page(event.0.clone(), window, cx)),
                 cx.subscribe_in(page, window, |this, _, event: &crate::issues::ShowSession, window, cx| this.show_session_tab(event.0, window, cx)),
                 cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
                     this.drawers.clear();

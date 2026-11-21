@@ -36,7 +36,11 @@ pub struct OpenLinked {
     pub url: String,
 }
 
+/// A PR in Related was clicked: its page, in a tab.
+pub struct OpenPull(pub PrItem);
+
 impl EventEmitter<PullAction> for PullPage {}
+impl EventEmitter<OpenPull> for PullPage {}
 impl EventEmitter<OpenLinked> for PullPage {}
 impl EventEmitter<ShowSession> for PullPage {}
 impl EventEmitter<crate::harness::OpenDoc> for PullPage {}
@@ -67,6 +71,8 @@ struct Reviewer {
 }
 
 struct Linked {
+    /// A pull request rather than an issue.
+    pull: bool,
     id: String,
     number: i64,
     title: String,
@@ -162,6 +168,9 @@ struct PullData {
     milestone: Option<String>,
     reviewers: Vec<Reviewer>,
     linked: Vec<Linked>,
+    /// Issues and PRs that mention this one (GitHub's cross-references),
+    /// newest first, without those it closes.
+    mentions: Vec<Linked>,
     participants: Vec<Person>,
     commits: Vec<CommitRow>,
     commit_total: usize,
@@ -200,7 +209,7 @@ const QUERY: &str = r#"query($owner: String!, $name: String!, $number: Int!) { v
     ... on ReviewRequestedEvent { createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { name } } }
     ... on LabeledEvent { createdAt actor { login } label { name } }
     ... on HeadRefForcePushedEvent { createdAt actor { login } }
-    ... on CrossReferencedEvent { createdAt actor { login } source { ... on Issue { number title repository { nameWithOwner } } ... on PullRequest { number title repository { nameWithOwner } } } }
+    ... on CrossReferencedEvent { createdAt actor { login } source { __typename ... on Issue { id number title url state repository { nameWithOwner } } ... on PullRequest { id number title url state repository { nameWithOwner } } } }
   } }
 } } }"#;
 
@@ -353,6 +362,24 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
             })
         })
         .collect();
+    let closing: Vec<String> = nodes(&pr["closingIssuesReferences"]).iter().map(|i| text(&i["id"])).collect();
+    let mut mentions: Vec<Linked> = Vec::new();
+    for n in nodes(&pr["timelineItems"]).iter().rev().filter(|n| n["__typename"] == "CrossReferencedEvent") {
+        let s = &n["source"];
+        let id = text(&s["id"]);
+        if id.is_empty() || id == text(&pr["id"]) || closing.contains(&id) || mentions.iter().any(|m| m.id == id) {
+            continue;
+        }
+        mentions.push(Linked {
+            pull: s["__typename"] == "PullRequest",
+            id,
+            number: s["number"].as_i64().unwrap_or(0),
+            title: text(&s["title"]),
+            url: text(&s["url"]),
+            open: s["state"] == "OPEN",
+            repo: text(&s["repository"]["nameWithOwner"]),
+        });
+    }
     Ok(PullData {
         viewer: text(&data["viewer"]["login"]),
         id: text(&pr["id"]),
@@ -376,6 +403,7 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
         linked: nodes(&pr["closingIssuesReferences"])
             .iter()
             .map(|i| Linked {
+                pull: false,
                 id: text(&i["id"]),
                 number: i["number"].as_i64().unwrap_or(0),
                 title: text(&i["title"]),
@@ -384,6 +412,7 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
                 repo: text(&i["repository"]["nameWithOwner"]),
             })
             .collect(),
+        mentions,
         participants: nodes(&pr["participants"]).iter().map(person).collect(),
         commits,
         commit_total: pr["commits"]["totalCount"].as_u64().unwrap_or(commits_list.len() as u64) as usize,
@@ -487,7 +516,11 @@ fn sample(repo: &str, number: i64, title: &str) -> PullData {
             Reviewer { person: who("sam"), at: ago(30), state: "CHANGES_REQUESTED".into() },
             Reviewer { person: who("priya"), at: ago(48), state: "REQUESTED".into() },
         ],
-        linked: vec![Linked { id: "preview-issue-198".into(), number: 198, title: "Retried payments can charge twice".into(), url: format!("https://github.com/{repo}/issues/198"), open: true, repo: repo.into() }],
+        mentions: vec![
+            Linked { pull: true, id: "preview-pr-221".into(), number: 221, title: "Send the Idempotency-Key from the mobile client".into(), url: "https://github.com/acme/mobile/pull/221".into(), open: true, repo: "acme/mobile".into() },
+            Linked { pull: false, id: "preview-issue-203".into(), number: 203, title: "Document retries in the payments API guide".into(), url: format!("https://github.com/{repo}/issues/203"), open: true, repo: repo.into() },
+        ],
+        linked: vec![Linked { pull: false, id: "preview-issue-198".into(), number: 198, title: "Retried payments can charge twice".into(), url: format!("https://github.com/{repo}/issues/198"), open: true, repo: repo.into() }],
         participants: vec![who("alex"), who("sam"), who("priya")],
         commit_total: commits.len(),
         commits,
@@ -543,41 +576,7 @@ impl PullPage {
     /// One part of a made-up pull request, never fetched: for the merged
     /// sketch in Review Preview.
     pub fn preview(repo: &str, number: i64, title: &str, part: Part) -> Self {
-        let now = Utc::now();
-        let pr = PrItem {
-            id: format!("preview-{number}"),
-            number,
-            title: title.into(),
-            url: format!("https://github.com/{repo}/pull/{number}"),
-            repo: repo.into(),
-            repo_name: repo.rsplit('/').next().unwrap_or(repo).into(),
-            author: Some("alex".into()),
-            author_name: None,
-            author_avatar: None,
-            author_is_bot: false,
-            state: crate::prs::PrState::Open,
-            draft: false,
-            standing: None,
-            checks: None,
-            has_details: false,
-            reviewers: Vec::new(),
-            assignees: Vec::new(),
-            linked: Vec::new(),
-            additions: None,
-            deletions: None,
-            files: None,
-            branch: None,
-            created_at: now,
-            updated_at: now,
-            merged_at: None,
-            closed_at: None,
-            merged_by: None,
-            first_commit_at: None,
-            ready_at: None,
-            last_commit_at: None,
-            commits: Vec::new(),
-            reviews: Vec::new(),
-        };
+        let pr = PrItem::stub(&format!("preview-{number}"), repo, number, title, &format!("https://github.com/{repo}/pull/{number}"));
         Self {
             pr,
             org: String::new(),
@@ -1381,27 +1380,54 @@ impl PullPage {
             Some(m) => div().text_sm().child(m.clone()),
             None => none("No milestone"),
         });
-        let mut development = group("Development");
-        if data.linked.is_empty() {
-            development = development.child(none("No linked issues"));
+        // Related: what it closes, the issues and PRs that mention it, and
+        // the harness's plans and requirements about it or what it closes.
+        // Each opens in the app: an issue's drawer, a PR's page, a plan's
+        // drawer.
+        let caption = |text: &str| div().pt_1().text_xs().text_color(theme.tertiary).child(text.to_string());
+        let own_repo = self.pr.repo.clone();
+        let item_row = |key: (&'static str, usize), l: &Linked, cx: &mut Context<Self>| {
+            let (pull, id, url, repo, number, title) = (l.pull, l.id.clone(), l.url.clone(), l.repo.clone(), l.number, l.title.clone());
+            let reference = if l.repo.eq_ignore_ascii_case(&own_repo) { format!("#{}", l.number) } else { format!("{}#{}", l.repo.rsplit('/').next().unwrap_or(&l.repo), l.number) };
+            div()
+                .id(key)
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .cursor_pointer()
+                .hover(|s| s.text_color(theme.selected))
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                    if pull {
+                        cx.emit(OpenPull(PrItem::stub(&id, &repo, number, &title, &url)));
+                    } else {
+                        cx.emit(OpenLinked { id: id.clone(), url: url.clone() });
+                    }
+                }))
+                .child(div().flex_none().size(px(7.)).rounded_full().bg(if l.open { theme.good() } else { theme.slot(5) }))
+                .child(div().flex_none().text_xs().text_color(theme.tertiary).child(if l.pull { "PR" } else { "Issue" }))
+                .child(div().flex_1().min_w_0().truncate().child(l.title.clone()))
+                .child(div().flex_none().text_color(theme.secondary).child(reference))
+        };
+        let mut related = group("Related");
+        if data.linked.is_empty() && data.mentions.is_empty() && self.plans.is_empty() {
+            related = related.child(none("Nothing related"));
         }
-        for (i, l) in data.linked.iter().enumerate() {
-            let (id, url) = (l.id.clone(), l.url.clone());
-            development = development.child(
-                div()
-                    .id(("pull-linked", i))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .text_sm()
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(theme.selected))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(OpenLinked { id: id.clone(), url: url.clone() })))
-                    .child(div().flex_none().size(px(7.)).rounded_full().bg(if l.open { theme.good() } else { theme.slot(5) }))
-                    .child(div().flex_1().min_w_0().truncate().child(l.title.clone()))
-                    .child(div().flex_none().text_color(theme.secondary).child(format!("#{}", l.number))),
-            );
+        if !data.linked.is_empty() {
+            related = related.child(caption("Closes"));
+            for (i, l) in data.linked.iter().enumerate() {
+                related = related.child(item_row(("pull-linked", i), l, cx));
+            }
+        }
+        if !data.mentions.is_empty() {
+            related = related.child(caption("Mentioned in"));
+            for (i, l) in data.mentions.iter().enumerate() {
+                related = related.child(item_row(("pull-mention", i), l, cx));
+            }
+        }
+        if !self.plans.is_empty() {
+            related = related.child(caption("Plans and requirements")).children(crate::harness::plan_rows("pull-related-plan", &self.plans, theme, cx));
         }
         let mut participants = div().flex().flex_row().flex_wrap().gap_1();
         for p in &data.participants {
@@ -1420,7 +1446,7 @@ impl PullPage {
             .child(assignees)
             .child(labels)
             .child(milestone)
-            .child(development)
+            .child(related)
             .child(group(&if data.participants.len() == 1 { "1 participant".to_string() } else { format!("{} participants", data.participants.len()) }).child(participants))
     }
 

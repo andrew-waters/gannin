@@ -303,6 +303,46 @@ pub struct PrItem {
 }
 
 impl PrItem {
+    /// A PR known only by where it is, for opening its page (which fetches
+    /// the rest): one linked from another page that the workload hasn't got.
+    pub fn stub(id: &str, repo: &str, number: i64, title: &str, url: &str) -> Self {
+        let now = Utc::now();
+        Self {
+            id: id.into(),
+            number,
+            title: title.into(),
+            url: url.into(),
+            repo: repo.into(),
+            repo_name: repo.rsplit('/').next().unwrap_or(repo).into(),
+            author: None,
+            author_name: None,
+            author_avatar: None,
+            author_is_bot: false,
+            state: PrState::Open,
+            draft: false,
+            standing: None,
+            checks: None,
+            has_details: false,
+            reviewers: Vec::new(),
+            assignees: Vec::new(),
+            linked: Vec::new(),
+            additions: None,
+            deletions: None,
+            files: None,
+            branch: None,
+            created_at: now,
+            updated_at: now,
+            merged_at: None,
+            closed_at: None,
+            merged_by: None,
+            first_commit_at: None,
+            ready_at: None,
+            last_commit_at: None,
+            commits: Vec::new(),
+            reviews: Vec::new(),
+        }
+    }
+
     pub fn is_stale(&self, now: DateTime<Utc>) -> bool {
         self.state == PrState::Open && (now - self.updated_at).num_days() >= STALE_DAYS
     }
