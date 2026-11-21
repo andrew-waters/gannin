@@ -1430,6 +1430,7 @@ impl PullPage {
         let own_repo = self.pr.repo.clone();
         let item_row = |key: (&'static str, usize), l: &Linked, cx: &mut Context<Self>| {
             let (pull, id, url, repo, number, title, open) = (l.pull, l.id.clone(), l.url.clone(), l.repo.clone(), l.number, l.title.clone(), l.open);
+            let tip = format!("{} {}", if l.open { "Open" } else { "Closed" }, if l.pull { "pull request" } else { "issue" });
             let reference = if l.repo.eq_ignore_ascii_case(&own_repo) { format!("#{}", l.number) } else { format!("{}#{}", l.repo.rsplit('/').next().unwrap_or(&l.repo), l.number) };
             div()
                 .id(key)
@@ -1447,8 +1448,15 @@ impl PullPage {
                         cx.emit(OpenLinked { id: id.clone(), url: url.clone(), repo: repo.clone(), number, title: title.clone(), open });
                     }
                 }))
-                .child(div().flex_none().size(px(7.)).rounded_full().bg(if l.open { theme.good() } else { theme.slot(5) }))
-                .child(div().flex_none().text_xs().text_color(theme.tertiary).child(if l.pull { "PR" } else { "Issue" }))
+                // Its kind as an icon, coloured by state: open green,
+                // closed (or merged) purple. The tooltip says which.
+                .child(
+                    div()
+                        .id((key.0, key.1 + 10_000))
+                        .flex_none()
+                        .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+                        .child(gpui::svg().path(if l.pull { crate::icons::PULL } else { crate::icons::issue(l.open) }).size(px(14.)).text_color(if l.open { theme.good() } else { theme.slot(5) })),
+                )
                 .child(div().flex_1().min_w_0().truncate().child(l.title.clone()))
                 .child(div().flex_none().text_color(theme.secondary).child(reference))
         };

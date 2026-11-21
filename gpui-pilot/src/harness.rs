@@ -55,6 +55,23 @@ impl HarnessKind {
             HarnessKind::Specialists => "Specialists",
         }
     }
+
+    /// Its icon, in the sidebar and wherever a document of its kind is
+    /// listed.
+    pub fn icon(self) -> &'static str {
+        match self {
+            HarnessKind::Plans => "icons/list_todo.svg",
+            HarnessKind::Requirements => "icons/file_text_outlined.svg",
+            HarnessKind::Decisions => "icons/git_branch.svg",
+            HarnessKind::Findings => "icons/crosshair.svg",
+            HarnessKind::Skills => "icons/tool_hammer.svg",
+            HarnessKind::Prompts => "icons/chat.svg",
+            HarnessKind::Learnings => "icons/book.svg",
+            HarnessKind::Research => "icons/magnifying_glass.svg",
+            HarnessKind::Refines => "icons/pencil.svg",
+            HarnessKind::Specialists => "icons/person.svg",
+        }
+    }
 }
 
 /// A document in the harness.
@@ -305,6 +322,7 @@ pub fn plan_rows<T: EventEmitter<OpenDoc> + 'static>(id: &'static str, plans: &[
                 .cursor_pointer()
                 .hover(|s| s.opacity(0.8))
                 .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(OpenDoc(opened.clone()))))
+                .child(gpui::svg().path(doc.kind.icon()).size(px(14.)).flex_none().text_color(theme.secondary))
                 .child(
                     div()
                         .flex_1()

@@ -4893,8 +4893,11 @@ impl Workspace {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.navigate(nav, event.modifiers().platform, window, cx)
             }))
-            // SF Symbols aren't reachable from GPUI; icons need an SVG set.
-            .child(div().w(px(16.)).flex().justify_center().child(div().w(px(6.)).h(px(6.)).rounded_full().bg(theme.tertiary)))
+            // A harness kind has its icon; the rest keep a dot for now.
+            .child(div().w(px(16.)).flex().justify_center().child(match nav {
+                Nav::Harness(kind) => gpui::svg().path(kind.icon()).size(px(14.)).text_color(if selected { theme.fg } else { theme.secondary }).into_any_element(),
+                _ => div().w(px(6.)).h(px(6.)).rounded_full().bg(theme.tertiary).into_any_element(),
+            }))
             .child(div().flex_1().overflow_hidden().whitespace_nowrap().child(nav.title()))
             .when_some(
                 match nav {
@@ -5784,11 +5787,11 @@ impl Workspace {
     fn tab_icon(&self, tab: &Tab, cx: &App) -> &'static str {
         match tab.nav {
             Nav::PullRequests | Nav::Pull(_) => "icons/pull_request.svg",
-            Nav::Issues => "icons/circle.svg",
+            Nav::Issues => crate::icons::ISSUE,
             Nav::Scorecards => "icons/table.svg",
             Nav::Ci => "icons/play_outlined.svg",
             Nav::Activity => "icons/git_graph.svg",
-            Nav::Harness(_) => "icons/book.svg",
+            Nav::Harness(kind) => kind.icon(),
             Nav::ReviewPreview => "icons/eye.svg",
             Nav::SchedulePreview => "icons/clock.svg",
             Nav::WorkflowsPreview => "icons/git_graph.svg",

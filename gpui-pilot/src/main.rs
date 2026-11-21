@@ -23,6 +23,7 @@ mod harness;
 mod harness_doc;
 mod harness_git;
 mod history;
+mod icons;
 mod issue_parts;
 mod issues;
 mod launch;
@@ -177,7 +178,7 @@ fn main() {
             // The assistant's mock-up alone, in its own window and process:
             // no workspace, no saved state, nothing a running Gannin uses.
             "--assistant-preview" => {
-                gpui_platform::application().with_assets(assets::Assets).run(|cx: &mut App| {
+                gpui_platform::application().with_assets(icons::Assets).run(|cx: &mut App| {
                     zed::init(cx);
                     cx.bind_keys(window_key_bindings());
                     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -405,7 +406,7 @@ fn main() {
     }
 
     paths::migrate();
-    gpui_platform::application().with_assets(assets::Assets).run(move |cx: &mut App| {
+    gpui_platform::application().with_assets(icons::Assets).run(move |cx: &mut App| {
         zed::init(cx);
         cx.bind_keys(window_key_bindings());
         cx.bind_keys(shell::key_bindings());
