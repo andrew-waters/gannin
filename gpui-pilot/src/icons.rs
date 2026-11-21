@@ -10,7 +10,8 @@ pub const ISSUE: &str = "icons/gannin_issue.svg";
 /// A closed issue: a ring with a tick (Zed's).
 pub const ISSUE_CLOSED: &str = "icons/todo_complete.svg";
 pub const PULL: &str = "icons/pull_request.svg";
-/// Merged: a branch joining the line it came from.
+/// Merged: GitHub's git-merge mark (Octicons, MIT), a branch joining
+/// the line it came from.
 pub const MERGE: &str = "icons/gannin_merge.svg";
 /// A note: a page of text (Zed's).
 pub const NOTE: &str = "icons/file_text_outlined.svg";
@@ -22,7 +23,7 @@ const OWN: &[(&str, &str)] = &[
     ),
     (
         MERGE,
-        r#"<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><g stroke="black" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="9" r="1.5"/><path d="M4.5 5v6M4.5 5c0 2.2 1.8 4 4 4H10"/></g></svg>"#,
+        r#"<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path fill="black" d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z"/></svg>"#,
     ),
 ];
 

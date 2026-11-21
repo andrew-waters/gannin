@@ -5749,6 +5749,7 @@ impl Workspace {
                 div()
                     .id(("tab", index))
                     .group(SharedString::from(format!("tab-{id}")))
+                    .relative()
                     .flex()
                     .flex_row()
                     .items_center()
@@ -5881,22 +5882,25 @@ impl Workspace {
                     // work), every PR merged, or changes requested.
                     .when_some(outcome, |d, outcome| {
                         d.child(match outcome {
-                            crate::session::Outcome::Approved => crate::prs::tick_badge_sized(theme.good(), 11.),
-                            crate::session::Outcome::Merged => crate::prs::icon_badge(crate::icons::MERGE, theme.slot(6), 11.),
-                            crate::session::Outcome::ChangesRequested => crate::prs::icon_badge("icons/close.svg", theme.critical(), 11.),
+                            crate::session::Outcome::Approved => crate::prs::tick_badge_sized(theme.good(), 11.).into_any_element(),
+                            crate::session::Outcome::Merged => gpui::svg().path(crate::icons::MERGE).size(px(13.)).flex_none().text_color(theme.slot(6)).into_any_element(),
+                            crate::session::Outcome::ChangesRequested => crate::prs::icon_badge("icons/close.svg", theme.critical(), 11.).into_any_element(),
                         })
                     })
                     // Pinned, a pin in place of the close button, which
-                    // unpins; otherwise a pin shows on hover beside it.
+                    // unpins; otherwise a pin shows on hover beside it,
+                    // laid over the count or badge so it takes no room
+                    // while hidden.
                     .child({
                         let group = SharedString::from(format!("tab-{id}"));
+                        let under = if active { theme.bg } else { theme.sidebar };
                         div()
                             .id(("pin-tab", index))
                             .flex_none()
                             .px_0p5()
                             .rounded_sm()
+                            .when(!pinned, |d| d.absolute().right(px(26.)).py_0p5().bg(under).invisible().group_hover(group, |s| s.visible()))
                             .hover(|s| s.bg(theme.row_selected))
-                            .when(!pinned, |d| d.invisible().group_hover(group, |s| s.visible()))
                             .child(gpui::svg().path("icons/pin.svg").size(px(11.)).text_color(if pinned { theme.secondary } else { theme.tertiary }))
                             .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(if pinned { "Unpin".into() } else { "Pin, so it can't be closed".into() })).into())
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
