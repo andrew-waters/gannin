@@ -102,6 +102,8 @@ struct Linked {
 }
 
 struct CommitRow {
+    /// The full SHA, to read the commit.
+    oid: String,
     short: String,
     headline: String,
     at: Option<DateTime<Utc>>,
@@ -117,6 +119,8 @@ struct FileRow {
 }
 
 struct CheckRow {
+    /// A check run's ID, to read its report and log; none for a status.
+    id: Option<i64>,
     name: String,
     /// success, failure, pending, skipped or neutral.
     outcome: &'static str,
@@ -211,10 +215,10 @@ const QUERY: &str = r#"query($owner: String!, $name: String!, $number: Int!) { v
   latestReviews(first: 20) { nodes { state submittedAt author { login avatarUrl } } }
   closingIssuesReferences(first: 10) { nodes { id number title url state repository { nameWithOwner } } }
   participants(first: 30) { nodes { login avatarUrl } }
-  commits(last: 100) { totalCount nodes { commit { abbreviatedOid messageHeadline committedDate url author { name user { login } } } } }
+  commits(last: 100) { totalCount nodes { commit { oid abbreviatedOid messageHeadline committedDate url author { name user { login } } } } }
   files(first: 100) { totalCount nodes { path additions deletions changeType } }
   checks: commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename
-    ... on CheckRun { name conclusion status detailsUrl }
+    ... on CheckRun { databaseId name conclusion status detailsUrl }
     ... on StatusContext { context state targetUrl } } } } } } }
   reviewThreads(first: 100) { nodes { isResolved path line comments(first: 20) { nodes { body createdAt url author { login } pullRequestReview { id } } } } }
   timelineItems(last: 150, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT, LABELED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, CROSS_REFERENCED_EVENT]) { nodes { __typename
@@ -296,6 +300,7 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
                 }
             };
             CheckRow {
+                id: if run { c["databaseId"].as_i64() } else { None },
                 name: if run { text(&c["name"]) } else { text(&c["context"]) },
                 outcome,
                 url: c[if run { "detailsUrl" } else { "targetUrl" }].as_str().map(str::to_string),
@@ -309,6 +314,7 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
         .map(|n| {
             let c = &n["commit"];
             CommitRow {
+                oid: text(&c["oid"]),
                 short: text(&c["abbreviatedOid"]),
                 headline: text(&c["messageHeadline"]),
                 at: time(&c["committedDate"]),
@@ -485,7 +491,7 @@ fn sample(repo: &str, number: i64, title: &str) -> PullData {
     let ago = |hours: i64| Some(now - chrono::Duration::hours(hours));
     let url = format!("https://github.com/{repo}/pull/{number}");
     let who = |login: &str| Person { login: login.into(), avatar: None, bot: false };
-    let commit = |short: &str, headline: &str, hours: i64| CommitRow { short: short.into(), headline: headline.into(), at: ago(hours), url: format!("{url}/commits"), author: "alex".into() };
+    let commit = |short: &str, headline: &str, hours: i64| CommitRow { oid: short.into(), short: short.into(), headline: headline.into(), at: ago(hours), url: format!("{url}/commits"), author: "alex".into() };
     let commits = vec![
         commit("a1c3f9e", "Add the idempotency_keys table", 50),
         commit("b7d2e10", "Check the key before charging", 49),
@@ -512,7 +518,7 @@ fn sample(repo: &str, number: i64, title: &str) -> PullData {
         url: url.clone(),
     };
     let file = |path: &str, additions: i64, deletions: i64, change: &str| FileRow { path: path.into(), additions, deletions, change: change.into() };
-    let check = |name: &str, outcome: &'static str| CheckRow { name: name.into(), outcome, url: Some(format!("{url}/checks")) };
+    let check = |name: &str, outcome: &'static str| CheckRow { id: None, name: name.into(), outcome, url: Some(format!("{url}/checks")) };
     PullData {
         viewer: "jo".into(),
         id: format!("preview-{number}"),
@@ -596,12 +602,16 @@ pub struct PullPage {
     /// The page as it shows: the review panel with this PR merged in. Its
     /// events go on from here, as the page's own.
     merged: Option<gpui::Entity<crate::review_panel::ReviewPanel>>,
+    /// The commit opened in Commits, by SHA, and the check opened in
+    /// Checks, by name: each shown under its list.
+    commit_view: Option<(String, gpui::Entity<crate::pr_diff::CommitDiff>)>,
+    check_view: Option<(String, gpui::Entity<crate::check_detail::CheckDetail>)>,
     _fetch: Option<Task<()>>,
 }
 
 impl PullPage {
     pub fn new(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), docs: Default::default(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), parts: Vec::new(), merged: None, _fetch: None };
+        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), docs: Default::default(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), parts: Vec::new(), merged: None, commit_view: None, check_view: None, _fetch: None };
         page.refresh(cx);
         page
     }
@@ -627,6 +637,8 @@ impl PullPage {
             noise_open: Default::default(),
             parts: Vec::new(),
             merged: None,
+            commit_view: None,
+            check_view: None,
             _fetch: None,
         }
     }
@@ -651,6 +663,8 @@ impl PullPage {
             noise_open: Default::default(),
             parts: Vec::new(),
             merged: None,
+            commit_view: None,
+            check_view: None,
             _fetch: None,
         });
         self.parts.push(entity.downgrade());
@@ -691,6 +705,52 @@ impl PullPage {
         cx.subscribe(&panel, |_, _, e: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(e.0.clone()))).detach();
         self.merged = Some(panel);
         cx.notify();
+    }
+
+    /// Opens a commit's files under the list, or closes it when it's open.
+    fn open_commit(&mut self, oid: String, headline: String, url: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.commit_view.as_ref().is_some_and(|(sha, _)| *sha == oid) {
+            self.commit_view = None;
+        } else {
+            let (repo, number, sha) = (self.pr.repo.clone(), self.pr.number, oid.clone());
+            let view = cx.new(|cx| crate::pr_diff::CommitDiff::new(repo, number, sha, headline, url, window, cx));
+            self.commit_view = Some((oid, view));
+        }
+        cx.notify();
+    }
+
+    /// Opens a check's report and log under the list, or closes it.
+    fn open_check(&mut self, name: String, id: i64, url: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.check_view.as_ref().is_some_and(|(n, _)| *n == name) {
+            self.check_view = None;
+        } else {
+            let (repo, label) = (self.pr.repo.clone(), name.clone());
+            let view = cx.new(|cx| crate::check_detail::CheckDetail::new(repo, id, label, url, window, cx));
+            self.check_view = Some((name, view));
+        }
+        cx.notify();
+    }
+
+    /// A list over what's opened from it: the list alone fills the part;
+    /// with something open, it takes the top and that the rest.
+    fn list_over(id: &'static str, list: AnyElement, open: Option<AnyElement>, theme: &Theme) -> AnyElement {
+        let open_now = open.is_some();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id(id)
+                    .when(open_now, |d| d.flex_none().max_h(gpui::relative(0.35)))
+                    .when(!open_now, |d| d.flex_1())
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_5()
+                    .child(div().max_w(px(1100.)).child(list)),
+            )
+            .when_some(open, |d, view| d.child(div().flex_1().min_h_0().border_t_1().border_color(theme.border).child(view)))
+            .into_any_element()
     }
 
     /// The PR as Review with Claude and Explain take it.
@@ -1610,7 +1670,8 @@ impl PullPage {
             .border_1()
             .border_color(theme.border)
             .children(data.commits.iter().enumerate().map(|(i, c)| {
-                let url = c.url.clone();
+                let (oid, headline, url) = (c.oid.clone(), c.headline.clone(), c.url.clone());
+                let open = self.commit_view.as_ref().is_some_and(|(sha, _)| *sha == c.oid);
                 div()
                     .id(("pull-commit", i))
                     .flex()
@@ -1621,8 +1682,9 @@ impl PullPage {
                     .py_2()
                     .when(i > 0, |d| d.border_t_1().border_color(theme.border))
                     .cursor_pointer()
-                    .hover(|s| s.bg(theme.tile))
-                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                    .when(open, |d| d.bg(theme.row_selected))
+                    .when(!open, |d| d.hover(|s| s.bg(theme.tile)))
+                    .on_click(cx.listener(move |page, _: &ClickEvent, window, cx| page.open_commit(oid.clone(), headline.clone(), url.clone(), window, cx)))
                     .child(div().flex_1().min_w_0().flex().flex_col().child(div().truncate().child(c.headline.clone())).child(div().text_xs().text_color(theme.secondary).child(format!("{} committed {}", c.author, Self::when(c.at)))))
                     .child(div().flex_none().font_family(crate::zed::MONO).text_xs().text_color(theme.secondary).child(c.short.clone()))
             }))
@@ -1654,7 +1716,9 @@ impl PullPage {
                     "pending" => gpui::rgb(0xEDA100).into(),
                     _ => theme.tertiary,
                 };
-                let url = c.url.clone();
+                let (url, name, id) = (c.url.clone(), c.name.clone(), c.id);
+                let open = self.check_view.as_ref().is_some_and(|(n, _)| *n == c.name);
+                let clickable = id.is_some() || url.is_some();
                 div()
                     .id(("pull-check", i))
                     .flex()
@@ -1664,7 +1728,18 @@ impl PullPage {
                     .px_3()
                     .py_1p5()
                     .when(i > 0, |d| d.border_t_1().border_color(theme.border))
-                    .when_some(url, |d, url| d.cursor_pointer().hover(|s| s.bg(theme.tile)).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                    .when(open, |d| d.bg(theme.row_selected))
+                    // A check run opens here; a status (no report to read) on its site.
+                    .when(clickable, |d| {
+                        d.cursor_pointer().when(!open, |d| d.hover(|s| s.bg(theme.tile))).on_click(cx.listener(move |page, _: &ClickEvent, window, cx| match id {
+                            Some(id) => page.open_check(name.clone(), id, url.clone(), window, cx),
+                            None => {
+                                if let Some(url) = &url {
+                                    cx.open_url(url);
+                                }
+                            }
+                        }))
+                    })
                     .child(div().flex_none().size(px(8.)).rounded_full().bg(tint))
                     .child(div().flex_1().min_w_0().truncate().child(c.name.clone()))
                     .child(div().flex_none().text_sm().text_color(tint).child(c.outcome))
@@ -1725,8 +1800,14 @@ impl Render for PullPage {
                     .child(div().p_3().child(markdown("pull-body", &data.body, &theme)))
                     .into_any_element(),
                 Part::Timeline => div().flex().flex_col().gap_1().children(self.rounds_view(data, &theme, cx)).into_any_element(),
-                Part::Commits => self.commits(data, &theme, cx),
-                Part::Checks => self.checks(data, &theme, cx),
+                Part::Commits => {
+                    let list = self.commits(data, &theme, cx);
+                    Self::list_over("pull-commits-list", list, self.commit_view.as_ref().map(|(_, v)| v.clone().into_any_element()), &theme)
+                }
+                Part::Checks => {
+                    let list = self.checks(data, &theme, cx);
+                    Self::list_over("pull-checks-list", list, self.check_view.as_ref().map(|(_, v)| v.clone().into_any_element()), &theme)
+                }
                 Part::Sidebar => self.sidebar(data, &theme, cx).into_any_element(),
                 Part::Whole => unreachable!(),
             };

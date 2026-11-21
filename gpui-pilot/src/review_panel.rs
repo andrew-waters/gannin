@@ -2954,7 +2954,10 @@ impl Render for ReviewPanel {
         let risk_side = (self.pull.is_none() && wide && draft.is_none() && self.selected == Selected::Overview).then(|| self.risk()).flatten().map(|risk| self.risk_panel(&risk, false, &theme, cx));
         // The PR page's sidebar (reviewers, labels, linked issues) beside
         // everything but a file, whose diff wants the width.
-        let pull_side = self.pull.as_ref().filter(|_| draft.is_none() && !matches!(self.selected, Selected::File(_))).map(|p| p.sidebar.clone());
+        // Commits and Checks lay out and scroll themselves (a list over a
+        // commit's diff or a check's log), so they get the whole area.
+        let bare = draft.is_none() && matches!(self.selected, Selected::Commits | Selected::Checks);
+        let pull_side = self.pull.as_ref().filter(|_| draft.is_none() && !matches!(self.selected, Selected::File(_) | Selected::Commits | Selected::Checks)).map(|p| p.sidebar.clone());
         // Merged: the review's standing and its buttons head that column,
         // on every page.
         let status_side = self.pull.as_ref().filter(|_| draft.is_none()).map(|p| self.status_column(p, &theme, cx));
@@ -2969,8 +2972,8 @@ impl Render for ReviewPanel {
             }
             Selected::Overview => self.overview(wide, &theme, cx).into_any_element(),
             Selected::Timeline => div().max_w(px(860.)).child(pull_part(|p| &p.timeline)).into_any_element(),
-            Selected::Commits => div().max_w(px(860.)).child(pull_part(|p| &p.commits)).into_any_element(),
-            Selected::Checks => div().max_w(px(860.)).child(pull_part(|p| &p.checks)).into_any_element(),
+            Selected::Commits => div().size_full().child(pull_part(|p| &p.commits)).into_any_element(),
+            Selected::Checks => div().size_full().child(pull_part(|p| &p.checks)).into_any_element(),
             Selected::General => self.general_detail(&theme, cx).into_any_element(),
             Selected::Learnings => self.learnings_detail(&theme).into_any_element(),
             Selected::File(path) => self.file_detail(&path, &theme, cx).into_any_element(),
@@ -3045,6 +3048,7 @@ impl Render for ReviewPanel {
                                         .child(div().id("review-detail").flex_none().max_h(gpui::relative(0.45)).overflow_y_scroll().p_5().child(detail))
                                         .child(div().flex_1().min_h_0().border_t_1().border_color(theme.border).child(diff)),
                                 ),
+                                None if bare => d.child(div().flex_1().min_w_0().h_full().child(detail)),
                                 None => d.child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail)),
                             })
                             .when(risk_side.is_some() || pull_side.is_some() || status_side.is_some(), |d| {

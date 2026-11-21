@@ -13,6 +13,7 @@ mod avatars;
 mod cache;
 mod changes;
 mod charts;
+mod check_detail;
 mod data;
 mod detail;
 mod folders;

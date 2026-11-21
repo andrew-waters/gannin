@@ -170,6 +170,8 @@ impl ChangesView {
                 file.status == Status::Deleted,
                 &file.base,
                 &file.current,
+                Vec::new(),
+                |_, _| {},
                 cx,
             );
         }
@@ -449,9 +451,24 @@ fn line_counts(base: &str, current: &str) -> (usize, usize) {
 /// Puts one file's change in `multibuffer`: an excerpt of its hunks with
 /// three lines around each, and its diff against `base`, shown inline.
 /// `sort` orders the excerpts; `label` and `root` name it in the header.
-/// Shared by a session's Changes and a review's file diff.
+/// `keep` are rows (from 0) to show whatever the hunks, as lines with
+/// comments on them; `then` runs with the file's buffer once its excerpts
+/// are in, to place things on its lines. Shared by a session's Changes, a
+/// review's file diff and a commit's.
 #[allow(clippy::too_many_arguments)]
-pub fn add_file_diff(multibuffer: &Entity<MultiBuffer>, sort: u64, path: &str, root: PathBuf, label: String, deleted: bool, base: &str, current: &str, cx: &mut App) {
+pub fn add_file_diff(
+    multibuffer: &Entity<MultiBuffer>,
+    sort: u64,
+    path: &str,
+    root: PathBuf,
+    label: String,
+    deleted: bool,
+    base: &str,
+    current: &str,
+    keep: Vec<u32>,
+    then: impl FnOnce(Entity<Buffer>, &mut App) + 'static,
+    cx: &mut App,
+) {
     let Ok(rel) = RelPath::new(Path::new(path), PathStyle::local()) else { return };
     let rel: Arc<RelPath> = rel.into_arc();
     let named = Arc::new(ChangedFile { path: rel.clone(), root, label, deleted });
@@ -481,7 +498,7 @@ pub fn add_file_diff(multibuffer: &Entity<MultiBuffer>, sort: u64, path: &str, r
                 diff.set_snapshot(update, cx);
             });
             let buffer_snapshot = buffer.read(cx).snapshot();
-            let ranges: Vec<std::ops::Range<Point>> = diff
+            let mut ranges: Vec<std::ops::Range<Point>> = diff
                 .read(cx)
                 .snapshot(cx)
                 .hunks_intersecting_range(text::Anchor::min_max_range_for_buffer(buffer_snapshot.remote_id()), &buffer_snapshot)
@@ -490,10 +507,14 @@ pub fn add_file_diff(multibuffer: &Entity<MultiBuffer>, sort: u64, path: &str, r
                     hunk.buffer_range.start.to_point(&buffer_snapshot)..hunk.buffer_range.end.to_point(&buffer_snapshot)
                 })
                 .collect();
+            let last = buffer_snapshot.max_point().row;
+            ranges.extend(keep.iter().map(|row| Point::new((*row).min(last), 0)..Point::new((*row).min(last), 0)));
+            ranges.sort_by_key(|r| r.start);
             multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.set_excerpts_for_path(key, buffer, ranges, 3, cx);
+                multibuffer.set_excerpts_for_path(key, buffer.clone(), ranges, 3, cx);
                 multibuffer.add_diff(diff, cx);
             });
+            then(buffer, cx);
         });
     })
     .detach();

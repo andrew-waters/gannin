@@ -303,3 +303,34 @@ pub fn search_reporting(token: &str, query: &str, page_size: usize, fields: &str
     }
     Ok((nodes, truncated))
 }
+
+/// A GET against the REST API for plain text (an Actions job's log),
+/// following GitHub's redirect to where it's stored; curl doesn't send the
+/// token on to another host. Blocking.
+pub fn rest_text(token: &str, path: &str) -> Result<String, String> {
+    let config = format!(
+        "header = \"Authorization: Bearer {token}\"\nheader = \"Accept: application/vnd.github+json\"\nheader = \"X-GitHub-Api-Version: 2022-11-28\"\nheader = \"User-Agent: gannin-gpui-pilot\"\nurl = \"https://api.github.com/{}\"\n",
+        path.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+    let mut child = Command::new(crate::paths::curl())
+        .args(["-sS", "-L", "--max-time", "120", "-w", "\n%{http_code}", "-K", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Couldn't run curl: {e}"))?;
+    if let Some(mut pipe) = child.stdin.take() {
+        pipe.write_all(config.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!("Network error: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let (body, code) = text.rsplit_once('\n').ok_or("No answer from GitHub")?;
+    match code.trim().parse::<u16>().unwrap_or(0) {
+        200 => Ok(body.to_string()),
+        404 | 410 => Err("GitHub has no log for it: it may not have run yet, or its log has expired.".into()),
+        status => Err(format!("GitHub answered {status}")),
+    }
+}
