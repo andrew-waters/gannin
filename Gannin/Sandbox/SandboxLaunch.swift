@@ -369,7 +369,7 @@ enum SandboxLaunch {
 
     // MARK: Credentials
 
-    struct Credentials: Sendable {
+    nonisolated struct Credentials: Sendable {
         /// Nil when claude signs in inside the sandbox.
         var apiKey: String?
         var gitHubToken: String
@@ -380,8 +380,10 @@ enum SandboxLaunch {
         var claudeMemory = ""
     }
 
-    /// What's missing for the session's org, or the credentials.
-    static func credentials(org: String) -> Result<Credentials, SandboxRuntime.Failure> {
+    /// What's missing for the session's org, or the credentials. Runs git and
+    /// reads the keychain, which can wait on a prompt, so it always runs on
+    /// the global executor, never on the caller's actor.
+    @concurrent static func credentials(org: String) async -> Result<Credentials, SandboxRuntime.Failure> {
         var missing: [String] = []
         let apiKey = SandboxCredentials.claudeKind == .apiKey ? SandboxCredentials.apiKey : nil
         if SandboxCredentials.claudeKind == .apiKey, apiKey == nil { missing.append("an API key for Claude") }
@@ -420,7 +422,7 @@ enum SandboxLaunch {
     }
 
     /// The user's git name and email on this Mac, for the sandbox's commits.
-    static func gitIdentity() -> (name: String, email: String) {
+    nonisolated static func gitIdentity() -> (name: String, email: String) {
         let result = Shell.run("git config --global --get user.name; git config --global --get user.email", .local)
         let lines = result.output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
         return (lines.first ?? "", lines.dropFirst().first ?? "")
