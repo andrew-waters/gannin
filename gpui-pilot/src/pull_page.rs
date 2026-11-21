@@ -36,6 +36,20 @@ pub struct OpenLinked {
     pub url: String,
 }
 
+/// A synced issue that the PR closes or that mentions it, found in the
+/// local issue cache (`IssueStore::about_pull`).
+#[derive(Clone, PartialEq)]
+pub struct LocalIssue {
+    pub id: String,
+    pub number: i64,
+    pub title: String,
+    pub url: String,
+    pub repo: String,
+    pub open: bool,
+    /// It's closed by the PR rather than only mentioned.
+    pub closes: bool,
+}
+
 /// A PR in Related was clicked: its page, in a tab.
 pub struct OpenPull(pub PrItem);
 
@@ -556,6 +570,8 @@ pub struct PullPage {
     plans: Vec<(crate::harness::Doc, bool)>,
     /// Open sessions about it, from the workspace.
     related: Vec<Related>,
+    /// Synced issues it closes or that mention it, from the local cache.
+    local: Vec<LocalIssue>,
     /// The body's width as last laid out, for how many columns it takes.
     width: std::rc::Rc<std::cell::Cell<f32>>,
     /// Rounds opened or closed by the person, by index; the rest follow
@@ -568,7 +584,7 @@ pub struct PullPage {
 
 impl PullPage {
     pub fn new(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), _fetch: None };
+        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), _fetch: None };
         page.refresh(cx);
         page
     }
@@ -587,6 +603,7 @@ impl PullPage {
             section: Section::Overview,
             plans: Vec::new(),
             related: Vec::new(),
+            local: Vec::new(),
             width: Default::default(),
             rounds_open: Default::default(),
             noise_open: Default::default(),
@@ -621,6 +638,18 @@ impl PullPage {
     /// "#2529 Admin: organisation created date", for its tab.
     pub fn tab_title(&self) -> String {
         format!("#{} {}", self.pr.number, self.data.as_ref().map(|d| d.title.as_str()).unwrap_or(&self.pr.title))
+    }
+
+    /// Its repo, number and URL, to look it up in the local caches.
+    pub fn place(&self) -> (String, i64, String) {
+        (self.pr.repo.clone(), self.pr.number, self.pr.url.clone())
+    }
+
+    pub fn set_local(&mut self, local: Vec<LocalIssue>, cx: &mut Context<Self>) {
+        if self.local != local {
+            self.local = local;
+            cx.notify();
+        }
     }
 
     pub fn set_related(&mut self, related: Vec<Related>, cx: &mut Context<Self>) {
@@ -1410,19 +1439,34 @@ impl PullPage {
                 .child(div().flex_1().min_w_0().truncate().child(l.title.clone()))
                 .child(div().flex_none().text_color(theme.secondary).child(reference))
         };
+        // The local issue cache first, then what GitHub's fetch adds, each
+        // item once; an issue it closes is listed under Closes only.
+        let local = |closes: bool| self.local.iter().filter(move |l| l.closes == closes).map(|l| Linked { pull: false, id: l.id.clone(), number: l.number, title: l.title.clone(), url: l.url.clone(), open: l.open, repo: l.repo.clone() });
+        let mut closes: Vec<Linked> = local(true).collect();
+        for l in &data.linked {
+            if !closes.iter().any(|c| c.id == l.id) {
+                closes.push(Linked { pull: l.pull, id: l.id.clone(), number: l.number, title: l.title.clone(), url: l.url.clone(), open: l.open, repo: l.repo.clone() });
+            }
+        }
+        let mut mentions: Vec<Linked> = Vec::new();
+        for l in local(false).chain(data.mentions.iter().map(|l| Linked { pull: l.pull, id: l.id.clone(), number: l.number, title: l.title.clone(), url: l.url.clone(), open: l.open, repo: l.repo.clone() })) {
+            if !closes.iter().chain(mentions.iter()).any(|c| c.id == l.id) {
+                mentions.push(l);
+            }
+        }
         let mut related = group("Related");
-        if data.linked.is_empty() && data.mentions.is_empty() && self.plans.is_empty() {
+        if closes.is_empty() && mentions.is_empty() && self.plans.is_empty() {
             related = related.child(none("Nothing related"));
         }
-        if !data.linked.is_empty() {
+        if !closes.is_empty() {
             related = related.child(caption("Closes"));
-            for (i, l) in data.linked.iter().enumerate() {
+            for (i, l) in closes.iter().enumerate() {
                 related = related.child(item_row(("pull-linked", i), l, cx));
             }
         }
-        if !data.mentions.is_empty() {
+        if !mentions.is_empty() {
             related = related.child(caption("Mentioned in"));
-            for (i, l) in data.mentions.iter().enumerate() {
+            for (i, l) in mentions.iter().enumerate() {
                 related = related.child(item_row(("pull-mention", i), l, cx));
             }
         }

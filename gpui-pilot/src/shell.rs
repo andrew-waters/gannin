@@ -1493,7 +1493,12 @@ impl Workspace {
                 Page::Pull(page) => {
                     let key = page.read(cx).key();
                     let mine = related.get(&key).cloned().unwrap_or_default();
-                    page.update(cx, |page, cx| page.set_related(mine, cx));
+                    let (repo, number, url) = page.read(cx).place();
+                    let local = self.issues.read(cx).about_pull(&repo, number, &url);
+                    page.update(cx, |page, cx| {
+                        page.set_related(mine, cx);
+                        page.set_local(local, cx);
+                    });
                 }
                 _ => {}
             }
@@ -1552,8 +1557,13 @@ impl Workspace {
         let Some(org) = self.org.clone() else { return };
         let key = crate::issues::related_key(&pr.repo, pr.number);
         let related = self.related_sessions(cx).remove(&key).unwrap_or_default();
+        let (pr_repo, pr_number, pr_url) = (pr.repo.clone(), pr.number, pr.url.clone());
         let page = cx.new(|cx| crate::pull_page::PullPage::new(pr, org, cx));
-        page.update(cx, |p, cx| p.set_related(related, cx));
+        let local = self.issues.read(cx).about_pull(&pr_repo, pr_number, &pr_url);
+        page.update(cx, |p, cx| {
+            p.set_related(related, cx);
+            p.set_local(local, cx);
+        });
         let number = self.tabs.iter().filter_map(|t| match t.nav {
             Nav::Pull(n) => Some(n),
             _ => None,

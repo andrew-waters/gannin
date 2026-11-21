@@ -1204,6 +1204,22 @@ impl IssuesPage {
         self.issues.iter().find(|i| i.id == id).cloned()
     }
 
+    /// The synced issues that a PR closes or that mention it, from their
+    /// linked and mentioned PRs: no GitHub call.
+    pub fn about_pull(&self, repo: &str, number: i64, url: &str) -> Vec<crate::pull_page::LocalIssue> {
+        let is_it = |issue: &IssueItem, pr: &LinkedPr| {
+            pr.url.eq_ignore_ascii_case(url) || (pr.number == number && pr.repo.as_deref().unwrap_or(&issue.repo).eq_ignore_ascii_case(repo))
+        };
+        self.issues
+            .iter()
+            .filter_map(|i| {
+                let closes = i.linked_prs.iter().any(|p| is_it(i, p));
+                let mentions = i.mentioned_prs.iter().any(|p| is_it(i, p));
+                (closes || mentions).then(|| crate::pull_page::LocalIssue { id: i.id.clone(), number: i.number, title: i.title.clone(), url: i.url.clone(), repo: i.repo.clone(), open: i.is_open(), closes })
+            })
+            .collect()
+    }
+
     /// An issue by its repo and number.
     pub fn issue_by_number(&self, repo: &str, number: i64) -> Option<IssueItem> {
         self.issues.iter().find(|i| i.number == number && i.repo == repo).cloned()
