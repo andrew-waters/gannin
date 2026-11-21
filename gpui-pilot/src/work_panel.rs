@@ -277,6 +277,8 @@ pub struct WorkPanel {
 /// A comment's gist for its row: the first line of words, with HTML
 /// comments and tags, Markdown markers and checkboxes taken out (bots'
 /// review bodies are mostly markup). The whole of it still goes to claude.
+impl gpui::EventEmitter<crate::pull_page::OpenPull> for WorkPanel {}
+
 /// The ticked key for a PR's failing checks (comments are ticked by index).
 const FAILURES: usize = usize::MAX;
 
@@ -2029,7 +2031,9 @@ impl WorkPanel {
             None
         };
         let name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string();
-        let url = format!("https://github.com/{}/pull/{number}", pr.repo);
+        // It opens in its drawer, as a PR does everywhere else; the drawer
+        // has Open PR and Open on GitHub.
+        let opened = crate::prs::PrItem::stub("", &pr.repo, number, &pr.title, &format!("https://github.com/{}/pull/{number}", pr.repo));
         let head = div()
             .id(("work-pr-open", number as usize))
             .flex()
@@ -2040,7 +2044,7 @@ impl WorkPanel {
             .text_sm()
             .cursor_pointer()
             .hover(|s| s.opacity(0.8))
-            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(crate::pull_page::OpenPull(opened.clone()))))
             .child(pill)
             .child(div().flex_none().text_color(theme.secondary).child(if self.pr_by_repo { format!("#{number}") } else { format!("{name}#{number}") }))
             .child(div().flex_1().min_w_0().truncate().child(pr.title.clone()))

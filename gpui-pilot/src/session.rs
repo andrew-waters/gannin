@@ -316,6 +316,8 @@ impl SessionPage {
             }));
             // A plan's row opens it in a drawer, which the workspace holds.
             subscriptions.push(cx.subscribe(work, |_, _, event: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(event.0.clone()))));
+            // So does a pull request's.
+            subscriptions.push(cx.subscribe(work, |_, _, event: &crate::pull_page::OpenPull, cx| cx.emit(crate::pull_page::OpenPull(event.0.clone()))));
         }
         if let Some(review) = &review {
             // Explain starts a session of its own, so the workspace hears of it.
