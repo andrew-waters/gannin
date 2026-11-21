@@ -59,6 +59,9 @@ pub struct Input {
     pub edits: HashMap<String, String>,
     /// Posting now: the event and when.
     pub posting: Option<(String, DateTime<Utc>)>,
+    /// The merge risk as the review page graded it (low, medium or high),
+    /// with the team's sensitive paths and floors applied.
+    pub merge_risk: Option<String>,
 }
 
 fn iso(time: DateTime<Utc>) -> String {
@@ -169,6 +172,7 @@ fn build(existing: Option<&Value>, input: &Input, reviewer: &str, outcome: Optio
         put(&mut record, "verdict", result.verdict.clone().map(Value::from));
         put(&mut record, "effort", result.effort.map(Value::from));
     }
+    put(&mut record, "merge_risk", input.merge_risk.clone().map(Value::from));
     if let Some(outcome) = outcome {
         put(&mut record, "state", outcome["state"].as_str().map(Value::from));
         put(&mut record, "merged_at", outcome["mergedAt"].as_str().and_then(|t| t.parse::<DateTime<Utc>>().ok()).map(|t| Value::from(iso(t))));

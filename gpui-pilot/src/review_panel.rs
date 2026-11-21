@@ -957,6 +957,7 @@ impl ReviewPanel {
             dismissed: self.dismissed.clone(),
             edits: self.edits.clone(),
             posting,
+            merge_risk: self.risk().and_then(|r| r.level()).map(|l| l.title().to_string()),
         })
     }
 

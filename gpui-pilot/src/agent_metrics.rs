@@ -3,7 +3,8 @@
 //! (`.gannin/reviews/...`, read with git from the org's harnesses), so
 //! it's the team's, not only this Mac's: who reviews with Gannin, how many
 //! findings are posted and dismissed, and how many of those posted were
-//! acted on (their threads resolved), by severity and category.
+//! acted on (their threads resolved), by severity and category, and how
+//! risky and how much work the reviews judged the PRs to be.
 
 use crate::charts::Theme;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
@@ -29,6 +30,9 @@ struct Record {
     reviewer: String,
     verdict: Option<String>,
     effort: Option<i64>,
+    /// low, medium or high, as the review graded it; none before reviews
+    /// recorded it.
+    merge_risk: Option<String>,
     state: Option<String>,
     started_at: DateTime<Utc>,
     posted_at: Option<DateTime<Utc>>,
@@ -71,6 +75,7 @@ fn load(org: &str) -> Vec<Record> {
                 author: text(&r["author"]),
                 verdict: text(&r["verdict"]),
                 effort: r["effort"].as_i64(),
+                merge_risk: text(&r["merge_risk"]),
                 state: text(&r["state"]),
                 posted_at: time(&r["posted_at"]),
                 merged_at: time(&r["merged_at"]),
@@ -155,6 +160,7 @@ impl AgentMetricsPage {
             )
             .child(cell(format!("@{}", r.reviewer), 120.))
             .child(cell(verdict(r.verdict.as_deref()).into(), 120.).text_color(theme.secondary))
+            .child(cell(r.merge_risk.as_deref().map(capitalised).unwrap_or_default(), 70.).text_color(r.merge_risk.as_deref().map_or(theme.secondary, |l| risk_tint(l, theme))))
             .child(cell(r.effort.map(|e| e.to_string()).unwrap_or_default(), 50.))
             .child(cell(if r.posted_at.is_none() { "Not yet".into() } else { format!("{} of {}", r.posted().count(), r.findings.len()) }, 70.))
             .child(cell(if r.posted().count() == 0 { String::new() } else { r.accepted().to_string() }, 70.))
@@ -328,6 +334,44 @@ impl AgentMetricsPage {
             })))
     }
 
+    /// How many reviews fell in each group: a bar a group in its colour,
+    /// its count above and its share of them all beneath.
+    fn counts(groups: Vec<(String, usize, Hsla)>, theme: &Theme) -> impl IntoElement {
+        let total: usize = groups.iter().map(|g| g.1).sum();
+        let (top, step) = Self::scale(groups.iter().map(|g| g.1).max().unwrap_or(0));
+        let height = 150.;
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(Self::plot(
+                height,
+                top,
+                step,
+                div().children(groups.iter().map(|(_, n, tint)| {
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_end()
+                        .gap_0p5()
+                        .child(div().text_xs().text_color(theme.secondary).child(if *n > 0 { n.to_string() } else { String::new() }))
+                        .child(div().w(px(34.)).h(px(Self::bar_height(*n, top, height))).rounded_t(px(3.)).bg(*tint))
+                })),
+                theme,
+            ))
+            .child(div().flex().flex_row().pl(px(Self::AXIS)).children(groups.iter().map(|(name, n, _)| {
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(div().text_xs().text_color(theme.secondary).child(name.clone()))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(Self::percent(*n, total)))
+            })))
+    }
+
     /// Reviews a week, stacked by who ran them: every week in the range,
     /// empty ones too, each with its total and its date.
     fn weekly(records: &[&Record], reviewers: &[String], since: Option<DateTime<Utc>>, theme: &Theme) -> impl IntoElement {
@@ -400,6 +444,16 @@ impl AgentMetricsPage {
                     .text_color(theme.tertiary)
                     .child(if i % every == 0 { d.format("%-d %b").to_string() } else { String::new() })
             })))
+    }
+}
+
+/// A merge risk's colour, as the review page's.
+fn risk_tint(level: &str, theme: &Theme) -> Hsla {
+    match level {
+        "low" => theme.good(),
+        "medium" => theme.orange(),
+        "high" => theme.critical(),
+        _ => theme.secondary,
     }
 }
 
@@ -531,6 +585,21 @@ impl Render for AgentMetricsPage {
         if !efforts.is_empty() {
             tiles.push(Self::tile("Review effort", format!("{} of 5", efforts[efforts.len() / 2]), "Median, as the reviewer judged".into(), &theme).into_any_element());
         }
+        let graded: Vec<&str> = records.iter().filter_map(|r| r.merge_risk.as_deref()).collect();
+        let high = graded.iter().filter(|l| **l == "high").count();
+        if !graded.is_empty() {
+            tiles.push(Self::tile("High merge risk", Self::percent(high, graded.len()), format!("{high} of {} graded", graded.len()), &theme).into_any_element());
+        }
+
+        // Merge risk and effort, as the reviews judged them.
+        let ungraded = records.len() - graded.len();
+        let risk: Vec<(String, usize, Hsla)> = ["low", "medium", "high"].iter().map(|l| (capitalised(l), graded.iter().filter(|g| **g == *l).count(), risk_tint(l, &theme))).collect();
+        let effort: Vec<(String, usize, Hsla)> = (1..=5).map(|e| (e.to_string(), efforts.iter().filter(|x| **x == e).count(), theme.blue().opacity(0.4 + 0.12 * e as f32))).collect();
+        let risk_help = if ungraded > 0 {
+            format!("How risky merging each PR was graded; {ungraded} {} from before reviews recorded it", if ungraded == 1 { "isn't graded, being" } else { "aren't graded, being" })
+        } else {
+            "How risky merging each PR was graded".to_string()
+        };
         if !to_merge.is_empty() {
             tiles.push(Self::tile("Posted to merge", duration(to_merge[to_merge.len() / 2]), format!("Median, {} merged", to_merge.len()), &theme).into_any_element());
         }
@@ -616,7 +685,7 @@ impl Render for AgentMetricsPage {
                         .flex_col()
                         .gap_2()
                         .child(div().text_xs().text_color(theme.secondary).child(format!("All {} reviews in the range, newest first. Click one to open its PR.", records.len())))
-                        .child(header(vec![("Pull request", 0.), ("Reviewer", 120.), ("Verdict", 120.), ("Effort", 50.), ("Posted", 70.), ("Acted on", 70.), ("PR", 70.), ("When", 80.)]))
+                        .child(header(vec![("Pull request", 0.), ("Reviewer", 120.), ("Verdict", 120.), ("Risk", 70.), ("Effort", 50.), ("Posted", 70.), ("Acted on", 70.), ("PR", 70.), ("When", 80.)]))
                         .child(
                             uniform_list(
                                 "agent-reviews",
@@ -659,6 +728,14 @@ impl Render for AgentMetricsPage {
                                 .gap_4()
                                 .child(Self::card("By severity", "Findings posted, and those whose threads were resolved", &theme).child(Self::pairs(severity, &theme)))
                                 .child(Self::card("By category", "The same by category; reviews before categories count as Other", &theme).child(Self::pairs(category, &theme))),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap_4()
+                                .child(Self::card("Merge risk", &risk_help, &theme).child(Self::counts(risk, &theme)))
+                                .child(Self::card("Review effort", "How much work reviewing each PR by hand was judged, 1 a glance to 5 hours", &theme).child(Self::counts(effort, &theme))),
                         )
                         .child(Self::card("Reviews a week", "By who ran them", &theme).child(Self::weekly(&records, &reviewers, (self.days > 0).then(|| Utc::now() - Duration::days(self.days)), &theme)))
                         .child(
