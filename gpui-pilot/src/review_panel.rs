@@ -1530,16 +1530,20 @@ impl ReviewPanel {
         }
         // The two buttons share the column's width.
         let buttons = match &self.source {
-            // No review yet: starting one is the only thing to do.
+            // No review yet: starting one is the only thing to do, while it's
+            // open. The fetched state wins over the PR's own, which a stub
+            // from a link leaves as open.
             Source::Pull { pr } => {
                 let pr = pr.clone();
-                div().pt_3().flex().flex_row().text_sm().child(
+                let (state, _) = parts.sidebar.read(cx).state_pill(theme);
+                let ended = matches!(state, "Merged" | "Closed") || pr.state != crate::prs::PrState::Open;
+                div().pt_3().flex().flex_row().text_sm().when(!ended, |d| d.child(
                     Self::button("review-start", "Review with Claude", true, true, theme)
                         .flex_1()
                         .flex()
                         .justify_center()
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(crate::pull_page::PullAction::Review(pr.clone())))),
-                )
+                ))
             }
             _ => {
                 let again = self.again_button(theme, cx).flex_1().flex().justify_center();
