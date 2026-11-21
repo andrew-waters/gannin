@@ -246,6 +246,11 @@ pub fn script(server: &Server, script: &str) -> Result<String, String> {
     command(server, r#"exec "${SHELL:-/bin/bash}" -lc 'exec bash -s'"#, Some(script.as_bytes())).map(|o| String::from_utf8_lossy(&o).into_owned())
 }
 
+/// `script`, given up on once `timeout` passes.
+pub fn script_within(server: &Server, script: &str, timeout: std::time::Duration) -> Result<String, String> {
+    command_within(server, r#"exec "${SHELL:-/bin/bash}" -lc 'exec bash -s'"#, Some(script.as_bytes()), Some(timeout)).map(|o| String::from_utf8_lossy(&o).into_owned())
+}
+
 /// git in a folder there, as the Changes pane runs it here.
 pub fn git(server: &Server, dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let args: Vec<String> = args.iter().map(|a| crate::launch::quote(a)).collect();

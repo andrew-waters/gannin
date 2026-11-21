@@ -160,7 +160,9 @@ fn repo_of(url: &str) -> Option<String> {
 pub fn inspect(location: &Location) -> Result<Opened, String> {
     let path = location.path.display().to_string();
     let output = match &location.server {
-        Some(server) => crate::servers::script(server, &format!("set -- {}\n{INSPECT}", crate::launch::quote(&path)))?,
+        // Bounded: a read stuck on a wedged connection would leave the
+        // window opening for good.
+        Some(server) => crate::servers::script_within(server, &format!("set -- {}\n{INSPECT}", crate::launch::quote(&path)), std::time::Duration::from_secs(60))?,
         None => {
             let out = Command::new("/bin/bash").arg("-c").arg(INSPECT).arg("gannin").arg(&path).output().map_err(|e| e.to_string())?;
             String::from_utf8_lossy(&out.stdout).into_owned()

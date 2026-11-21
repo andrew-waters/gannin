@@ -1799,6 +1799,17 @@ impl Workspace {
     /// Then it asks: switch it back (and pull) and start, start anyway, or
     /// not start.
     fn start_launch(&mut self, launch: crate::launch::Launch, brief: &str, prompt: &str, disallow_edits: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // Never start while the window's folder isn't open: `new_launch`
+        // takes the server and harness from it, so a mini window still
+        // opening (or that failed to) would run the session on this Mac.
+        if self.folder.is_none() {
+            if let Some(saved) = self.saved_folder.clone() {
+                if launch.unattended.is_none() {
+                    self.folder_not_open(saved, window, cx);
+                }
+                return;
+            }
+        }
         // On a server, the harness checked is there: its start script pulls it.
         if launch.server.is_some() {
             return self.start_now(launch, brief, prompt, disallow_edits, window, cx);
@@ -1897,6 +1908,29 @@ impl Workspace {
                 let _ = std::fs::remove_file(dir.join("preparing"));
             })
             .detach();
+    }
+
+    /// A session asked for before the window's folder is open: still
+    /// opening, or it couldn't be, with Try Again for that.
+    fn folder_not_open(&mut self, saved: crate::folders::Location, window: &mut Window, cx: &mut Context<Self>) {
+        let place = saved.place();
+        if self.opening.is_some() {
+            let _ = window.prompt(gpui::PromptLevel::Info, &format!("Still opening {place}"), Some("Sessions run where the window's folder is. Start it again once the folder's open."), &["OK"], cx);
+            return;
+        }
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            &format!("{place} isn't open"),
+            Some("Sessions run where the window's folder is, and it couldn't be opened."),
+            &["Try Again", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await == Ok(0) {
+                this.update_in(cx, |this, window, cx| this.open_folder(saved, true, window, cx)).ok();
+            }
+        })
+        .detach();
     }
 
     fn no_harness(window: &mut Window, cx: &mut App) {
