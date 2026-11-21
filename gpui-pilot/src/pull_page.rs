@@ -401,13 +401,31 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Part {
     Whole,
-    /// Where it stands and whose move it is, and what needs attention.
-    Attention,
     Description,
     Timeline,
     Commits,
     Checks,
     Sidebar,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum AttentionKind {
+    ChangesRequested,
+    /// A failing check: it blocks the merge.
+    Failing,
+    Thread,
+    Unreviewed,
+}
+
+/// One thing open on GitHub, whose move it is and since when.
+#[derive(Clone)]
+pub struct AttentionItem {
+    pub kind: AttentionKind,
+    pub text: String,
+    pub detail: Option<String>,
+    pub owner: String,
+    pub since: Option<DateTime<Utc>>,
+    pub url: Option<String>,
 }
 
 /// A made-up pull request for the merged sketch: the same change as the
@@ -1066,30 +1084,24 @@ impl PullPage {
 
     /// What's open, each with whose move it is and for how long: changes
     /// requested, failing checks, open threads, reviewers yet to review.
-    fn attention(&self, data: &PullData, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        struct Item {
-            tint: Hsla,
-            text: String,
-            detail: Option<String>,
-            owner: String,
-            since: Option<DateTime<Utc>>,
-            url: Option<String>,
-        }
+    /// What's open on GitHub, each with whose move it is: changes
+    /// requested, failing checks, open threads, reviewers yet to review.
+    fn attention_items(data: &PullData) -> Vec<AttentionItem> {
         let author = data.author.login.clone();
-        let mut items: Vec<Item> = Vec::new();
+        let mut items: Vec<AttentionItem> = Vec::new();
         if data.state == "OPEN" {
             for r in data.reviewers.iter().filter(|r| r.state == "CHANGES_REQUESTED") {
-                items.push(Item { tint: theme.orange(), text: format!("{} requested changes", r.person.login), detail: None, owner: author.clone(), since: r.at, url: None });
+                items.push(AttentionItem { kind: AttentionKind::ChangesRequested, text: format!("{} requested changes", r.person.login), detail: None, owner: author.clone(), since: r.at, url: None });
             }
             for c in data.checks.iter().filter(|c| c.outcome == "failure") {
-                items.push(Item { tint: theme.critical(), text: format!("{} is failing", c.name), detail: None, owner: author.clone(), since: None, url: c.url.clone() });
+                items.push(AttentionItem { kind: AttentionKind::Failing, text: format!("{} is failing", c.name), detail: None, owner: author.clone(), since: None, url: c.url.clone() });
             }
             let mut threads: Vec<&Thread> = data.threads.iter().filter(|t| !t.resolved).collect();
             threads.sort_by_key(|t| t.last_at);
             for t in threads {
                 let first = t.comments.first().map(|(_, body)| body.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string());
-                items.push(Item {
-                    tint: theme.orange(),
+                items.push(AttentionItem {
+                    kind: AttentionKind::Thread,
                     text: match t.line {
                         Some(line) => format!("{} line {line}", t.path),
                         None => t.path.clone(),
@@ -1101,9 +1113,31 @@ impl PullPage {
                 });
             }
             for r in data.reviewers.iter().filter(|r| r.state == "REQUESTED") {
-                items.push(Item { tint: gpui::rgb(0xEDA100).into(), text: format!("{} hasn't reviewed", r.person.login), detail: None, owner: r.person.login.clone(), since: r.at, url: None });
+                items.push(AttentionItem { kind: AttentionKind::Unreviewed, text: format!("{} hasn't reviewed", r.person.login), detail: None, owner: r.person.login.clone(), since: r.at, url: None });
             }
         }
+        items
+    }
+
+    /// What's open on GitHub, for a page that lists it with its own.
+    pub fn open_items(&self) -> Vec<AttentionItem> {
+        self.data.as_ref().map(Self::attention_items).unwrap_or_default()
+    }
+
+    /// Where it stands and whose move it is, and the facts behind it: open
+    /// threads, failing checks and approvals.
+    pub fn standing_facts(&self, theme: &Theme) -> Option<(String, usize, usize, usize)> {
+        let data = self.data.as_ref()?;
+        Some((
+            self.decision(data, theme).0,
+            data.threads.iter().filter(|t| !t.resolved).count(),
+            data.checks.iter().filter(|c| c.outcome == "failure").count(),
+            data.reviewers.iter().filter(|r| r.state == "APPROVED").count(),
+        ))
+    }
+
+    fn attention(&self, data: &PullData, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let items = Self::attention_items(data);
         if items.is_empty() {
             return div().text_sm().text_color(theme.secondary).child(if data.state == "OPEN" { "Nothing open." } else { "Nothing open: it's done." }).into_any_element();
         }
@@ -1114,6 +1148,11 @@ impl PullPage {
             .gap_1()
             .child(div().flex().flex_row().gap_1p5().font_weight(FontWeight::SEMIBOLD).child("Needs attention").child(div().text_color(theme.secondary).font_weight(FontWeight::NORMAL).child(count.to_string())))
             .child(div().flex().flex_col().rounded_lg().border_1().border_color(theme.border).children(items.into_iter().enumerate().map(|(i, item)| {
+                let tint = match item.kind {
+                    AttentionKind::Failing => theme.critical(),
+                    AttentionKind::Unreviewed => gpui::rgb(0xEDA100).into(),
+                    _ => theme.orange(),
+                };
                 div()
                     .id(("pull-attention", i))
                     .flex()
@@ -1124,7 +1163,7 @@ impl PullPage {
                     .py_1p5()
                     .when(i > 0, |d| d.border_t_1().border_color(theme.border))
                     .when_some(item.url, |d, url| d.cursor_pointer().hover(|s| s.bg(theme.tile)).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
-                    .child(div().flex_none().size(px(7.)).rounded_full().bg(item.tint))
+                    .child(div().flex_none().size(px(7.)).rounded_full().bg(tint))
                     .child(
                         div()
                             .flex_1()
@@ -1373,7 +1412,10 @@ impl PullPage {
             .flex()
             .flex_col()
             .gap_3()
-            .child(group("Activity").child(row("Approvals", approvals)).child(row("Changes requested", changes)).child(row("Unresolved threads", unresolved)).child(row("Commits", data.commit_total)))
+            // Laid beside a review, its Needs attention says all this.
+            .when(self.part != Part::Sidebar, |d| {
+                d.child(group("Activity").child(row("Approvals", approvals)).child(row("Changes requested", changes)).child(row("Unresolved threads", unresolved)).child(row("Commits", data.commit_total)))
+            })
             .child(reviewers)
             .child(assignees)
             .child(labels)
@@ -1498,7 +1540,6 @@ impl Render for PullPage {
         if self.part != Part::Whole {
             let Some(data) = &self.data else { return div().into_any_element() };
             return match self.part {
-                Part::Attention => div().flex().flex_col().gap_4().child(self.decision_block(data, &theme)).child(self.attention(data, &theme, cx)).into_any_element(),
                 Part::Description => Self::card(&theme)
                     .child(Self::card_head(&data.author, div().child("opened this").into_any_element(), data.created_at, None, &theme, cx))
                     .child(div().p_3().child(markdown("pull-body", &data.body, &theme)))

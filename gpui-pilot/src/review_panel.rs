@@ -89,7 +89,6 @@ enum Selected {
 /// The PR page laid into the panel, each part its own `PullPage`: the
 /// merged PR and review sketch in Review Preview.
 pub struct PullParts {
-    attention: Entity<crate::pull_page::PullPage>,
     description: Entity<crate::pull_page::PullPage>,
     timeline: Entity<crate::pull_page::PullPage>,
     commits: Entity<crate::pull_page::PullPage>,
@@ -103,7 +102,6 @@ impl PullParts {
         use crate::pull_page::{Part, PullPage};
         let mut part = |p: Part| cx.new(|_| PullPage::preview(repo, number, title, p));
         Self {
-            attention: part(Part::Attention),
             description: part(Part::Description),
             timeline: part(Part::Timeline),
             commits: part(Part::Commits),
@@ -1335,7 +1333,17 @@ impl ReviewPanel {
         let result = self.result.as_ref()?;
         let kept: Vec<&Finding> = result.findings.iter().filter(|f| f.path == path && !self.dismissed.contains(&f.key())).collect();
         let worst = kept.iter().min_by_key(|f| f.rank())?;
-        Some((kept.len(), severity_tint(worst.severity.as_deref(), theme)))
+        Some((kept.len(), self.badge_tint(worst.severity.as_deref(), theme)))
+    }
+
+    /// A count's colour by its worst finding; merged with the PR page,
+    /// only a blocker's is coloured.
+    fn badge_tint(&self, severity: Option<&str>, theme: &Theme) -> Hsla {
+        if self.pull.is_some() && severity != Some("blocker") {
+            theme.secondary
+        } else {
+            severity_tint(severity, theme)
+        }
     }
 
     fn file_list(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1346,7 +1354,10 @@ impl ReviewPanel {
         if let Some(plans) = self.plans_well(theme, cx) {
             rows.push(plans);
         }
-        rows.push(self.standing(theme, cx).into_any_element());
+        // Merged, the Overview's status line says all this.
+        if self.pull.is_none() {
+            rows.push(self.standing(theme, cx).into_any_element());
+        }
         rows.push(self.list_row("row-overview".into(), Selected::Overview, "Overview".into(), None, None, theme, cx).into_any_element());
         // The PR page's own parts, under the Overview.
         let pull_files = self.pull.as_ref().map(|p| {
@@ -1355,18 +1366,18 @@ impl ReviewPanel {
             (commits, checks, failing, paths)
         });
         if let Some((commits, checks, failing, _)) = &pull_files {
-            let checks_badge = if *failing > 0 { (*failing, theme.critical()) } else { (*checks, theme.good()) };
+            let checks_badge = if *failing > 0 { (*failing, theme.critical()) } else { (*checks, theme.secondary) };
             rows.push(self.list_row("row-timeline".into(), Selected::Timeline, "Timeline".into(), None, None, theme, cx).into_any_element());
             rows.push(self.list_row("row-commits".into(), Selected::Commits, "Commits".into(), None, Some((*commits, theme.secondary)), theme, cx).into_any_element());
             rows.push(
-                self.list_row("row-checks".into(), Selected::Checks, if *failing > 0 { "Checks, failing".into() } else { "Checks".into() }, None, Some(checks_badge), theme, cx)
+                self.list_row("row-checks".into(), Selected::Checks, "Checks".into(), None, Some(checks_badge), theme, cx)
                     .into_any_element(),
             );
         }
         let general = self.general();
         if !general.is_empty() {
             let kept = general.iter().filter(|f| !self.dismissed.contains(&f.key())).count();
-            let worst = general.iter().min_by_key(|f| f.rank()).map(|f| severity_tint(f.severity.as_deref(), theme)).unwrap_or(theme.secondary);
+            let worst = general.iter().min_by_key(|f| f.rank()).map(|f| self.badge_tint(f.severity.as_deref(), theme)).unwrap_or(theme.secondary);
             rows.push(
                 self.list_row("row-general".into(), Selected::General, format!("{} not on a changed file", general.len()), None, (kept > 0).then_some((kept, worst)), theme, cx)
                     .into_any_element(),
@@ -1674,7 +1685,9 @@ impl ReviewPanel {
     /// look at, then what to do before merging (criteria not met, what
     /// would raise confidence, sensitive paths touched). How the grade was
     /// reached and the criteria needing nothing are a click away.
-    fn risk_panel(&self, risk: &crate::risk::Risk, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// `quiet` (the merged Overview, which states the grade in its status
+    /// line) leaves out the big grade and its meter, keeping the next step.
+    fn risk_panel(&self, risk: &crate::risk::Risk, quiet: bool, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         use crate::risk::{Group, Level};
         let level = risk.level();
         let tint = level.map(|l| risk_tint(l, theme)).unwrap_or(theme.secondary);
@@ -1777,13 +1790,19 @@ impl ReviewPanel {
             .flex()
             .flex_col()
             .gap_5()
-            .child(grade)
+            .map(|d| if quiet { d } else { d.child(grade) })
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Before merging"))
+                    .map(|d| {
+                        if quiet {
+                            d.child(Self::section_heading("Before merging")).child(div().text_color(theme.secondary).child(risk.next_step()))
+                        } else {
+                            d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Before merging"))
+                        }
+                    })
                     .when(!actionable, |d| d.child(div().text_sm().text_color(theme.secondary).child("Nothing beyond the findings.")))
                     .when(!unmet.is_empty(), |d| d.child(group("Acceptance criteria not met", unmet)))
                     .when(!gaps.is_empty(), |d| d.child(group("Would raise confidence", gaps)))
@@ -1819,14 +1838,13 @@ impl ReviewPanel {
     /// attention, then the walkthrough. `wide` puts the merge risk in the
     /// sidebar beside it; otherwise it follows the summary.
     fn overview(&self, wide: bool, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
         let (ready, ready_tint) = self.readiness(theme);
         let Some(result) = self.result.clone() else {
             return self.waiting(theme, cx).into_any_element();
         };
         let risk = self.risk();
         let risk_level = risk.as_ref().and_then(|r| r.level());
-        let inline_risk = (!wide).then(|| risk.as_ref().map(|r| div().p_4().rounded_lg().border_1().border_color(theme.border).bg(theme.sidebar).child(self.risk_panel(r, theme, cx)))).flatten();
+        let inline_risk = (!wide).then(|| risk.as_ref().map(|r| div().p_4().rounded_lg().border_1().border_color(theme.border).bg(theme.sidebar).child(self.risk_panel(r, false, theme, cx)))).flatten();
         let (verdict, verdict_tint) = self.verdict_word(theme).unwrap_or(("Comment", theme.secondary));
         // Needs attention: the findings still kept, by how much they hold
         // up the merge.
@@ -1935,75 +1953,306 @@ impl ReviewPanel {
                     .child(markdown("review-summary", &result.summary, theme)),
             )
             .children(inline_risk)
-            // What happens at run time, so a reviewer knows the shape of
-            // the change before reading it.
-            .when(!result.flow.is_empty(), |d| {
-                d.child(
-                    div().flex().flex_col().gap_1p5().child(Self::section_heading("What happens")).children(result.flow.iter().enumerate().map(|(i, step)| {
+            .children(Self::flow_section(&result, theme))
+            .when(has_attention, |d| d.child(div().flex().flex_col().gap_3().child(Self::section_heading("Needs attention")).children(attention)))
+            .children(self.walkthrough_section(&result, theme, cx))
+            .into_any_element()
+    }
+
+    /// The summary without its lists by severity: those are the findings,
+    /// which Needs attention lists already. A lead-in left hanging ("A few
+    /// things to look at:") goes with them.
+    fn prose_only(summary: &str) -> String {
+        let mut kept = Vec::new();
+        for line in summary.lines() {
+            let t = line.trim();
+            if t.starts_with("**") && ["blocker", "major", "minor", "nit"].contains(&t.trim_matches('*').trim_end_matches(':').to_lowercase().as_str()) {
+                break;
+            }
+            kept.push(line);
+        }
+        let mut text = kept.join("\n").trim_end().to_string();
+        if text.ends_with(':') {
+            if let Some(i) = text.rfind(['.', '\n']) {
+                text.truncate(i + 1);
+            }
+        }
+        text.trim_end().to_string()
+    }
+
+    /// The Overview with the PR page merged in. One status line; one Needs
+    /// attention, grouped by who has to act, blockers first; then the
+    /// review's prose, what to do before merging, the walkthrough and the
+    /// description. Colour is kept for what blocks the merge.
+    fn merged_overview(&self, parts: &PullParts, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        enum Action {
+            Select(Selected),
+            Url(String),
+            Nothing,
+        }
+        struct Row {
+            blocking: bool,
+            text: String,
+            detail: Option<String>,
+            aside: Option<String>,
+            action: Action,
+        }
+        let (facts, open) = {
+            let pull = parts.sidebar.read(cx);
+            (pull.standing_facts(theme), pull.open_items())
+        };
+        let (whose, _threads, failing, _approvals) = facts.unwrap_or_default();
+        let result = self.result.clone();
+        let mut kept: Vec<Finding> = result.iter().flat_map(|r| r.findings.iter()).filter(|f| !self.dismissed.contains(&f.key())).cloned().collect();
+        kept.sort_by_key(|f| f.rank());
+        let blockers = kept.iter().filter(|f| f.rank() == 0).count();
+
+        // The status: whose move it is, then the review in a quiet line.
+        let review = match (&result, self.working()) {
+            (Some(_), _) => format!("Your review: {}", self.verdict_word(theme).map_or("comment", |v| v.0).to_lowercase()),
+            (None, true) => "Reviewing".into(),
+            (None, false) => "Not reviewed yet".into(),
+        };
+        let mut meta: Vec<(String, Hsla)> = vec![(review, theme.fg)];
+        if blockers > 0 {
+            meta.push((plural(blockers, "blocker", "blockers"), theme.critical()));
+        }
+        if failing > 0 {
+            meta.push((plural(failing, "check failing", "checks failing"), theme.critical()));
+        }
+        if let Some(level) = self.risk().and_then(|r| r.level()) {
+            meta.push((format!("Merge risk {}", level.title().to_lowercase()), theme.secondary));
+        }
+        if let Some(e) = result.as_ref().and_then(|r| r.effort) {
+            meta.push((format!("Effort {e}/5"), theme.secondary));
+        }
+        if let Some(posted) = self.posted_latest() {
+            meta.push((format!("{} {}", posted_label(&posted.event), ago(posted.at)), theme.secondary));
+        }
+        if let Some(text) = self.check_text() {
+            meta.push((text, if self.has_changes() { theme.selected } else { theme.secondary }));
+        }
+        let status = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if whose.is_empty() { "Loading the pull request".to_string() } else { whose }))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_x_2()
+                    .text_sm()
+                    .when(self.working(), |d| d.child(Self::spinner("merged-spinner", 12., theme)))
+                    .children(meta.into_iter().enumerate().map(|(i, (text, tint))| {
+                        div().flex().flex_row().gap_2().when(i > 0, |d| d.child(div().text_color(theme.tertiary).child("·"))).child(div().text_color(tint).child(text))
+                    })),
+            );
+
+        // Needs attention: the review's findings are the reviewer's until
+        // posted; GitHub's items go to whoever's move it is.
+        let mut groups: Vec<(String, Vec<Row>)> = Vec::new();
+        if !kept.is_empty() {
+            let title = if self.posted_latest().is_some() { "In your posted review" } else { "In your review, to post" };
+            let rows = kept
+                .iter()
+                .map(|f| Row {
+                    blocking: f.rank() == 0,
+                    text: f.comment.split(". ").next().unwrap_or(&f.comment).to_string(),
+                    detail: Some(match f.line {
+                        Some(line) => format!("{}:{line}", f.path),
+                        None => f.path.clone(),
+                    }),
+                    aside: f.severity.as_deref().map(capitalised),
+                    action: Action::Select(if result.as_ref().is_some_and(|r| r.area_of(&f.path).is_some()) { Selected::File(f.path.clone()) } else { Selected::General }),
+                })
+                .collect();
+            groups.push((title.into(), rows));
+        }
+        for item in open {
+            let title = format!("On {}", item.owner);
+            let row = Row {
+                blocking: item.kind == crate::pull_page::AttentionKind::Failing,
+                text: item.text,
+                detail: item.detail,
+                aside: item.since.map(ago),
+                action: item.url.map_or(Action::Nothing, Action::Url),
+            };
+            match groups.iter_mut().find(|(t, _)| *t == title) {
+                Some((_, rows)) => rows.push(row),
+                None => groups.push((title, vec![row])),
+            }
+        }
+        // Blockers first, wherever they are; the order otherwise kept.
+        groups.sort_by_key(|(_, rows)| !rows.iter().any(|r| r.blocking));
+        for (_, rows) in groups.iter_mut() {
+            rows.sort_by_key(|r| !r.blocking);
+        }
+        let attention: Vec<gpui::AnyElement> = groups
+            .into_iter()
+            .enumerate()
+            .map(|(g, (title, rows))| {
+                let count = rows.len();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(div().flex().flex_row().gap_1p5().text_sm().child(div().font_weight(FontWeight::MEDIUM).text_color(theme.secondary).child(title)).child(div().text_color(theme.tertiary).child(count.to_string())))
+                    .child(div().flex().flex_col().rounded_lg().border_1().border_color(theme.border).children(rows.into_iter().enumerate().map(|(i, row)| {
+                        div()
+                            .id(SharedString::from(format!("merged-attention-{g}-{i}")))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .px(px(10.))
+                            .py(px(7.))
+                            .when(i > 0, |d| d.border_t_1().border_color(theme.border))
+                            .map(|d| match row.action {
+                                Action::Select(target) => d.cursor_pointer().hover(|s| s.bg(theme.row_selected.opacity(0.5))).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.selected = target.clone();
+                                    cx.notify();
+                                })),
+                                Action::Url(url) => d.cursor_pointer().hover(|s| s.bg(theme.row_selected.opacity(0.5))).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))),
+                                Action::Nothing => d,
+                            })
+                            // A slot for the mark, so the text lines up
+                            // whether or not the row blocks.
+                            .child(div().flex_none().size(px(6.)).rounded_full().when(row.blocking, |d| d.bg(theme.critical())))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(div().truncate().text_sm().child(row.text))
+                                    .when_some(row.detail, |d, detail| d.child(div().truncate().text_xs().text_color(theme.secondary).child(detail))),
+                            )
+                            .when_some(row.aside, |d, aside| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child(aside)))
+                    })))
+                    .into_any_element()
+            })
+            .collect();
+
+        let prose = match &result {
+            Some(r) => div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .when_some(r.headline.clone(), |d, h| d.child(div().text_base().font_weight(FontWeight::SEMIBOLD).child(h)))
+                .child(markdown("review-summary", &Self::prose_only(&r.summary), theme))
+                .into_any_element(),
+            None => self.waiting(theme, cx).into_any_element(),
+        };
+        let before = result.as_ref().and_then(|_| self.risk()).map(|risk| self.risk_panel(&risk, true, theme, cx));
+        let (flow, walkthrough) = match &result {
+            Some(r) => (Self::flow_section(r, theme), self.walkthrough_section(r, theme, cx)),
+            None => (None, None),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(28.))
+            .child(status)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(Self::section_heading("Needs attention"))
+                    .when(attention.is_empty(), |d| d.child(div().text_sm().text_color(theme.secondary).child("Nothing open.")))
+                    .children(attention),
+            )
+            .child(prose)
+            .children(before)
+            .children(flow)
+            .children(walkthrough)
+            .child(div().flex().flex_col().gap_2().child(Self::section_heading("Description")).child(parts.description.clone()))
+            .into_any_element()
+    }
+
+    /// What happens at run time, so a reviewer knows the shape of the
+    /// change before reading it.
+    fn flow_section(result: &ReviewResult, theme: &Theme) -> Option<gpui::AnyElement> {
+        if result.flow.is_empty() {
+            return None;
+        }
+        Some(
+            div().child(
+                div().flex().flex_col().gap_1p5().child(Self::section_heading("What happens")).children(result.flow.iter().enumerate().map(|(i, step)| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_1()
+                        .child(div().w(px(22.)).flex_none().text_color(theme.secondary).child(format!("{}.", i + 1)))
+                        .child(div().flex_1().child(step.clone()))
+                })),
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// The walkthrough as prose: its files are the list on the left, in
+    /// the same order, so they aren't repeated here.
+    fn walkthrough_section(&self, result: &ReviewResult, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if result.walkthrough.is_empty() {
+            return None;
+        }
+        let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
+        Some(
+            div().child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(div().flex().flex_col().child(Self::section_heading("Walkthrough")).child(quiet("The change in the order to read it, as the file list on the left.".into())))
+                    .children(result.walkthrough.iter().enumerate().map(|(i, area)| {
+                        let first = area.files.first().cloned();
+                        let count = area.files.len();
                         div()
                             .flex()
                             .flex_row()
-                            .gap_1()
-                            .child(div().w(px(22.)).flex_none().text_color(theme.secondary).child(format!("{}.", i + 1)))
-                            .child(div().flex_1().child(step.clone()))
+                            .gap_3()
+                            .child(Self::area_number(i + 1, theme))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_baseline()
+                                            .gap_2()
+                                            .child(div().font_weight(FontWeight::SEMIBOLD).child(area.title.clone()))
+                                            .when_some(first, |d, path| {
+                                                d.child(
+                                                    div()
+                                                        .id(SharedString::from(format!("area-files-{i}")))
+                                                        .flex_none()
+                                                        .text_xs()
+                                                        .text_color(theme.tertiary)
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.text_color(theme.selected))
+                                                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                                            this.selected = Selected::File(path.clone());
+                                                            cx.notify();
+                                                        }))
+                                                        .child(format!("{} ›", plural(count, "file", "files"))),
+                                                )
+                                            }),
+                                    )
+                                    .when_some(area.summary.clone(), |d, s| d.child(div().text_color(theme.secondary).child(s))),
+                            )
                     })),
-                )
-            })
-            .when(has_attention, |d| d.child(div().flex().flex_col().gap_3().child(Self::section_heading("Needs attention")).children(attention)))
-            // The walkthrough as prose: its files are the list on the left,
-            // in the same order, so they aren't repeated here.
-            .when(!result.walkthrough.is_empty(), |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .child(div().flex().flex_col().child(Self::section_heading("Walkthrough")).child(quiet("The change in the order to read it, as the file list on the left.".into())))
-                        .children(result.walkthrough.iter().enumerate().map(|(i, area)| {
-                            let first = area.files.first().cloned();
-                            let count = area.files.len();
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap_3()
-                                .child(Self::area_number(i + 1, theme))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .flex_row()
-                                                .items_baseline()
-                                                .gap_2()
-                                                .child(div().font_weight(FontWeight::SEMIBOLD).child(area.title.clone()))
-                                                .when_some(first, |d, path| {
-                                                    d.child(
-                                                        div()
-                                                            .id(SharedString::from(format!("area-files-{i}")))
-                                                            .flex_none()
-                                                            .text_xs()
-                                                            .text_color(theme.tertiary)
-                                                            .cursor_pointer()
-                                                            .hover(|s| s.text_color(theme.selected))
-                                                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                                                this.selected = Selected::File(path.clone());
-                                                                cx.notify();
-                                                            }))
-                                                            .child(format!("{} ›", plural(count, "file", "files"))),
-                                                    )
-                                                }),
-                                        )
-                                        .when_some(area.summary.clone(), |d, s| d.child(div().text_color(theme.secondary).child(s))),
-                                )
-                        })),
-                )
-            })
-            .into_any_element()
+            )
+            .into_any_element(),
+        )
     }
 
     fn file_detail(&self, path: &str, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2438,7 +2687,7 @@ impl Render for ReviewPanel {
         // Room for the Overview beside a risk sidebar, from the width the
         // detail area had when last laid out.
         let wide = self.detail_width.get() >= 980.;
-        let risk_side = (wide && draft.is_none() && self.selected == Selected::Overview).then(|| self.risk()).flatten().map(|risk| self.risk_panel(&risk, &theme, cx));
+        let risk_side = (self.pull.is_none() && wide && draft.is_none() && self.selected == Selected::Overview).then(|| self.risk()).flatten().map(|risk| self.risk_panel(&risk, false, &theme, cx));
         // The PR page's sidebar (reviewers, labels, linked issues) beside
         // everything but a file, whose diff wants the width.
         let pull_side = self.pull.as_ref().filter(|_| wide && draft.is_none() && !matches!(self.selected, Selected::File(_))).map(|p| p.sidebar.clone());
@@ -2449,17 +2698,7 @@ impl Render for ReviewPanel {
             // the review, then the description.
             Selected::Overview if self.pull.is_some() => {
                 let parts = self.pull.as_ref().unwrap();
-                let (attention, description) = (parts.attention.clone(), parts.description.clone());
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(28.))
-                    .max_w(px(860.))
-                    .child(attention)
-                    .child(div().border_t_1().border_color(theme.border))
-                    .child(self.overview(wide, &theme, cx))
-                    .child(div().flex().flex_col().gap_2().child(Self::section_heading("Description")).child(description))
-                    .into_any_element()
+                div().max_w(px(860.)).child(self.merged_overview(parts, &theme, cx)).into_any_element()
             }
             Selected::Overview => self.overview(wide, &theme, cx).into_any_element(),
             Selected::Timeline => div().max_w(px(860.)).child(pull_part(|p| &p.timeline)).into_any_element(),
