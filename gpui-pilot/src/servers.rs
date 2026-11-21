@@ -169,6 +169,19 @@ pub fn config_hosts() -> Vec<String> {
 /// Runs `command` on the server through its shell, in batch mode: what it
 /// printed, or why it failed.
 pub fn command(server: &Server, command: &str, input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    command_within(server, command, input, None)
+}
+
+/// How long a read that runs over and over (the mirror, the Changes pane's
+/// git) may take before it's given up on.
+pub const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// `command`, killed once `timeout` passes. Never leave a repeated read
+/// unbounded: a client of a wedged shared connection can wait forever, and
+/// the mirror is one thread for every session, so one stuck read froze every
+/// server session's state. Each stuck client also holds one of the server's
+/// sessions on that connection (sshd's MaxSessions, 10 by default).
+pub fn command_within(server: &Server, command: &str, input: Option<&[u8]>, timeout: Option<std::time::Duration>) -> Result<Vec<u8>, String> {
     let mut child = Command::new("ssh")
         .args(server.ssh_args(false))
         .arg(command)
@@ -177,15 +190,53 @@ pub fn command(server: &Server, command: &str, input: Option<&[u8]>) -> Result<V
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Couldn't run ssh: {e}"))?;
-    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        let _ = stdin.write_all(input);
+    let Some(timeout) = timeout else {
+        if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+            let _ = stdin.write_all(input);
+        }
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        return finished(out.status, out.stdout, &out.stderr);
+    };
+    // Every pipe on its own thread, so a write or a read that blocks can't
+    // keep the deadline from being checked.
+    let writer = input.map(<[u8]>::to_vec).zip(child.stdin.take()).map(|(input, mut stdin)| std::thread::spawn(move || drop(stdin.write_all(&input))));
+    fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            bytes
+        })
     }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(out.stdout)
+    let (stdout, stderr) = (drain(child.stdout.take()), drain(child.stderr.take()));
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                // Not joined: a process ssh left behind could still hold a pipe open.
+                return Err(format!("{} didn't answer within {} seconds", server.name(), timeout.as_secs()));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    if let Some(writer) = writer {
+        let _ = writer.join();
+    }
+    let (stdout, stderr) = (stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default());
+    finished(status, stdout, &stderr)
+}
+
+fn finished(status: std::process::ExitStatus, stdout: Vec<u8>, stderr: &[u8]) -> Result<Vec<u8>, String> {
+    if status.success() {
+        Ok(stdout)
     } else {
-        let error = String::from_utf8_lossy(&out.stderr);
-        Err(error.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string).unwrap_or_else(|| format!("ssh exited with {}", out.status)))
+        let error = String::from_utf8_lossy(stderr);
+        Err(error.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string).unwrap_or_else(|| format!("ssh exited with {status}")))
     }
 }
 
@@ -198,14 +249,14 @@ pub fn script(server: &Server, script: &str) -> Result<String, String> {
 /// git in a folder there, as the Changes pane runs it here.
 pub fn git(server: &Server, dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let args: Vec<String> = args.iter().map(|a| crate::launch::quote(a)).collect();
-    command(server, &format!("git -C {} {}", crate::launch::quote_path(dir), args.join(" ")), None)
+    command_within(server, &format!("git -C {} {}", crate::launch::quote_path(dir), args.join(" ")), None, Some(READ_TIMEOUT))
 }
 
 /// The git checkouts in a folder there, by name, as the worktree list
 /// reads a folder here.
 pub fn checkouts(server: &Server, dir: &Path) -> Vec<String> {
     let script = format!(r#"cd {} 2>/dev/null || exit 0; for d in */; do [ -e "$d.git" ] && printf '%s\n' "${{d%/}}"; done; exit 0"#, crate::launch::quote_path(dir));
-    let listed = command(server, "bash -s", Some(script.as_bytes())).unwrap_or_default();
+    let listed = command_within(server, "bash -s", Some(script.as_bytes()), Some(READ_TIMEOUT)).unwrap_or_default();
     String::from_utf8_lossy(&listed).lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
 }
 
@@ -384,7 +435,7 @@ if [ -n "$t" ]; then printf 'size %s\n' "$(wc -c < "$t" | tr -d ' ')"; printf 't
         from = have + 1,
     );
     // bash, not the login shell: zsh stops at a glob that matches nothing.
-    let output = command(&job.server, "bash -s", Some(probe.as_bytes()))?;
+    let output = command_within(&job.server, "bash -s", Some(probe.as_bytes()), Some(READ_TIMEOUT))?;
     let output = String::from_utf8_lossy(&output);
     let decode = |text: &str| base64::engine::general_purpose::STANDARD.decode(text.trim()).ok();
     let mut shrank = false;
