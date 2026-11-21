@@ -683,6 +683,49 @@ pub(crate) fn matches_search(search: &str, pr: &PrItem) -> bool {
     words.iter().all(|word| fields.iter().any(|f| f.contains(word.as_str())))
 }
 
+/// What a paste puts in the search: a pull request or issue link becomes
+/// its number (`…/web/pull/42#issuecomment-1` is `42`), any other
+/// link its last path segment, and line breaks become spaces.
+fn pasted_search(text: &str) -> String {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix("https://").or_else(|| trimmed.strip_prefix("http://")) else {
+        return text.replace(['\n', '\r'], " ");
+    };
+    if rest.contains(char::is_whitespace) {
+        return text.replace(['\n', '\r'], " ");
+    }
+    let path = rest.split(['#', '?']).next().unwrap_or(rest);
+    let segments: Vec<&str> = path.split('/').skip(1).filter(|s| !s.is_empty()).collect();
+    let number = segments.windows(2).find_map(|pair| {
+        let numbered = matches!(pair[0], "pull" | "pulls" | "issues");
+        (numbered && !pair[1].is_empty() && pair[1].bytes().all(|b| b.is_ascii_digit())).then_some(pair[1])
+    });
+    match number.or(segments.last().copied()) {
+        Some(segment) => segment.to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pasted_search;
+
+    #[test]
+    fn a_pasted_link_searches_for_its_number() {
+        assert_eq!(pasted_search("https://github.com/acme/web/pull/42#issuecomment-1001"), "42");
+        assert_eq!(pasted_search("https://github.com/acme/api/pull/7/files?w=1\n"), "7");
+        assert_eq!(pasted_search("https://github.com/acme/roadmap/issues/88"), "88");
+        assert_eq!(pasted_search("https://github.com/acme/api/tree/fix-login"), "fix-login");
+        assert_eq!(pasted_search("https://github.com"), "https://github.com");
+    }
+
+    #[test]
+    fn other_pastes_keep_their_text_on_one_line() {
+        assert_eq!(pasted_search("fix\nlogin"), "fix login");
+        assert_eq!(pasted_search("see https://github.com/a/b/pull/1 too"), "see https://github.com/a/b/pull/1 too");
+    }
+}
+
 struct Choice {
     value: String,
     title: String,
@@ -870,6 +913,9 @@ pub struct PrsPage {
     open_menu: Option<Menu>,
     closed_menu: Option<(Menu, Instant)>,
     search_focus: FocusHandle,
+    /// The search's text is all selected (Select All): the next key
+    /// replaces it.
+    search_all: bool,
     error: Option<String>,
     loading: bool,
     timings: String,
@@ -893,7 +939,10 @@ impl PrsPage {
         let search_focus = cx.focus_handle();
         let subscriptions = vec![
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
-            cx.on_blur(&search_focus, window, |_, _, cx| cx.notify()),
+            cx.on_blur(&search_focus, window, |page, _, cx| {
+                page.search_all = false;
+                cx.notify();
+            }),
         ];
         let mut page = Self {
             org,
@@ -914,6 +963,7 @@ impl PrsPage {
             open_menu: None,
             closed_menu: None,
             search_focus,
+            search_all: false,
             error: None,
             loading: false,
             timings: String::new(),
@@ -1316,8 +1366,27 @@ impl PrsPage {
         let keystroke = &event.keystroke;
         let modifiers = &keystroke.modifiers;
         let search = &mut self.filters.search;
+        // Command on a Mac, Control on Linux and Windows.
+        let secondary = modifiers.secondary(cx);
+        let all = std::mem::take(&mut self.search_all);
         match keystroke.key.as_str() {
+            "a" if secondary => {
+                self.search_all = !search.is_empty();
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+            "c" | "x" if secondary && all => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(search.clone()));
+                if keystroke.key == "c" {
+                    self.search_all = true;
+                    cx.stop_propagation();
+                    return;
+                }
+                search.clear();
+            }
             "escape" if !search.is_empty() => search.clear(),
+            "backspace" if all => search.clear(),
             "backspace" if modifiers.alt || modifiers.platform => {
                 let trimmed = search.trim_end().len();
                 search.truncate(trimmed);
@@ -1327,17 +1396,37 @@ impl PrsPage {
             "backspace" => {
                 search.pop();
             }
-            "v" if modifiers.platform => match cx.read_from_clipboard().and_then(|c| c.text()) {
-                Some(text) => search.push_str(&text.replace(['\n', '\r'], " ")),
-                None => return,
+            "v" if secondary => match cx.read_from_clipboard().and_then(|c| c.text()) {
+                Some(text) => {
+                    if all {
+                        search.clear();
+                    }
+                    search.push_str(&pasted_search(&text));
+                }
+                None => {
+                    self.search_all = all;
+                    return;
+                }
             },
             _ => {
                 if modifiers.platform || modifiers.control {
+                    self.search_all = all;
                     return;
                 }
                 match &keystroke.key_char {
-                    Some(text) if !text.chars().any(char::is_control) => search.push_str(text),
-                    _ => return,
+                    Some(text) if !text.chars().any(char::is_control) => {
+                        if all {
+                            search.clear();
+                        }
+                        search.push_str(text);
+                    }
+                    // Arrows and the like drop the selection.
+                    _ => {
+                        if all {
+                            cx.notify();
+                        }
+                        return;
+                    }
                 }
             }
         }
@@ -1354,6 +1443,7 @@ impl PrsPage {
             .track_focus(&self.search_focus)
             .on_key_down(cx.listener(Self::search_key))
             .on_click(cx.listener(|page, _: &ClickEvent, window, cx| {
+                page.search_all = false;
                 window.focus(&page.search_focus, cx);
                 cx.notify();
             }))
@@ -1372,6 +1462,9 @@ impl PrsPage {
             .child(div().flex_1().min_w_0().truncate().map(|d| {
                 if text.is_empty() {
                     d.text_color(theme.tertiary).child(if focused { "|".to_string() } else { "Title, number, person or branch".to_string() })
+                } else if focused && self.search_all {
+                    // A flex row so the highlight hugs the text, not the field.
+                    d.flex().child(div().min_w_0().truncate().rounded_sm().bg(theme.selected.opacity(0.35)).child(text.clone()))
                 } else {
                     d.child(if focused { format!("{text}|") } else { text.clone() })
                 }
