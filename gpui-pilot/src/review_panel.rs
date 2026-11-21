@@ -1267,71 +1267,71 @@ impl ReviewPanel {
 
     /// Review Again, or a busy one while Claude Code is still starting (its
     /// terminal won't take the prompt yet).
-    fn again_button(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn again_button(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let live = matches!(self.source, Source::Live { .. });
         if live && ((self.running() && !self.takes_input()) || self.again_pending()) {
-            return Self::busy_button("review-again", "Review Again", theme).into_any_element();
+            return Self::busy_button("review-again", "Review Again", theme);
         }
         let can_again = self.can_again();
         Self::button("review-again", "Review Again", false, can_again, theme)
             .when(can_again, |d| d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx))))
-            .into_any_element()
     }
 
-    /// Post Review, enabled for a result not posted yet.
-    fn post_button(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let can_post = self.result.is_some() && self.posted_latest().is_none();
-        Self::button("review-post", "Post Review", true, can_post, theme)
+    /// Post Review, enabled for a result not posted yet; once it's posted,
+    /// a disabled Posted.
+    fn post_button(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let posted = self.posted_latest().is_some();
+        let can_post = self.result.is_some() && !posted;
+        Self::button("review-post", if posted { "Posted" } else { "Post Review" }, true, can_post, theme)
             .when(can_post, |d| d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx))))
-            .into_any_element()
     }
 
     /// Merged with the PR page: where the review stands, one fact a row
-    /// (your review, blockers, checks, merge risk, effort), with Review
-    /// Again and Post Review under it. Heads the right-hand column.
+    /// (your review, when, blockers, checks, merge risk, effort, what was
+    /// posted, what changed since), with Review Again and Post Review under
+    /// it. Heads the right-hand column.
     fn status_column(&self, parts: &PullParts, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        /// Both meters are this wide, whatever their number of steps.
+        const METER: f32 = 96.;
+        const GAP: f32 = 3.;
         let failing = parts.sidebar.read(cx).counts().2;
         let blockers = self.result.as_ref().map(|r| r.findings.iter().filter(|f| f.rank() == 0 && !self.dismissed.contains(&f.key())).count());
-        // The marks are neutral: the values carry the colour.
-        let icon = |path: &'static str| gpui::svg().path(path).size(px(14.)).flex_none().text_color(theme.secondary).into_any_element();
-        // A row: a fixed slot for its mark, a label, the value, and a meter
-        // at the right-hand end.
-        let row = |mark: Option<gpui::AnyElement>, label: &str, value: gpui::AnyElement, meter: Option<gpui::AnyElement>| {
+        // A row: the label, then its value, the values in one column.
+        let row = |label: &str, value: gpui::AnyElement| {
             div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_2()
+                .gap_3()
                 .text_sm()
-                .child(div().w(px(20.)).flex_none().flex().justify_center().children(mark))
                 .child(div().w(px(84.)).flex_none().text_color(theme.secondary).child(label.to_string()))
                 .child(div().flex_1().min_w_0().child(value))
-                .children(meter)
-                .into_any_element()
-        };
-        // Merge risk's bars, wider: one segment a step, lit ones in `lit`'s colour.
-        let meter = |steps: i64, lit: &dyn Fn(i64) -> Option<Hsla>| {
-            div()
-                .flex_none()
-                .flex()
-                .flex_row()
-                .gap(px(3.))
-                .children((1..=steps).map(|i| div().w(px(14.)).h(px(5.)).rounded(px(1.5)).bg(lit(i).unwrap_or(theme.secondary.opacity(0.25)))))
                 .into_any_element()
         };
         let text = |s: String, tint: Hsla| div().truncate().text_color(tint).child(s).into_any_element();
+        // Bars filling METER: one a step, lit ones in `lit`'s colour.
+        let meter = |steps: i64, lit: &dyn Fn(i64) -> Option<Hsla>| {
+            let width = (METER - GAP * (steps - 1) as f32) / steps as f32;
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(GAP))
+                .children((1..=steps).map(|i| div().w(px(width)).h(px(5.)).rounded(px(1.5)).bg(lit(i).unwrap_or(theme.secondary.opacity(0.25)))))
+                .into_any_element()
+        };
         let (review, review_tint) = match (self.verdict_word(theme), self.working()) {
-            (Some((word, tint)), _) => (word.to_string(), tint),
-            (None, true) => ("Reviewing".into(), theme.secondary),
+            (Some((word, tint)), false) => (word.to_string(), tint),
+            (_, true) => ("Reviewing".into(), theme.secondary),
             (None, false) => ("Not reviewed yet".into(), theme.secondary),
         };
-        let review_mark = if self.working() { Self::spinner("status-spinner", 14., theme).into_any_element() } else { icon("icons/user_check.svg") };
-        let mut rows: Vec<gpui::AnyElement> = vec![row(Some(review_mark), "Your review", text(review, review_tint), None)];
-        if let Some(n) = blockers {
-            rows.push(row(Some(icon("icons/x_circle_filled.svg")), "Blockers", if n > 0 { text(n.to_string(), theme.critical()) } else { text("None".into(), theme.secondary) }, None));
+        let mut rows: Vec<gpui::AnyElement> = vec![row("Your review", text(review, review_tint))];
+        if let Some(at) = self.result.as_ref().and_then(|r| r.at) {
+            rows.push(row("Reviewed", text(ago(at), theme.secondary)));
         }
-        let (checks, checks_tint) = if failing > 0 { (format!("{failing} failing"), theme.critical()) } else { ("Passing".into(), theme.secondary) };
-        rows.push(row(Some(icon(if failing > 0 { "icons/warning.svg" } else { "icons/check.svg" })), "Checks", text(checks, checks_tint), None));
+        if let Some(n) = blockers {
+            rows.push(row("Blockers", if n > 0 { text(n.to_string(), theme.critical()) } else { text("None".into(), theme.secondary) }));
+        }
+        rows.push(row("Checks", if failing > 0 { text(format!("{failing} failing"), theme.critical()) } else { text("Passing".into(), theme.secondary) }));
         if let Some(level) = self.risk().and_then(|r| r.level()) {
             use crate::risk::Level;
             let at = match level {
@@ -1340,33 +1340,38 @@ impl ReviewPanel {
                 Level::High => 3,
             };
             let tint = risk_tint(level, theme);
-            rows.push(row(None, "Merge risk", text(level.title().to_string(), tint), Some(meter(3, &|i| (i == at).then_some(tint)))));
+            rows.push(row("Merge risk", meter(3, &|i| (i == at).then_some(tint))));
         }
         if let Some(e) = self.result.as_ref().and_then(|r| r.effort) {
-            rows.push(row(None, "Effort", text(format!("{e}/5"), theme.secondary), Some(meter(5, &|i| (i <= e).then_some(theme.fg.opacity(0.7))))));
+            rows.push(row("Effort", meter(5, &|i| (i <= e).then_some(theme.fg.opacity(0.7)))));
         }
+        if let Some(posted) = self.posted_latest().cloned() {
+            let url = posted.url.clone();
+            rows.push(row(
+                "Posted",
+                div()
+                    .id("status-posted")
+                    .truncate()
+                    .text_color(theme.selected)
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.8))
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                    .child(format!("{} {}", posted_label(&posted.event), ago(posted.at)))
+                    .into_any_element(),
+            ));
+        }
+        if let Some(t) = self.check_text() {
+            rows.push(row("Changes", text(t, if self.has_changes() { theme.selected } else { theme.secondary })));
+        }
+        // The two buttons share the column's width.
+        let again = self.again_button(theme, cx).flex_1().flex().justify_center();
+        let post = self.post_button(theme, cx).flex_1().flex().justify_center();
         div()
             .flex()
             .flex_col()
             .gap_2()
             .children(rows)
-            // What was posted, and what Check for Changes last found.
-            .when_some(self.posted_latest().cloned(), |d, posted| {
-                let url = posted.url.clone();
-                d.child(
-                    div()
-                        .id("status-posted")
-                        .pl(px(36.))
-                        .text_xs()
-                        .text_color(theme.selected)
-                        .cursor_pointer()
-                        .hover(|s| s.opacity(0.8))
-                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
-                        .child(format!("{} {}", posted_label(&posted.event), ago(posted.at))),
-                )
-            })
-            .when_some(self.check_text(), |d, t| d.child(div().pl(px(36.)).text_xs().text_color(if self.has_changes() { theme.selected } else { theme.secondary }).child(t)))
-            .child(div().pt_2().flex().flex_row().gap_2().child(self.again_button(theme, cx)).child(self.post_button(theme, cx)))
+            .child(div().pt_3().flex().flex_row().gap_2().text_sm().child(again).child(post))
             .pb_5()
             .border_b_1()
             .border_color(theme.border)
@@ -2514,7 +2519,7 @@ impl ReviewPanel {
     }
 
     /// A button that can't go yet, with a spinner, while Claude Code starts.
-    fn busy_button(id: &'static str, label: &str, theme: &Theme) -> impl IntoElement {
+    fn busy_button(id: &'static str, label: &str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
         div()
             .id(id)
             .px_2()

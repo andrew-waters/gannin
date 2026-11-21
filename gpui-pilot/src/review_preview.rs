@@ -159,7 +159,12 @@ impl ReviewPreview {
             State::Approve => review::parse(APPROVE),
             State::ReviewAgain => review::parse(AGAIN),
             _ => review::parse(FINDINGS),
-        };
+        }
+        // When claude gave it, as a real transcript says.
+        .map(|mut r| {
+            r.at = Some(chrono::Utc::now() - chrono::Duration::minutes(40));
+            r
+        });
         let idle = !matches!(state, State::Reviewing | State::Ended);
         let working = state == State::Reviewing;
         let own = state == State::PostOwn;
