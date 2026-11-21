@@ -719,12 +719,14 @@ enum Column {
 impl Column {
     fn defaults() -> Vec<Column> {
         use Column::*;
-        vec![State, Status, Title, Repository, Number, Author, Reviewers, Requested, Checks, Risk, Size, Updated]
+        vec![Status, Title, Repository, Number, Author, Reviewers, Requested, Checks, Risk, Size, Updated]
     }
 
     fn all() -> Vec<Column> {
         use Column::*;
-        vec![State, Status, Title, Repository, Number, Author, Reviewers, Requested, Assignees, Checks, Risk, Linked, Files, Size, Branch, Opened, Updated, Merged, Closed]
+        // State is in Status (Merged, Closed, or where review stands), so it
+        // isn't offered; a saved tab's becomes Status (`sound_columns`).
+        vec![Status, Title, Repository, Number, Author, Reviewers, Requested, Assignees, Checks, Risk, Linked, Files, Size, Branch, Opened, Updated, Merged, Closed]
     }
 
     fn title(&self) -> &'static str {
@@ -784,7 +786,7 @@ struct DraggedColumn(Column);
 
 fn sound_columns(columns: &[Column]) -> Vec<Column> {
     let mut seen = HashSet::new();
-    let mut sound: Vec<Column> = columns.iter().filter(|c| seen.insert((*c).clone())).cloned().collect();
+    let mut sound: Vec<Column> = columns.iter().map(|c| if *c == Column::State { Column::Status } else { c.clone() }).filter(|c| seen.insert(c.clone())).collect();
     if !sound.contains(&Column::Title) {
         sound.insert(0, Column::Title);
     }
@@ -1575,8 +1577,7 @@ impl PrsPage {
                         .collect::<Vec<_>>(),
                 )
                 .into_any_element(),
-            Column::State => div().w(px(width)).flex_none().flex().overflow_hidden().child(state_pill(pr, theme)).into_any_element(),
-            Column::Status => div()
+            Column::State | Column::Status => div()
                 .w(px(width))
                 .flex_none()
                 .flex()
@@ -1584,10 +1585,7 @@ impl PrsPage {
                 .items_center()
                 .gap_1p5()
                 .overflow_hidden()
-                .when_some(pr.standing, |d, standing| {
-                    d.child(div().size(px(7.)).flex_none().rounded_full().bg(standing.color(theme)))
-                        .child(div().flex_shrink(1.).min_w_0().truncate().child(standing.title()))
-                })
+                .child(status_pill(pr, theme))
                 .when(pr.is_stale(now), |d| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child("stale")))
                 .into_any_element(),
             Column::Repository => quiet(pr.repo_name.clone()).into_any_element(),
@@ -1821,8 +1819,7 @@ fn compare(a: &PrItem, b: &PrItem, (column, descending): &(Column, bool), me: Op
     // Waiting reviewers count most, then everyone involved.
     let reviewers = |p: &PrItem| p.reviewers.iter().filter(|r| r.requested && r.state.is_none()).count() * 100 + p.reviewers.len();
     let order = match column {
-        Column::State => a.state.cmp(&b.state),
-        Column::Status => present(a.standing, b.standing),
+        Column::State | Column::Status => a.state.cmp(&b.state).then(present(a.standing, b.standing)),
         Column::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
         Column::Repository => a.repo_name.cmp(&b.repo_name),
         Column::Number => a.number.cmp(&b.number),
@@ -1880,6 +1877,19 @@ pub fn checks_badge(checks: Checks, theme: &Theme) -> gpui::AnyElement {
 }
 
 /// Open in green (a draft in grey), Merged in purple, Closed in red.
+/// State and where review stands in one pill: Merged or Closed once it's
+/// ended, else its standing (Draft, In review, Commented, Changes
+/// requested, Approved) in that standing's colour.
+pub fn status_pill(pr: &PrItem, theme: &Theme) -> impl IntoElement {
+    match (pr.state, pr.standing) {
+        (PrState::Merged, _) => pill("Merged", theme.slot(6)),
+        (PrState::Closed, _) => pill("Closed", theme.critical()),
+        (PrState::Open, Some(standing)) => pill(standing.title(), standing.color(theme)),
+        (PrState::Open, None) if pr.draft => pill("Draft", theme.secondary),
+        (PrState::Open, None) => pill("Open", theme.good()),
+    }
+}
+
 pub fn state_pill(pr: &PrItem, theme: &Theme) -> impl IntoElement {
     match pr.state {
         PrState::Open if pr.draft => pill("Draft", theme.secondary),
