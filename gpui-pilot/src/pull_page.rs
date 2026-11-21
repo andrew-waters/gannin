@@ -195,6 +195,9 @@ struct PullData {
     /// Issues and PRs that mention this one (GitHub's cross-references),
     /// newest first, without those it closes.
     mentions: Vec<Linked>,
+    /// Issues and PRs its description points to (owner/repo#12, #12, or a
+    /// link), other than what it closes.
+    refs: Vec<Linked>,
     participants: Vec<Person>,
     commits: Vec<CommitRow>,
     commit_total: usize,
@@ -255,6 +258,94 @@ fn person(v: &Value) -> Person {
 }
 
 /// The whole PR, read from GitHub. Blocking: run it off the main thread.
+/// The issues and PRs `body` points to: "owner/repo#12", "#12" (in
+/// `repo`), and GitHub links to issues and pull requests; each once, not
+/// the PR itself, at most 20.
+fn references(body: &str, repo: &str, number: i64) -> Vec<(String, i64)> {
+    let name_char = |c: char| c.is_ascii_alphanumeric() || "-_.".contains(c);
+    let mut found: Vec<(String, i64)> = Vec::new();
+    let add = |r: String, n: i64, found: &mut Vec<(String, i64)>| {
+        let own = r.eq_ignore_ascii_case(repo) && n == number;
+        if n > 0 && !own && !found.iter().any(|(fr, fn_)| fr.eq_ignore_ascii_case(&r) && *fn_ == n) && found.len() < 20 {
+            found.push((r, n));
+        }
+    };
+    // Links: github.com/owner/repo/issues/12 or /pull/12.
+    for part in body.split("github.com/").skip(1) {
+        let mut bits = part.splitn(4, '/');
+        let (Some(owner), Some(name), Some(kind), Some(rest)) = (bits.next(), bits.next(), bits.next(), bits.next()) else { continue };
+        if !(kind == "issues" || kind == "pull") || !owner.chars().all(name_char) || !name.chars().all(name_char) {
+            continue;
+        }
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(n) = digits.parse() {
+            add(format!("{owner}/{name}"), n, &mut found);
+        }
+    }
+    // "owner/repo#12" and "#12".
+    let chars: Vec<char> = body.chars().collect();
+    for (i, c) in chars.iter().enumerate() {
+        if *c != '#' {
+            continue;
+        }
+        let digits: String = chars[i + 1..].iter().take_while(|c| c.is_ascii_digit()).collect();
+        // "#123abc" (a colour, an anchor) isn't a reference.
+        if chars.get(i + 1 + digits.len()).is_some_and(|c| c.is_alphanumeric() || *c == '_') {
+            continue;
+        }
+        let Ok(n) = digits.parse::<i64>() else { continue };
+        // What's just before: "owner/repo", or a break (start, space, bracket).
+        let mut start = i;
+        while start > 0 && (name_char(chars[start - 1]) || chars[start - 1] == '/') {
+            start -= 1;
+        }
+        let before: String = chars[start..i].iter().collect();
+        if before.is_empty() {
+            let breaks = i == 0 || chars[i - 1].is_whitespace() || "([,".contains(chars[i - 1]);
+            if breaks {
+                add(repo.to_string(), n, &mut found);
+            }
+        } else if let Some((owner, name)) = before.split_once('/') {
+            if !owner.is_empty() && !name.is_empty() && !name.contains('/') {
+                add(before.clone(), n, &mut found);
+            }
+        }
+    }
+    found
+}
+
+/// Each reference's title and state, in one query. Blocking.
+fn resolve_refs(token: &str, refs: &[(String, i64)]) -> Result<Vec<Linked>, String> {
+    if refs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let fields = "__typename ... on Issue { id number title url state repository { nameWithOwner } } ... on PullRequest { id number title url state repository { nameWithOwner } }";
+    let parts: Vec<String> = refs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (repo, n))| {
+            let (owner, name) = repo.split_once('/')?;
+            Some(format!("r{i}: repository(owner: \"{owner}\", name: \"{name}\") {{ issueOrPullRequest(number: {n}) {{ {fields} }} }}"))
+        })
+        .collect();
+    let data = crate::github::graphql(token, &format!("query {{ {} }}", parts.join(" ")), json!({})).map_err(|e| e.to_string())?;
+    Ok((0..refs.len())
+        .filter_map(|i| {
+            let item = &data[format!("r{i}")]["issueOrPullRequest"];
+            let id = item["id"].as_str()?.to_string();
+            Some(Linked {
+                pull: item["__typename"] == "PullRequest",
+                id,
+                number: item["number"].as_i64().unwrap_or(0),
+                title: text(&item["title"]),
+                url: text(&item["url"]),
+                open: item["state"] == "OPEN",
+                repo: text(&item["repository"]["nameWithOwner"]),
+            })
+        })
+        .collect())
+}
+
 fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
     let token = crate::auth::token().ok_or("Sign in to load the pull request.")?;
     let (owner, name) = repo.split_once('/').ok_or("Not a repository")?;
@@ -406,7 +497,15 @@ fn fetch(repo: &str, number: i64) -> Result<PullData, String> {
             repo: text(&s["repository"]["nameWithOwner"]),
         });
     }
+    // What the description points to, read from GitHub; a nicety, so a
+    // failure leaves it empty.
+    let refs = resolve_refs(&token, &references(&text(&pr["body"]), repo, number))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|l| !closing.contains(&l.id) && l.id != text(&pr["id"]))
+        .collect();
     Ok(PullData {
+        refs,
         viewer: text(&data["viewer"]["login"]),
         id: text(&pr["id"]),
         title: text(&pr["title"]),
@@ -544,6 +643,7 @@ fn sample(repo: &str, number: i64, title: &str) -> PullData {
             Reviewer { person: who("sam"), at: ago(30), state: "CHANGES_REQUESTED".into() },
             Reviewer { person: who("priya"), at: ago(48), state: "REQUESTED".into() },
         ],
+        refs: Vec::new(),
         mentions: vec![
             Linked { pull: true, id: "preview-pr-221".into(), number: 221, title: "Send the Idempotency-Key from the mobile client".into(), url: "https://github.com/acme/mobile/pull/221".into(), open: true, repo: "acme/mobile".into() },
             Linked { pull: false, id: "preview-issue-203".into(), number: 203, title: "Document retries in the payments API guide".into(), url: format!("https://github.com/{repo}/issues/203"), open: true, repo: repo.into() },
@@ -814,7 +914,7 @@ impl PullPage {
     fn relink(&mut self) {
         let mut items = vec![(self.pr.repo.clone(), self.pr.number)];
         if let Some(data) = &self.data {
-            items.extend(data.linked.iter().chain(data.mentions.iter()).map(|l| (l.repo.clone(), l.number)));
+            items.extend(data.linked.iter().chain(data.mentions.iter()).chain(data.refs.iter()).map(|l| (l.repo.clone(), l.number)));
         }
         items.extend(self.local.iter().map(|l| (l.repo.clone(), l.number)));
         let wanted = |d: &crate::harness::Doc| matches!(d.kind, crate::harness::HarnessKind::Plans | crate::harness::HarnessKind::Requirements);
@@ -1647,7 +1747,7 @@ impl PullPage {
             }
         }
         let mut related = group("Related");
-        if closes.is_empty() && mentions.is_empty() && self.plans.is_empty() {
+        if closes.is_empty() && mentions.is_empty() && data.refs.is_empty() && self.plans.is_empty() {
             related = related.child(none("Nothing related"));
         }
         if !closes.is_empty() {
@@ -1660,6 +1760,14 @@ impl PullPage {
             related = related.child(caption("Mentioned in"));
             for (i, l) in mentions.iter().enumerate() {
                 related = related.child(item_row(("pull-mention", i), l, cx));
+            }
+        }
+        // What its description points to, not listed above.
+        let referenced: Vec<&Linked> = data.refs.iter().filter(|l| !closes.iter().chain(mentions.iter()).any(|c| c.id == l.id)).collect();
+        if !referenced.is_empty() {
+            related = related.child(caption("Referenced"));
+            for (i, l) in referenced.into_iter().enumerate() {
+                related = related.child(item_row(("pull-ref", i), l, cx));
             }
         }
         let (plans, requirements): (Vec<_>, Vec<_>) = self.plans.iter().cloned().partition(|(d, _)| d.kind == crate::harness::HarnessKind::Plans);
@@ -1805,7 +1913,23 @@ impl Render for PullPage {
             return panel.clone().into_any_element();
         }
         if self.part != Part::Whole {
-            let Some(data) = &self.data else { return div().into_any_element() };
+            let Some(data) = &self.data else {
+                // Related says it's on its way rather than being blank.
+                if self.part == Part::Related {
+                    let note = self.error.clone().map_or("Loading".to_string(), |e| format!("Couldn't load it: {e}"));
+                    return div()
+                        .flex()
+                        .flex_col()
+                        .gap_1p5()
+                        .pb_3()
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child("Related"))
+                        .child(div().text_sm().text_color(theme.tertiary).child(note))
+                        .into_any_element();
+                }
+                return div().into_any_element();
+            };
             return match self.part {
                 Part::Description => Self::card(&theme)
                     .child(Self::card_head(&data.author, div().child("opened this").into_any_element(), data.created_at, None, &theme, cx))
