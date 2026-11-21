@@ -1,7 +1,7 @@
 {
   "boardsRepo" : "andrew-waters/gannin",
-  "name" : "gannin",
+  "name" : "orchard",
   "repos" : [
-    "andrew-waters/gannin"
+    "andrew-waters/orchard"
   ]
 }
