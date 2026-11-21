@@ -1292,18 +1292,32 @@ impl ReviewPanel {
     fn status_column(&self, parts: &PullParts, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let failing = parts.sidebar.read(cx).counts().2;
         let blockers = self.result.as_ref().map(|r| r.findings.iter().filter(|f| f.rank() == 0 && !self.dismissed.contains(&f.key())).count());
-        let icon = |path: &'static str, tint: Hsla| gpui::svg().path(path).size(px(14.)).flex_none().text_color(tint);
-        // A row: a fixed slot for its mark, a label, then the value.
-        let row = |mark: gpui::AnyElement, label: &str, value: gpui::AnyElement| {
+        // The marks are neutral: the values carry the colour.
+        let icon = |path: &'static str| gpui::svg().path(path).size(px(14.)).flex_none().text_color(theme.secondary).into_any_element();
+        // A row: a fixed slot for its mark, a label, the value, and a meter
+        // at the right-hand end.
+        let row = |mark: Option<gpui::AnyElement>, label: &str, value: gpui::AnyElement, meter: Option<gpui::AnyElement>| {
             div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap_2()
                 .text_sm()
-                .child(div().w(px(28.)).flex_none().flex().justify_center().child(mark))
+                .child(div().w(px(20.)).flex_none().flex().justify_center().children(mark))
                 .child(div().w(px(84.)).flex_none().text_color(theme.secondary).child(label.to_string()))
                 .child(div().flex_1().min_w_0().child(value))
+                .children(meter)
+                .into_any_element()
+        };
+        // Merge risk's bars, wider: one segment a step, lit ones in `lit`'s colour.
+        let meter = |steps: i64, lit: &dyn Fn(i64) -> Option<Hsla>| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .gap(px(3.))
+                .children((1..=steps).map(|i| div().w(px(14.)).h(px(5.)).rounded(px(1.5)).bg(lit(i).unwrap_or(theme.secondary.opacity(0.25)))))
+                .into_any_element()
         };
         let text = |s: String, tint: Hsla| div().truncate().text_color(tint).child(s).into_any_element();
         let (review, review_tint) = match (self.verdict_word(theme), self.working()) {
@@ -1311,19 +1325,25 @@ impl ReviewPanel {
             (None, true) => ("Reviewing".into(), theme.secondary),
             (None, false) => ("Not reviewed yet".into(), theme.secondary),
         };
-        let review_mark = if self.working() { Self::spinner("status-spinner", 14., theme).into_any_element() } else { icon("icons/user_check.svg", review_tint).into_any_element() };
-        let mut rows: Vec<gpui::AnyElement> = vec![row(review_mark, "Your review", text(review, review_tint)).into_any_element()];
+        let review_mark = if self.working() { Self::spinner("status-spinner", 14., theme).into_any_element() } else { icon("icons/user_check.svg") };
+        let mut rows: Vec<gpui::AnyElement> = vec![row(Some(review_mark), "Your review", text(review, review_tint), None)];
         if let Some(n) = blockers {
-            let tint = if n > 0 { theme.critical() } else { theme.tertiary };
-            rows.push(row(icon("icons/x_circle_filled.svg", tint).into_any_element(), "Blockers", text(if n > 0 { n.to_string() } else { "None".into() }, if n > 0 { tint } else { theme.secondary })).into_any_element());
+            rows.push(row(Some(icon("icons/x_circle_filled.svg")), "Blockers", if n > 0 { text(n.to_string(), theme.critical()) } else { text("None".into(), theme.secondary) }, None));
         }
         let (checks, checks_tint) = if failing > 0 { (format!("{failing} failing"), theme.critical()) } else { ("Passing".into(), theme.secondary) };
-        rows.push(row(icon(if failing > 0 { "icons/warning.svg" } else { "icons/check.svg" }, if failing > 0 { checks_tint } else { theme.tertiary }).into_any_element(), "Checks", text(checks, checks_tint)).into_any_element());
+        rows.push(row(Some(icon(if failing > 0 { "icons/warning.svg" } else { "icons/check.svg" })), "Checks", text(checks, checks_tint), None));
         if let Some(level) = self.risk().and_then(|r| r.level()) {
-            rows.push(row(Self::risk_meter(level, 8., theme).into_any_element(), "Merge risk", text(level.title().to_string(), risk_tint(level, theme))).into_any_element());
+            use crate::risk::Level;
+            let at = match level {
+                Level::Low => 1,
+                Level::Medium => 2,
+                Level::High => 3,
+            };
+            let tint = risk_tint(level, theme);
+            rows.push(row(None, "Merge risk", text(level.title().to_string(), tint), Some(meter(3, &|i| (i == at).then_some(tint)))));
         }
         if let Some(e) = self.result.as_ref().and_then(|r| r.effort) {
-            rows.push(row(Self::effort_pips(e, theme).into_any_element(), "Effort", text(format!("{e}/5"), theme.secondary)).into_any_element());
+            rows.push(row(None, "Effort", text(format!("{e}/5"), theme.secondary), Some(meter(5, &|i| (i <= e).then_some(theme.fg.opacity(0.7))))));
         }
         div()
             .flex()
