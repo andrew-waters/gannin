@@ -261,7 +261,7 @@ struct IssueColumn: View {
 
             DescriptionSections(id: issue.id, url: issue.url)
         }
-        .task(id: issue.id) { await details.load(issue.id, updatedAt: issue.updatedAt) }
+        .task(id: issue.id) { await details.load(issue.id, org: workload.snapshot.orgLogin, updatedAt: issue.updatedAt) }
     }
 }
 
@@ -318,7 +318,7 @@ struct PullRequestColumn: View {
 
             DescriptionSections(id: pr.id, url: pr.url)
         }
-        .task(id: pr.id) { await details.load(pr.id, updatedAt: pr.updatedAt) }
+        .task(id: pr.id) { await details.load(pr.id, org: workload.snapshot.orgLogin, updatedAt: pr.updatedAt) }
     }
 
     private var peopleFacts: some View {
@@ -463,7 +463,7 @@ struct DescriptionSections: View {
             Section("Description") {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
-                Button("Try Again") { Task { await details.load(id, force: true) } }
+                Button("Try Again") { Task { await details.retry(id) } }
             }
         } else {
             Section("Description") {

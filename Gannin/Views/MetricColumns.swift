@@ -295,6 +295,7 @@ struct MetricPullRequestRow: View {
 /// A merged PR that's only in the metrics history (older than the snapshot).
 struct MetricPullRequestColumn: View {
     let pr: MetricPullRequest
+    let org: String
     @Binding var selection: DetailSelection?
 
     var body: some View {
@@ -332,7 +333,7 @@ struct MetricPullRequestColumn: View {
             TimelineSection(pr: pr)
             DescriptionSections(id: pr.id, url: pr.url)
         }
-        .task(id: pr.id) { await details.load(pr.id) }
+        .task(id: pr.id) { await details.load(pr.id, org: org) }
     }
 
     @Environment(DetailStore.self) private var details

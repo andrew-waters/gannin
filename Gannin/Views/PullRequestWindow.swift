@@ -89,7 +89,7 @@ struct PullRequestWindow: View {
                 ToolbarItem { ExplainPullRequestButton(reference: reference) }
             }
         }
-        .task(id: reference.id) { await details.load(reference.id, updatedAt: open?.updatedAt) }
+        .task(id: reference.id) { await details.load(reference.id, org: reference.org, updatedAt: open?.updatedAt) }
     }
 
     private func pill(open: PullRequest?, logged: WorkLogPullRequest?) -> Pill {
