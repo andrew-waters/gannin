@@ -566,6 +566,8 @@ pub struct Workspace {
     /// When each session's tab was last on screen (the active tab of the
     /// active window): a session that's finished since then wants you.
     seen: HashMap<u32, chrono::DateTime<chrono::Local>>,
+    /// Folded sections (<details>) opened in a drawer's text, by key.
+    open_details: HashSet<String>,
     /// The schedule's clock (the first window only), how often it's
     /// ticked, and this window, for the clock to act in.
     _scheduler: Option<gpui::Task<()>>,
@@ -999,6 +1001,7 @@ impl Workspace {
             session_names,
             window_place,
             seen: HashMap::new(),
+            open_details: HashSet::new(),
             slot: 0,
             closed: false,
             show_on_reopen: None,
@@ -6665,7 +6668,7 @@ impl Workspace {
             None => quiet("Loading".into()).into_any_element(),
             Some(None) => quiet("Not in Gannin's caches yet: open it in Gannin once, or on GitHub.".into()).into_any_element(),
             Some(Some(t)) if t.body.trim().is_empty() => div().text_color(theme.tertiary).child("No description").into_any_element(),
-            Some(Some(t)) => markdown(&format!("description-{seq}"), &t.body, theme),
+            Some(Some(t)) => self.text_card(&format!("description-{seq}"), None, None, None, &t.body, theme, cx),
         });
 
         let comments = text.map(|t| {
@@ -6688,33 +6691,7 @@ impl Workspace {
                     )
                 })
                 .children(t.comments.iter().enumerate().map(|(i, comment)| {
-                    let link = comment.url.clone();
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_2()
-                                .child(div().font_weight(FontWeight::MEDIUM).child(comment.author.clone()))
-                                .when_some(comment.at, |d, at| d.child(quiet(relative_date(at, now))))
-                                .child(div().flex_1())
-                                .when_some(link, |d, url| {
-                                    d.child(
-                                        div()
-                                            .id(("comment-link", seq * 1000 + i))
-                                            .text_xs()
-                                            .text_color(theme.selected)
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
-                                            .child("Open"),
-                                    )
-                                }),
-                        )
-                        .child(markdown(&format!("comment-{seq}-{i}"), &comment.body, theme))
+                    self.text_card(&format!("comment-{seq}-{i}"), Some(&comment.author), comment.at, comment.url.clone(), &comment.body, theme, cx)
                 }))
         });
 
@@ -6949,25 +6926,12 @@ impl Workspace {
             None => quiet("Loading".into()).into_any_element(),
             Some(None) => quiet("Not in Gannin's caches yet: open it in Gannin once, or on GitHub.".into()).into_any_element(),
             Some(Some(t)) if t.body.trim().is_empty() => div().text_color(theme.tertiary).child("No description").into_any_element(),
-            Some(Some(t)) => markdown(&format!("pr-description-{seq}"), &t.body, theme),
+            Some(Some(t)) => self.text_card(&format!("pr-description-{seq}"), None, None, None, &t.body, theme, cx),
         });
         let comments = text.filter(|t| !t.comments.is_empty()).map(|t| {
             let count = t.comment_count.unwrap_or(t.comments.len());
             div().flex().flex_col().gap_3().child(heading("Comments", Some(count))).children(t.comments.iter().enumerate().map(|(i, comment)| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(div().font_weight(FontWeight::MEDIUM).child(comment.author.clone()))
-                            .when_some(comment.at, |d, at| d.child(quiet(relative_date(at, now)))),
-                    )
-                    .child(markdown(&format!("pr-comment-{seq}-{i}"), &comment.body, theme))
+                self.text_card(&format!("pr-comment-{seq}-{i}"), Some(&comment.author), comment.at, comment.url.clone(), &comment.body, theme, cx)
             }))
         });
 
@@ -7023,6 +6987,56 @@ impl Workspace {
         right = right.child(assignees).child(reviewers);
 
         div().flex().flex_col().child(header).child(div().flex().flex_row().items_start().child(left).child(right))
+    }
+
+    /// A description or comment in a box, as GitHub draws them: who and
+    /// when along the top (a link to it on GitHub when there is one), then
+    /// the text as GitHub shows it, callouts boxed and <details> folded.
+    #[allow(clippy::too_many_arguments)]
+    fn text_card(&self, id: &str, author: Option<&str>, at: Option<chrono::DateTime<chrono::Utc>>, url: Option<String>, body: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let text = crate::markdown::github(id, body, theme, &self.open_details, |this: &mut Self, key| {
+            if !this.open_details.remove(&key) {
+                this.open_details.insert(key);
+            }
+        }, cx);
+        div()
+            .flex()
+            .flex_col()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .overflow_hidden()
+            .when(author.is_some() || at.is_some(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_1p5()
+                        .bg(theme.tile)
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .text_sm()
+                        .when_some(author, |d, who| d.child(div().font_weight(FontWeight::MEDIUM).child(who.to_string())))
+                        .when_some(at, |d, at| d.child(div().text_color(theme.secondary).child(relative_date(at, chrono::Utc::now()))))
+                        .child(div().flex_1())
+                        .when_some(url, |d, url| {
+                            d.child(
+                                div()
+                                    .id(SharedString::from(format!("{id}-link")))
+                                    .text_xs()
+                                    .text_color(theme.selected)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                                    .child("Open on GitHub"),
+                            )
+                        }),
+                )
+            })
+            .child(div().p_3().child(text))
+            .into_any_element()
     }
 
     /// A harness document: its title, status, date and path; what it's

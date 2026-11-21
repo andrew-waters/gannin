@@ -1,7 +1,7 @@
 //! Markdown for issue descriptions and comments, as `MarkdownText` draws it
 //! in the Swift app. GPUI has no renderer of its own (Zed's is GPL), so this
 //! walks pulldown-cmark's events into blocks: paragraphs, headings, lists,
-//! quotes, code, rules and tables as plain rows. Bold, italic, inline code
+//! quotes, code, rules and tables as a grid. Bold, italic, inline code
 //! and links are styled runs; links open in the browser. Images show as a
 //! link to the image, since there's no HTTP client to load them.
 
@@ -43,6 +43,10 @@ struct Renderer<'a> {
     quote: usize,
     code: Option<String>,
     counter: usize,
+    /// A table being read: its rows so far (whether the header, and each
+    /// cell drawn), and the row being read.
+    table: Option<Vec<(bool, Vec<AnyElement>)>>,
+    row: Vec<AnyElement>,
 }
 
 impl<'a> Renderer<'a> {
@@ -90,18 +94,7 @@ impl<'a> Renderer<'a> {
         if inline.text.trim().is_empty() {
             return;
         }
-        self.counter += 1;
-        let text = StyledText::new(inline.text.trim_end().to_string()).with_highlights(
-            inline.highlights.into_iter().filter(|(r, _)| r.end <= inline.text.trim_end().len()),
-        );
-        let body: AnyElement = if inline.links.is_empty() {
-            text.into_any_element()
-        } else {
-            let (ranges, urls): (Vec<_>, Vec<_>) = inline.links.into_iter().unzip();
-            InteractiveText::new(SharedString::from(format!("{}-{}", self.id, self.counter)), text)
-                .on_click(ranges, move |index, _, cx| cx.open_url(&urls[index]))
-                .into_any_element()
-        };
+        let body = self.styled(inline);
         let depth = self.lists.len().saturating_sub(1) as f32;
         let block = div()
             .when(self.quote > 0, |d| d.border_l_2().border_color(self.theme.border).pl_2().text_color(self.theme.secondary))
@@ -120,6 +113,36 @@ impl<'a> Renderer<'a> {
                 BlockKind::Paragraph => d.child(body),
             });
         self.blocks.push(block.into_any_element());
+    }
+
+    /// A block's text with its styled runs, its links clickable.
+    fn styled(&mut self, inline: Inline) -> AnyElement {
+        self.counter += 1;
+        let text = StyledText::new(inline.text.trim_end().to_string()).with_highlights(
+            inline.highlights.into_iter().filter(|(r, _)| r.end <= inline.text.trim_end().len()),
+        );
+        if inline.links.is_empty() {
+            text.into_any_element()
+        } else {
+            let (ranges, urls): (Vec<_>, Vec<_>) = inline.links.into_iter().unzip();
+            InteractiveText::new(SharedString::from(format!("{}-{}", self.id, self.counter)), text)
+                .on_click(ranges, move |index, _, cx| cx.open_url(&urls[index]))
+                .into_any_element()
+        }
+    }
+
+    /// A table read: a grid with lines between, its header row bold on a tint.
+    fn draw_table(&mut self, rows: Vec<(bool, Vec<AnyElement>)>) {
+        let theme = self.theme;
+        let grid = div().flex().flex_col().rounded_md().border_1().border_color(theme.border).overflow_hidden().text_xs().children(rows.into_iter().enumerate().map(|(r, (head, cells))| {
+            div()
+                .flex()
+                .flex_row()
+                .when(r > 0, |d| d.border_t_1().border_color(theme.border))
+                .when(head, |d| d.bg(theme.tile).font_weight(FontWeight::SEMIBOLD))
+                .children(cells.into_iter().enumerate().map(|(c, cell)| div().flex_1().min_w_0().px_2().py_1().when(c > 0, |d| d.border_l_1().border_color(theme.border)).child(cell)))
+        }));
+        self.blocks.push(grid.into_any_element());
     }
 
     fn event(&mut self, event: Event) {
@@ -164,13 +187,12 @@ impl<'a> Renderer<'a> {
                     self.link = Some(dest_url.to_string());
                     self.push("[image: ", false);
                 }
-                Tag::TableHead | Tag::TableRow => self.begin(BlockKind::TableRow),
-                Tag::TableCell => {
-                    let started = matches!(&self.current, Some((inline, _)) if !inline.text.is_empty());
-                    if started {
-                        self.push("  |  ", false);
-                    }
+                Tag::Table(_) => {
+                    self.flush();
+                    self.table = Some(Vec::new());
                 }
+                Tag::TableHead | Tag::TableRow => self.row.clear(),
+                Tag::TableCell => self.current = Some((Inline::default(), BlockKind::TableRow)),
                 _ => {}
             },
             Event::End(tag) => match tag {
@@ -179,7 +201,23 @@ impl<'a> Renderer<'a> {
                         self.flush();
                     }
                 }
-                TagEnd::Heading(_) | TagEnd::Item | TagEnd::TableHead | TagEnd::TableRow => self.flush(),
+                TagEnd::Heading(_) | TagEnd::Item => self.flush(),
+                TagEnd::TableCell => {
+                    let inline = self.current.take().map(|(inline, _)| inline).unwrap_or_default();
+                    let cell = self.styled(inline);
+                    self.row.push(cell);
+                }
+                TagEnd::TableHead | TagEnd::TableRow => {
+                    let row = std::mem::take(&mut self.row);
+                    if let Some(table) = self.table.as_mut() {
+                        table.push((matches!(tag, TagEnd::TableHead), row));
+                    }
+                }
+                TagEnd::Table => {
+                    if let Some(rows) = self.table.take() {
+                        self.draw_table(rows);
+                    }
+                }
                 TagEnd::BlockQuote(_) => {
                     self.flush();
                     self.quote = self.quote.saturating_sub(1);
@@ -267,6 +305,8 @@ pub fn markdown(id: &str, source: &str, theme: &Theme) -> AnyElement {
         quote: 0,
         code: None,
         counter: 0,
+        table: None,
+        row: Vec::new(),
     };
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     for event in Parser::new_ext(source, options) {
@@ -354,4 +394,73 @@ pub fn github_segments(source: &str) -> Vec<Segment> {
     }
     flush(&mut text, &mut out);
     out
+}
+
+/// GitHub-flavoured text as GitHub shows it, for any view: plain Markdown,
+/// callouts as tinted boxes with their kind, folded sections closed until
+/// their summary is clicked. `open` holds the folded sections opened, by
+/// key (from `id`); `toggle` opens or closes one on the view.
+pub fn github<V: 'static>(id: &str, source: &str, theme: &Theme, open: &std::collections::HashSet<String>, toggle: fn(&mut V, String), cx: &mut gpui::Context<V>) -> AnyElement {
+    div().flex().flex_col().gap_2().children(github_view(id, &github_segments(source), theme, open, toggle, cx)).into_any_element()
+}
+
+/// `github`'s pieces, from segments already split.
+pub fn github_view<V: 'static>(id: &str, segments: &[Segment], theme: &Theme, open: &std::collections::HashSet<String>, toggle: fn(&mut V, String), cx: &mut gpui::Context<V>) -> Vec<AnyElement> {
+    segments
+        .iter()
+        .enumerate()
+        .map(|(i, segment)| {
+            let key = format!("{id}-{i}");
+            match segment {
+                Segment::Text(text) => markdown(&key, text, theme),
+                Segment::Callout { kind, body } => {
+                    let (label, tint) = match kind.as_str() {
+                        "TIP" => ("Tip", theme.good()),
+                        "IMPORTANT" => ("Important", theme.slot(5)),
+                        "WARNING" => ("Warning", theme.orange()),
+                        "CAUTION" => ("Caution", theme.critical()),
+                        _ => ("Note", theme.blue()),
+                    };
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .pl_3()
+                        .py_1()
+                        .border_l_2()
+                        .border_color(tint)
+                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(label))
+                        .children(github_view(&key, body, theme, open, toggle, cx))
+                        .into_any_element()
+                }
+                Segment::Details { summary, body } => {
+                    let shown = open.contains(&key);
+                    let flip = key.clone();
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("details-{key}")))
+                                .flex()
+                                .flex_row()
+                                .gap_1p5()
+                                .text_sm()
+                                .text_color(theme.secondary)
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(theme.fg))
+                                .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                                    toggle(this, flip.clone());
+                                    cx.notify();
+                                }))
+                                .child(div().flex_none().w(px(10.)).child(if shown { "▾" } else { "▸" }))
+                                .child(summary.clone()),
+                        )
+                        .when(shown, |d| d.child(div().pl_4().flex().flex_col().gap_2().children(github_view(&key, body, theme, open, toggle, cx))))
+                        .into_any_element()
+                }
+            }
+        })
+        .collect()
 }
