@@ -1857,19 +1857,23 @@ fn compare(a: &PrItem, b: &PrItem, (column, descending): &(Column, bool), me: Op
 /// Checks as an icon from Zed's set (Lucide), as `ChecksBadge`: a tick in
 /// a green circle, a cross in a red one, and an orange arc that turns while
 /// they run.
+/// A white tick in a filled circle: passing checks, an approved review.
+pub fn tick_badge(color: Hsla) -> gpui::Div {
+    div()
+        .size(px(16.))
+        .flex_none()
+        .rounded_full()
+        .bg(color)
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(gpui::svg().path("icons/check.svg").size(px(13.)).text_color(gpui::white()))
+}
+
 pub fn checks_badge(checks: Checks, theme: &Theme) -> gpui::AnyElement {
     let color = checks.color(theme);
     match checks {
-        Checks::Passing => div()
-            .size(px(16.))
-            .flex_none()
-            .rounded_full()
-            .bg(color)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(gpui::svg().path("icons/check.svg").size(px(13.)).text_color(gpui::white()))
-            .into_any_element(),
+        Checks::Passing => tick_badge(color).into_any_element(),
         Checks::Failing => gpui::svg().path("icons/x_circle_filled.svg").size(px(17.)).flex_none().text_color(color).into_any_element(),
         Checks::Running => gpui::svg()
             .path("icons/load_circle.svg")

@@ -84,6 +84,9 @@ pub struct SessionPage {
     planning: Option<Entity<crate::planning_panel::PlanningPanel>>,
     show: Show,
     pub state: State,
+    /// A review session whose posted review approved the PR: its tab shows
+    /// a tick. Kept here so the tab redraws only when it changes.
+    pub approved: bool,
     /// When the state last changed, for "waiting since".
     pub since: chrono::DateTime<chrono::Local>,
     /// When the tab opened: a plain session's state file from before then
@@ -320,6 +323,13 @@ impl SessionPage {
             subscriptions.push(cx.subscribe(work, |_, _, event: &crate::pull_page::OpenPull, cx| cx.emit(crate::pull_page::OpenPull(event.0.clone()))));
         }
         if let Some(review) = &review {
+            subscriptions.push(cx.observe(review, |this: &mut Self, review, cx| {
+                let approved = review.read(cx).approved();
+                if this.approved != approved {
+                    this.approved = approved;
+                    cx.emit(Changed);
+                }
+            }));
             // Explain starts a session of its own, so the workspace hears of it.
             subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone(), event.1.clone()))));
             subscriptions.push(cx.subscribe(review, |_, _, event: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(event.0.clone()))));
@@ -340,6 +350,7 @@ impl SessionPage {
             terminal::Event::CloseTerminal => this.set_state(State::Ended, cx),
             _ => {}
         }));
+        let approved = review.as_ref().is_some_and(|r| r.read(cx).approved());
         // Once a second: has the output gone quiet, and is it asking?
         let tick = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -363,6 +374,7 @@ impl SessionPage {
             // switch away, as in Gannin. Other sessions show both.
             show,
             state: State::Working,
+            approved,
             since: chrono::Local::now(),
             opened: std::time::SystemTime::now(),
             server,

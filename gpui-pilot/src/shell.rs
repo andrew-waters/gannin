@@ -5655,6 +5655,7 @@ impl Workspace {
                 let active = index == self.active;
                 let label = self.tab_name(tab, cx);
                 let elsewhere = self.runs_elsewhere(tab, cx);
+                let approved = matches!(tab.nav, Nav::Session(session) if self.session(session, cx).is_some_and(|p| p.read(cx).approved));
                 let landing = theme.row_selected;
                 div()
                     .id(("tab", index))
@@ -5778,6 +5779,8 @@ impl Workspace {
                     }, |d, count| {
                         d.child(div().text_xs().text_color(theme.secondary).child(count))
                     })
+                    // A review you've approved on GitHub.
+                    .when(approved, |d| d.child(crate::prs::tick_badge(theme.good())))
                     .child(
                         div()
                             .id(("close-tab", index))
