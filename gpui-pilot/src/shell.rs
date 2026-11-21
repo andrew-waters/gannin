@@ -18,7 +18,7 @@ use std::sync::Arc;
 use crate::metrics::RepoStats;
 use crate::page::{ActionsPage, OpenRepo};
 use crate::session::{self, Changed, Kind, SessionPage, State};
-use crate::prs::{OpenPr, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs, ShowReview};
+use crate::prs::{OpenPr, OpenPrs, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs, ShowReview};
 use crate::state::{remove_slot, CiSaved, SavedState, SavedTab};
 use crate::work::{self, Pr, Work};
 use gpui::{
@@ -1103,6 +1103,13 @@ impl Workspace {
                     this.push_pr_drawer(event.0.clone(), cx);
                 }),
                 cx.subscribe_in(page, window, |this, _, event: &ReviewPrs, window, cx| this.review_many(event.0.clone(), window, cx)),
+                // Each in its page (its review's tab when it has one), in the
+                // order picked; the last one shows.
+                cx.subscribe_in(page, window, |this, _, event: &OpenPrs, window, cx| {
+                    for pr in event.0.clone() {
+                        this.open_pull_page(pr, window, cx);
+                    }
+                }),
                 cx.subscribe_in(page, window, |this, _, event: &ShowReview, window, cx| {
                     this.show_session(&event.0.id, crate::launch::Flow::Review, window, cx);
                 }),

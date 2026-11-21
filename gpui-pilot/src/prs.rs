@@ -836,6 +836,11 @@ pub struct ReviewPrs(pub Vec<PrItem>);
 
 impl EventEmitter<ReviewPrs> for PrsPage {}
 
+/// Open each of these in its page, picked together in the table.
+pub struct OpenPrs(pub Vec<PrItem>);
+
+impl EventEmitter<OpenPrs> for PrsPage {}
+
 /// Show the review session open for this PR.
 pub struct ShowReview(pub PrItem);
 
@@ -1920,8 +1925,9 @@ impl PrsPage {
         self.picked.iter().filter_map(|id| self.prs.iter().find(|p| &p.id == id).cloned()).collect()
     }
 
-    /// Along the foot while rows are picked: how many, and Review with
-    /// Claude for the open ones.
+    /// Along the foot while rows are picked: how many and Clear on the
+    /// left; Open (each in its page) and Review with Claude for the open
+    /// ones on the right.
     fn picked_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let picked = self.picked_prs();
         let open: Vec<PrItem> = picked.iter().filter(|p| p.state == PrState::Open).cloned().collect();
@@ -1947,13 +1953,21 @@ impl PrsPage {
             .border_t_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(div().flex_1().min_w_0().text_sm().child(format!("{} selected", picked.len())).when(open.len() < picked.len(), |d| {
-                d.child(div().text_xs().text_color(theme.secondary).child("Only open pull requests can be reviewed."))
-            }))
-            .child(button("picked-clear", "Clear".into(), false).on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
+            .child(div().flex_none().text_sm().child(format!("{} selected", picked.len())))
+            .child(button("picked-clear", "Clear".into(), false).text_sm().on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
                 page.picked.clear();
                 cx.notify();
             })))
+            .child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.secondary).when(open.len() < picked.len(), |d| d.child("Only open pull requests can be reviewed.")))
+            .child({
+                let count = picked.len();
+                let opened = picked.clone();
+                button("picked-open", if count == 1 { "Open PR".into() } else { format!("Open {count} PRs") }, false).on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                    cx.emit(OpenPrs(opened.clone()));
+                    page.picked.clear();
+                    cx.notify();
+                }))
+            })
             .when(!open.is_empty(), |d| {
                 let count = open.len();
                 d.child(
