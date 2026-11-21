@@ -86,6 +86,9 @@ pub struct SessionPage {
     pub state: State,
     /// When the state last changed, for "waiting since".
     pub since: chrono::DateTime<chrono::Local>,
+    /// When the tab opened: a plain session's state file from before then
+    /// is the last run's (its "exited" at quit), not this one's.
+    opened: std::time::SystemTime,
     /// The server a plain session runs on, its folder being a path there:
     /// no Changes, as the folder isn't on this Mac.
     server: Option<crate::servers::Server>,
@@ -359,6 +362,7 @@ impl SessionPage {
             show,
             state: State::Working,
             since: chrono::Local::now(),
+            opened: std::time::SystemTime::now(),
             server,
             moving: None,
             last_output: Instant::now(),
@@ -475,6 +479,12 @@ impl SessionPage {
         }
         let id = self.claude_id.as_deref()?;
         let path = crate::paths::app_dir().join("plain").join(format!("{id}.state"));
+        // Left by the run before a relaunch: read it as this one's and the
+        // resumed tab would show as ended, and stay so.
+        let written = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+        if written < self.opened {
+            return None;
+        }
         std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
     }
 
