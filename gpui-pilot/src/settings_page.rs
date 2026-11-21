@@ -199,6 +199,13 @@ impl SettingsPage {
         self.project().is_some_and(|p| p.name != self.typed_name(cx) || p.repos != self.repos)
     }
 
+    /// Opens Add Project's picker, from the project switcher.
+    pub fn start_adding_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.picking != Some(Picking::Project) {
+            self.open_picker(Picking::Project, window, cx);
+        }
+    }
+
     fn open_picker(&mut self, picking: Picking, window: &mut Window, cx: &mut Context<Self>) {
         self.picking = if self.picking == Some(picking) { None } else { Some(picking) };
         self.search.update(cx, |editor, cx| editor.set_text("", window, cx));

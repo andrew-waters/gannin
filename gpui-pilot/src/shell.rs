@@ -229,7 +229,6 @@ fn sections() -> Vec<Section> {
         // },
         // Claude Code's agents: the workflows sessions run through.
         Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview)] },
-        Section { id: "settings", title: None, rows: vec![Item(Settings)] },
     ]
 }
 
@@ -4981,45 +4980,30 @@ impl Workspace {
                 this.sidebar_open = !this.sidebar_open
             }))
             .child(toggle("toggle-harness", "icons/book.svg", "Harness  ⌘2", self.harness_open, cx, |this, cx| this.toggle_harness(cx)))
-            // Where the tabs go: down a column on the left, or across the
-            // top. A choice of layout, so both are shown, the one in use lit.
+            // Where the tabs go: down a column on the left, or across the top.
             .child(self.tabs_layout(theme, cx))
             .child(div().flex_1())
             .when(self.viewer.is_some(), |d| d.child(self.sync_button(theme, cx)))
 
     }
 
-    /// The tab layout as a pair of buttons, the one in use selected.
+    /// The tab layout as one button: its icon is the layout in use, and a
+    /// click switches to the other.
     fn tabs_layout(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let option = |id: &'static str, icon: &'static str, tip: &'static str, left: bool, cx: &mut Context<Self>| {
-            let on = self.tabs_on_left == left;
-            div()
-                .id(id)
-                .px_1()
-                .py_0p5()
-                .rounded_sm()
-                .cursor_pointer()
-                .when(on, |d| d.bg(theme.row_selected))
-                .hover(|s| s.bg(theme.row_selected))
-                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.to_string())).into())
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.tabs_on_left = left;
-                    cx.notify();
-                }))
-                .child(gpui::svg().path(icon).size(px(14.)).text_color(if on { theme.fg } else { theme.tertiary }))
-        };
+        let (icon, tip) = if self.tabs_on_left { (crate::icons::TABS_LEFT, "Tabs down the left; click for across the top  ⌘3") } else { (crate::icons::TABS_TOP, "Tabs across the top; click for down the left  ⌘3") };
         div()
-            .ml_1()
-            .p_0p5()
-            .flex()
-            .flex_row()
-            .gap_0p5()
+            .id("tabs-layout")
+            .p_1()
             .rounded_md()
-            .border_1()
-            .border_color(theme.border)
-            .child(option("tabs-left", crate::icons::TABS_LEFT, "Tabs down the left  ⌘3", true, cx))
-            .child(option("tabs-top", crate::icons::TABS_TOP, "Tabs across the top  ⌘3", false, cx))
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.row_selected))
+            .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.to_string())).into())
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.tabs_on_left = !this.tabs_on_left;
+                cx.notify();
+            }))
+            .child(gpui::svg().path(icon).size(px(16.)).text_color(theme.secondary))
     }
 
     // MARK: Sidebar
@@ -5096,6 +5080,8 @@ impl Workspace {
             .border_r_1()
             .border_color(theme.border)
             .child(div().id("nav").flex_1().min_h_0().overflow_y_scroll().px_2().pb_3().children(rows))
+            // Settings at the very foot, below the sections, as it scrolls.
+            .child(div().flex_none().px_2().py_1().border_t_1().border_color(theme.border).child(self.nav_row(Nav::Settings, 0, None, current, theme, cx)))
             .child(self.resize_handle("resize-sidebar", Edge::Sidebar, cx))
     }
 
@@ -7224,6 +7210,29 @@ impl Workspace {
                 .child(label)
                 .when(!keys.is_empty(), |d| d.child(div().text_xs().text_color(theme.tertiary).child(keys)))
         };
+        // The project picker's: its projects are managed in Settings.
+        let project_footer = (pick == Pick::Project).then(|| {
+            div()
+                .px_2()
+                .py_1()
+                .flex()
+                .flex_row()
+                .justify_end()
+                .gap_1()
+                .border_t_1()
+                .border_color(theme.border)
+                .child(footer_button("switcher-add-project", "Add Project", "").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.switcher = None;
+                    this.navigate(Nav::Settings, false, window, cx);
+                    if let Page::Settings(page) = this.current_page() {
+                        page.update(cx, |page, cx| page.start_adding_project(window, cx));
+                    }
+                })))
+                .child(footer_button("switcher-manage-projects", "Manage Projects", "⌘,").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.switcher = None;
+                    this.navigate(Nav::Settings, false, window, cx);
+                })))
+        });
         let footer = (pick == Pick::Folder && typing_path.is_none()).then(|| {
             div()
                 .px_2()
@@ -7349,6 +7358,7 @@ impl Workspace {
                     .when(matches.is_empty() && typing_path.is_none(), |d| d.child(div().px_3().py_2().text_color(theme.secondary).child(none))),
             )
             .children(footer)
+            .children(project_footer)
     }
 }
 
