@@ -4947,11 +4947,8 @@ impl Workspace {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.navigate(nav, event.modifiers().platform, window, cx)
             }))
-            // A harness kind has its icon; the rest keep a dot for now.
-            .child(div().w(px(16.)).flex().justify_center().child(match nav {
-                Nav::Harness(kind) => gpui::svg().path(kind.icon()).size(px(14.)).text_color(if selected { theme.fg } else { theme.secondary }).into_any_element(),
-                _ => div().w(px(6.)).h(px(6.)).rounded_full().bg(theme.tertiary).into_any_element(),
-            }))
+            // Each page's icon, the one its tab shows.
+            .child(div().w(px(16.)).flex().justify_center().child(gpui::svg().path(nav_icon(nav)).size(px(14.)).text_color(if selected { theme.fg } else { theme.secondary })))
             .child(div().flex_1().overflow_hidden().whitespace_nowrap().child(nav.title()))
             .when_some(
                 match nav {
@@ -5076,7 +5073,7 @@ impl Workspace {
             .border_b_1()
             .border_color(theme.border)
             .child(self.tab_filter_menu(theme, cx))
-            .child(self.tab_search_box(theme, cx))
+            .child(self.tab_search_box(false, theme, cx))
             .child(self.tabs(false, theme, cx))
             .child(self.pause_controls(false, theme, cx))
             .child(self.new_menu(theme, cx))
@@ -5374,7 +5371,7 @@ impl Workspace {
                     .border_b_1()
                     .border_color(theme.border)
                     .child(self.tab_filter_menu(theme, cx))
-                    .child(div().flex_1().min_w_0().h_full().child(self.tab_search_box(theme, cx)))
+                    .child(div().flex_1().min_w_0().h_full().child(self.tab_search_box(true, theme, cx)))
                     .child(self.new_menu(theme, cx)),
             )
             .child(self.tabs(true, theme, cx))
@@ -5745,12 +5742,13 @@ impl Workspace {
         self.tab_filter.is_none_or(|k| self.tab_kind(tab, cx) == k) && self.tab_status.is_none_or(|s| self.tab_status_of(tab, cx) == s) && self.tab_matches_search(tab, cx)
     }
 
-    /// The tab bar's search, after its filter menu.
-    fn tab_search_box(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The tab bar's search, after its filter menu; `fill` (the tab column)
+    /// takes the rest of the row.
+    fn tab_search_box(&self, fill: bool, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let searching = !self.tab_query(cx).is_empty();
         let found = searching.then(|| self.tabs.iter().filter(|t| self.tab_shows(t, cx)).count());
         div()
-            .flex_none()
+            .map(|d| if fill { d.w_full() } else { d.flex_none() })
             .h_full()
             .flex()
             .flex_row()
@@ -5761,7 +5759,7 @@ impl Workspace {
             .border_color(theme.border)
             .child(
                 div()
-                    .w(px(if searching { 120. } else { 84. }))
+                    .map(|d| if fill { d.flex_1().min_w_0() } else { d.w(px(if searching { 240. } else { 168. })) })
                     .px_1p5()
                     .py_0p5()
                     .rounded_md()
@@ -5840,23 +5838,12 @@ impl Workspace {
     /// A tab's own icon: its page's, or its session's kind.
     fn tab_icon(&self, tab: &Tab, cx: &App) -> &'static str {
         match tab.nav {
-            Nav::PullRequests | Nav::Pull(_) => "icons/pull_request.svg",
-            Nav::Issues => crate::icons::ISSUE,
-            Nav::Scorecards => "icons/table.svg",
-            Nav::Ci => "icons/play_outlined.svg",
-            Nav::Activity => "icons/git_graph.svg",
-            Nav::Harness(kind) => kind.icon(),
-            Nav::ReviewPreview => "icons/eye.svg",
-            Nav::SchedulePreview => "icons/clock.svg",
-            Nav::WorkflowsPreview => "icons/git_graph.svg",
-            Nav::Settings => "icons/settings.svg",
-            Nav::AgentMetrics => "icons/sparkle.svg",
             Nav::Session(id) => match self.session(id, cx).map(|p| p.read(cx)) {
                 Some(page) if page.launch.is_some() => self.tab_kind(tab, cx).icon(),
                 Some(page) if page.kind == Kind::Shell => "icons/terminal.svg",
                 _ => "icons/sparkle.svg",
             },
-            _ => "icons/file.svg",
+            nav => nav_icon(nav),
         }
     }
 
@@ -7355,6 +7342,25 @@ fn work_brief(issue: &IssueItem, text: Option<&IssueText>, parent: Option<&Issue
     out
 }
 
+/// A page's icon, on its tab and its row in the navigation.
+fn nav_icon(nav: Nav) -> &'static str {
+    match nav {
+        Nav::PullRequests | Nav::Pull(_) => "icons/pull_request.svg",
+        Nav::Issues => crate::icons::ISSUE,
+        Nav::Scorecards => "icons/table.svg",
+        Nav::Ci => "icons/play_outlined.svg",
+        Nav::Activity => "icons/git_graph.svg",
+        Nav::Harness(kind) => kind.icon(),
+        Nav::ReviewPreview => "icons/eye.svg",
+        Nav::SchedulePreview => "icons/clock.svg",
+        Nav::WorkflowsPreview => "icons/git_graph.svg",
+        Nav::Settings => "icons/settings.svg",
+        Nav::AgentMetrics => "icons/sparkle.svg",
+        Nav::Session(_) => "icons/sparkle.svg",
+        _ => "icons/file.svg",
+    }
+}
+
 /// A session's state as a colour, as `SessionState.color`.
 fn state_tint(state: State, theme: &Theme) -> gpui::Hsla {
     match state {
@@ -7375,6 +7381,12 @@ impl Render for Workspace {
             gpui::WindowBounds::Fullscreen(_) => self.window_place,
         };
         self.persist(cx);
+        // A closed tab takes its focus with it, and with nothing focused the
+        // window's shortcuts (another ⌘W) go nowhere: the tab now showing
+        // takes it.
+        if window.focused(cx).is_none() && self.switcher.is_none() {
+            self.focus_current(window, cx);
+        }
         // A promised file or picture dropped on the window goes to New
         // Issue while it shows.
         crate::promise_drop::set_accepting(self.new_issue_showing().is_some());

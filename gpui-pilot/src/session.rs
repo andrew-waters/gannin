@@ -415,7 +415,10 @@ impl SessionPage {
             return launch.title.clone();
         }
         let terminal = self.terminal.read(cx);
-        let title = terminal.breadcrumb_text.trim();
+        // Claude Code starts its terminal title with a spinner while it
+        // works (✳, ◐◓◑◒, braille dots): left on, it animates in the tab.
+        // The tab's icon already says whether it's working.
+        let title = terminal.breadcrumb_text.trim_start_matches(|c: char| !(c.is_alphanumeric() || "#([{\"'@~/.<".contains(c))).trim();
         if !title.is_empty() {
             return title.to_string();
         }
