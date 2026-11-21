@@ -2003,6 +2003,25 @@ impl WorkPanel {
             })
     }
 
+    /// How far the work's PRs have got, for its tab: changes requested on
+    /// any open one first, then merged once every one is (closed ones
+    /// aside), approved once every one still open is approved and none is
+    /// a draft.
+    pub fn outcome(&self) -> Option<crate::session::Outcome> {
+        let prs: Vec<&WorkPr> = self.data.prs.iter().filter(|p| p.state != PrState::Closed).collect();
+        if prs.is_empty() {
+            None
+        } else if prs.iter().any(|p| p.state == PrState::Open && p.review.as_deref() == Some("CHANGES_REQUESTED")) {
+            Some(crate::session::Outcome::ChangesRequested)
+        } else if prs.iter().all(|p| p.state == PrState::Merged) {
+            Some(crate::session::Outcome::Merged)
+        } else if prs.iter().all(|p| p.state == PrState::Merged || (p.state == PrState::Open && p.review.as_deref() == Some("APPROVED"))) {
+            Some(crate::session::Outcome::Approved)
+        } else {
+            None
+        }
+    }
+
     /// One PR's line, and under it (open) what needs acting on.
     fn pr_line(&self, pr: &WorkPr, running: bool, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let number = pr.number;

@@ -52,6 +52,19 @@ impl State {
     }
 }
 
+/// How far a session's pull requests have got, shown on its tab.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Outcome {
+    /// A review you posted approved the PR, or every open PR of a piece of
+    /// work is approved.
+    Approved,
+    /// Every PR of a piece of work is merged.
+    Merged,
+    /// A review you posted asked for changes, or one of the work's open PRs
+    /// has changes requested. Wins over approved.
+    ChangesRequested,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Show {
     Both,
@@ -84,9 +97,9 @@ pub struct SessionPage {
     planning: Option<Entity<crate::planning_panel::PlanningPanel>>,
     show: Show,
     pub state: State,
-    /// A review session whose posted review approved the PR: its tab shows
-    /// a tick. Kept here so the tab redraws only when it changes.
-    pub approved: bool,
+    /// Where a review or a piece of work has got (approved, merged), for
+    /// its tab's badge. Kept here so the tab redraws only when it changes.
+    pub outcome: Option<Outcome>,
     /// When the state last changed, for "waiting since".
     pub since: chrono::DateTime<chrono::Local>,
     /// When the tab opened: a plain session's state file from before then
@@ -309,6 +322,10 @@ impl SessionPage {
         let show = if review.is_some() || planning.is_some() { Show::Changes } else { Show::Terminal };
         let mut subscriptions = Vec::new();
         if let Some(work) = &work {
+            subscriptions.push(cx.observe(work, |this: &mut Self, work, cx| {
+                let outcome = work.read(cx).outcome();
+                this.set_outcome(outcome, cx);
+            }));
             // Resume, Finish, Forget and Move to Server act on the tab, so the workspace hears of them.
             subscriptions.push(cx.subscribe(work, |_, _, event: &crate::work_panel::WorkEvent, cx| {
                 cx.emit(match event {
@@ -324,11 +341,8 @@ impl SessionPage {
         }
         if let Some(review) = &review {
             subscriptions.push(cx.observe(review, |this: &mut Self, review, cx| {
-                let approved = review.read(cx).approved();
-                if this.approved != approved {
-                    this.approved = approved;
-                    cx.emit(Changed);
-                }
+                let outcome = review.read(cx).outcome();
+                this.set_outcome(outcome, cx);
             }));
             // Explain starts a session of its own, so the workspace hears of it.
             subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone(), event.1.clone()))));
@@ -350,7 +364,11 @@ impl SessionPage {
             terminal::Event::CloseTerminal => this.set_state(State::Ended, cx),
             _ => {}
         }));
-        let approved = review.as_ref().is_some_and(|r| r.read(cx).approved());
+        let outcome = match (&review, &work) {
+            (Some(review), _) => review.read(cx).outcome(),
+            (_, Some(work)) => work.read(cx).outcome(),
+            _ => None,
+        };
         // Once a second: has the output gone quiet, and is it asking?
         let tick = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -374,7 +392,7 @@ impl SessionPage {
             // switch away, as in Gannin. Other sessions show both.
             show,
             state: State::Working,
-            approved,
+            outcome,
             since: chrono::Local::now(),
             opened: std::time::SystemTime::now(),
             server,
@@ -382,6 +400,13 @@ impl SessionPage {
             last_output: Instant::now(),
             _subscriptions: subscriptions,
             _tick: tick,
+        }
+    }
+
+    fn set_outcome(&mut self, outcome: Option<Outcome>, cx: &mut Context<Self>) {
+        if self.outcome != outcome {
+            self.outcome = outcome;
+            cx.emit(Changed);
         }
     }
 

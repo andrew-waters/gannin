@@ -828,9 +828,14 @@ impl ReviewPanel {
         self.posted = Some(posted);
     }
 
-    /// Whether the review you posted on the PR approved it.
-    pub fn approved(&self) -> bool {
-        self.posted.as_ref().is_some_and(|p| matches!(p.event.as_str(), "APPROVE" | "APPROVED"))
+    /// What the review you posted on the PR said, for the tab: approved
+    /// or changes requested (a comment says neither).
+    pub fn outcome(&self) -> Option<crate::session::Outcome> {
+        match self.posted.as_ref()?.event.as_str() {
+            "APPROVE" | "APPROVED" => Some(crate::session::Outcome::Approved),
+            "REQUEST_CHANGES" | "CHANGES_REQUESTED" => Some(crate::session::Outcome::ChangesRequested),
+            _ => None,
+        }
     }
 
     /// The posted review, if it's for the latest result: a newer result

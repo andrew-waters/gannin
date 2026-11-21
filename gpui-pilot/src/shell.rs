@@ -5689,7 +5689,10 @@ impl Workspace {
                 let active = index == self.active;
                 let label = self.tab_name(tab, cx);
                 let elsewhere = self.runs_elsewhere(tab, cx);
-                let approved = matches!(tab.nav, Nav::Session(session) if self.session(session, cx).is_some_and(|p| p.read(cx).approved));
+                let outcome = match tab.nav {
+                    Nav::Session(session) => self.session(session, cx).and_then(|p| p.read(cx).outcome),
+                    _ => None,
+                };
                 let landing = theme.row_selected;
                 div()
                     .id(("tab", index))
@@ -5801,8 +5804,16 @@ impl Workspace {
                     // A session that runs somewhere other than the window's
                     // folder (one started before it, or in another window)
                     // says where.
+                    // The icon alone; its place's name on hover.
                     .when_some(elsewhere, |d, (icon, place)| {
-                        d.child(div().flex_none().flex().flex_row().items_center().gap_1().text_xs().text_color(theme.tertiary).child(gpui::svg().path(icon).size(px(11.)).text_color(theme.tertiary)).child(place))
+                        let tip = format!("Runs on {place}");
+                        d.child(
+                            div()
+                                .id(("tab-place", index))
+                                .flex_none()
+                                .child(gpui::svg().path(icon).size(px(11.)).text_color(theme.tertiary))
+                                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into()),
+                        )
                     })
                     .when_some(match &page {
                         _ if self.renaming.as_ref().is_some_and(|(r, _)| *r == id) => None,
@@ -5813,8 +5824,15 @@ impl Workspace {
                     }, |d, count| {
                         d.child(div().text_xs().text_color(theme.secondary).child(count))
                     })
-                    // A review you've approved on GitHub.
-                    .when(approved, |d| d.child(crate::prs::tick_badge(theme.good())))
+                    // Approved (a review you posted, or every PR of the
+                    // work), every PR merged, or changes requested.
+                    .when_some(outcome, |d, outcome| {
+                        d.child(match outcome {
+                            crate::session::Outcome::Approved => crate::prs::tick_badge_sized(theme.good(), 11.),
+                            crate::session::Outcome::Merged => crate::prs::icon_badge(crate::icons::MERGE, theme.slot(6), 11.),
+                            crate::session::Outcome::ChangesRequested => crate::prs::icon_badge("icons/close.svg", theme.critical(), 11.),
+                        })
+                    })
                     .child(
                         div()
                             .id(("close-tab", index))

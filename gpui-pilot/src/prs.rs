@@ -1859,15 +1859,25 @@ fn compare(a: &PrItem, b: &PrItem, (column, descending): &(Column, bool), me: Op
 /// they run.
 /// A white tick in a filled circle: passing checks, an approved review.
 pub fn tick_badge(color: Hsla) -> gpui::Div {
+    tick_badge_sized(color, 16.)
+}
+
+/// `tick_badge` at another diameter, the tick in proportion.
+pub fn tick_badge_sized(color: Hsla, size: f32) -> gpui::Div {
+    icon_badge("icons/check.svg", color, size)
+}
+
+/// A white icon in a filled circle `size` across.
+pub fn icon_badge(icon: &'static str, color: Hsla, size: f32) -> gpui::Div {
     div()
-        .size(px(16.))
+        .size(px(size))
         .flex_none()
         .rounded_full()
         .bg(color)
         .flex()
         .items_center()
         .justify_center()
-        .child(gpui::svg().path("icons/check.svg").size(px(13.)).text_color(gpui::white()))
+        .child(gpui::svg().path(icon).size(px(size * 0.8)).text_color(gpui::white()))
 }
 
 pub fn checks_badge(checks: Checks, theme: &Theme) -> gpui::AnyElement {
