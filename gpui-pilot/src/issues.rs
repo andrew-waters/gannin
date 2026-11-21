@@ -241,6 +241,50 @@ pub struct IssueItem {
 }
 
 impl IssueItem {
+    /// An issue the store doesn't have, from a link: enough for its drawer
+    /// to show at once, which then fetches it from GitHub by `id`. `open`
+    /// unknown shows it open.
+    pub fn stub(id: &str, repo: &str, number: i64, title: &str, url: &str, open: Option<bool>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: id.into(),
+            number,
+            title: title.into(),
+            url: url.into(),
+            repo: repo.into(),
+            repo_name: repo.rsplit('/').next().unwrap_or(repo).into(),
+            author: None,
+            author_login: None,
+            assignees: Vec::new(),
+            assignee_logins: Vec::new(),
+            assignee_avatars: Vec::new(),
+            author_avatar: None,
+            labels: Vec::new(),
+            label_colors: Vec::new(),
+            status_changes: Vec::new(),
+            linked_prs: Vec::new(),
+            mentioned_prs: Vec::new(),
+            assigned_at: Vec::new(),
+            reopened_at: Vec::new(),
+            sub_issues_added_at: Vec::new(),
+            created_at: now,
+            updated_at: None,
+            closed_at: (open == Some(false)).then_some(now),
+            not_planned: false,
+            sub_issues_done: 0,
+            sub_issues: 0,
+            issue_type: None,
+            milestone: None,
+            linked: 0,
+            parent_id: None,
+            boards: Vec::new(),
+            field_choices: Vec::new(),
+            statuses: Vec::new(),
+            has_history: false,
+            text: String::new(),
+        }
+    }
+
     pub fn is_open(&self) -> bool {
         self.closed_at.is_none()
     }

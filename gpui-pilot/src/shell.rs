@@ -566,6 +566,56 @@ pub struct Workspace {
     _subscriptions: Vec<Subscription>,
 }
 
+/// An issue or PR to open from a link (`Workspace::open_item`).
+#[derive(Clone)]
+pub struct ItemLink {
+    /// GitHub's node ID, when the link has it.
+    pub id: Option<String>,
+    pub repo: String,
+    pub number: i64,
+    pub title: String,
+    pub url: String,
+    /// Whether it's a PR; None when the link doesn't say.
+    pub pull: Option<bool>,
+    pub open: Option<bool>,
+}
+
+impl ItemLink {
+    /// From a GitHub URL (`github.com/owner/name/issues/12`, or `pull/12`), which
+    /// says the repo, number and kind; None for any other URL.
+    pub fn from_url(url: &str, id: Option<String>, title: &str) -> Option<Self> {
+        let path = url.split_once("github.com/")?.1;
+        let mut parts = path.split(['/', '#', '?']);
+        let (owner, name, kind, number) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?.parse().ok()?);
+        let pull = match kind {
+            "pull" => true,
+            "issues" => false,
+            _ => return None,
+        };
+        Some(Self { id: id.filter(|i| !i.is_empty()), repo: format!("{owner}/{name}"), number, title: title.into(), url: url.into(), pull: Some(pull), open: None })
+    }
+
+    /// An issue linked from a PR page.
+    pub fn linked(e: &crate::pull_page::OpenLinked) -> Self {
+        Self { id: Some(e.id.clone()).filter(|i| !i.is_empty()), repo: e.repo.clone(), number: e.number, title: e.title.clone(), url: e.url.clone(), pull: Some(false), open: Some(e.open) }
+    }
+
+    /// A PR, maybe only a stub: the cache's copy is used when it has one.
+    pub fn pull(pr: &PrItem) -> Self {
+        Self { id: Some(pr.id.clone()).filter(|i| !i.is_empty()), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone(), pull: Some(true), open: None }
+    }
+}
+
+/// An issue or PR's node ID, whether it's a PR, and its title, by its repo
+/// and number.
+fn lookup_item(token: &str, repo: &str, number: i64) -> Option<(String, bool, String)> {
+    let (owner, name) = repo.split_once('/')?;
+    let query = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issueOrPullRequest(number: $number) { __typename ... on Issue { id title } ... on PullRequest { id title } } } }";
+    let data = crate::github::graphql(token, query, serde_json::json!({ "owner": owner, "name": name, "number": number })).ok()?;
+    let node = &data["repository"]["issueOrPullRequest"];
+    Some((node["id"].as_str()?.to_string(), node["__typename"] == "PullRequest", node["title"].as_str().unwrap_or_default().to_string()))
+}
+
 impl Workspace {
     fn snapshot(&self, cx: &App) -> SavedState {
         SavedState {
@@ -1069,16 +1119,13 @@ impl Workspace {
                 }),
                 cx.observe(page, |this, _, cx| this.persist(cx)),
             ],
-            // An issue opens in a drawer when the store has it, else on
-            // GitHub; a PR on GitHub.
-            Page::Activity(page) => vec![cx.subscribe(page, |this, _, event: &crate::activity::OpenItem, cx| {
-                match event.issue_id.as_deref().and_then(|id| this.issues.read(cx).issue(id)) {
-                    Some(issue) => {
-                        this.drawers.clear();
-                        this.push_drawer(issue, cx);
-                    }
-                    None => cx.open_url(&event.url),
+            // An issue or PR opens in its drawer, from its URL.
+            Page::Activity(page) => vec![cx.subscribe(page, |this, _, event: &crate::activity::OpenItem, cx| match ItemLink::from_url(&event.url, event.issue_id.clone(), "") {
+                Some(link) => {
+                    this.drawers.clear();
+                    this.open_item(link, cx);
                 }
+                None => cx.open_url(&event.url),
             })],
             Page::SchedulePreview(page) => vec![cx.subscribe_in(page, window, |this, _, event: &crate::schedule_page::RunNow, window, cx| this.run_now(&event.0, window, cx))],
             Page::Harness(page) => vec![cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
@@ -1091,17 +1138,14 @@ impl Workspace {
                     crate::pull_page::PullAction::Review(pr) => this.review_pr(pr.clone(), window, cx),
                     crate::pull_page::PullAction::Explain(pr) => this.explain_pr(pr.clone(), window, cx),
                 }),
-                cx.subscribe(page, |this, _, event: &crate::pull_page::OpenLinked, cx| match this.issues.read(cx).issue(&event.id) {
-                    Some(issue) => {
-                        this.drawers.clear();
-                        this.push_drawer(issue, cx);
-                    }
-                    None => cx.open_url(&event.url),
+                cx.subscribe(page, |this, _, event: &crate::pull_page::OpenLinked, cx| {
+                    this.drawers.clear();
+                    this.open_item(ItemLink::linked(event), cx);
                 }),
                 // A related PR opens in its drawer; Open in Page is there.
                 cx.subscribe(page, |this, _, event: &crate::pull_page::OpenPull, cx| {
                     this.drawers.clear();
-                    this.push_pr_drawer(event.0.clone(), cx);
+                    this.open_item(ItemLink::pull(&event.0), cx);
                 }),
                 cx.subscribe_in(page, window, |this, _, event: &crate::issues::ShowSession, window, cx| this.show_session_tab(event.0, window, cx)),
                 cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
@@ -1112,16 +1156,13 @@ impl Workspace {
             ],
             // The merged PR and review sketch: Related opens as the PR page's does.
             Page::ReviewPreview(page) => vec![
-                cx.subscribe(page, |this, _, event: &crate::pull_page::OpenLinked, cx| match this.issues.read(cx).issue(&event.id) {
-                    Some(issue) => {
-                        this.drawers.clear();
-                        this.push_drawer(issue, cx);
-                    }
-                    None => cx.open_url(&event.url),
+                cx.subscribe(page, |this, _, event: &crate::pull_page::OpenLinked, cx| {
+                    this.drawers.clear();
+                    this.open_item(ItemLink::linked(event), cx);
                 }),
                 cx.subscribe(page, |this, _, event: &crate::pull_page::OpenPull, cx| {
                     this.drawers.clear();
-                    this.push_pr_drawer(event.0.clone(), cx);
+                    this.open_item(ItemLink::pull(&event.0), cx);
                 }),
                 cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
                     this.drawers.clear();
@@ -3728,6 +3769,62 @@ impl Workspace {
         self.open_drawer(DrawerItem::Issue(IssueDrawer { issue, parent, sub_issues }), id, cx);
     }
 
+    /// Opens an issue or PR from a link in its drawer, never on GitHub when
+    /// it can be helped: the stored issue or PR when there is one, else a
+    /// stub the drawer fills from GitHub. With no node ID, or not knowing
+    /// which it is, GitHub is asked first; only if that fails does it open
+    /// in the browser.
+    fn open_item(&mut self, link: ItemLink, cx: &mut Context<Self>) {
+        if link.pull != Some(true) {
+            let store = self.issues.read(cx);
+            let found = link.id.as_deref().and_then(|id| store.issue(id)).or_else(|| store.issue_by_number(&link.repo, link.number));
+            if let Some(issue) = found {
+                self.push_drawer(issue, cx);
+                return;
+            }
+        }
+        let org = self.org.clone();
+        cx.spawn(async move |this, cx| {
+            let (link, pr) = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut link = link;
+                    if link.id.is_none() || link.pull.is_none() {
+                        if let Some((id, pull, title)) = auth::token().and_then(|token| lookup_item(&token, &link.repo, link.number)) {
+                            link.id = Some(id);
+                            link.pull = Some(pull);
+                            if link.title.is_empty() {
+                                link.title = title;
+                            }
+                        }
+                    }
+                    // A PR from the cache, so its drawer has its state and checks.
+                    let pr = match (&org, link.pull) {
+                        (Some(org), Some(true)) => crate::prs::load(org)
+                            .ok()
+                            .and_then(|prs| prs.into_iter().find(|p| link.id.as_deref() == Some(p.id.as_str()) || (p.number == link.number && p.repo.eq_ignore_ascii_case(&link.repo)))),
+                        _ => None,
+                    };
+                    (link, pr)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let Some(id) = link.id.clone() else {
+                    cx.open_url(&link.url);
+                    return;
+                };
+                if link.pull == Some(true) {
+                    this.push_pr_drawer(pr.unwrap_or_else(|| PrItem::stub(&id, &link.repo, link.number, &link.title, &link.url)), cx);
+                } else {
+                    let found = this.issues.read(cx).issue(&id);
+                    this.push_drawer(found.unwrap_or_else(|| IssueItem::stub(&id, &link.repo, link.number, &link.title, &link.url, link.open)), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn push_pr_drawer(&mut self, pr: PrItem, cx: &mut Context<Self>) {
         let id = pr.id.clone();
         self.open_drawer(DrawerItem::Pull(pr), id, cx);
@@ -6008,8 +6105,11 @@ impl Workspace {
             }))
         };
         let pr_row = |index: usize, pr: &Pr, tint: gpui::Hsla, detail: String, cx: &mut Context<Self>| {
-            let url = pr.url.clone();
-            row(("work-pr", index), tint, pr.title.clone(), detail).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+            let link = ItemLink { id: Some(pr.id.clone()).filter(|i| !i.is_empty()), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone(), pull: Some(true), open: Some(true) };
+            row(("work-pr", index), tint, pr.title.clone(), detail).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.drawers.clear();
+                this.open_item(link.clone(), cx);
+            }))
         };
         let mine_tint = |pr: &Pr| match pr.needs() {
             Some("Checks failing") => red,
@@ -6087,15 +6187,17 @@ impl Workspace {
             list = list.child(section("Assigned to you", live.len(), green));
             for issue in live.into_iter().take(8) {
                 let detail = format!("{}#{} · updated {}", issue.repo.rsplit('/').next().unwrap_or(&issue.repo), issue.number, relative_date(issue.updated, Utc::now()));
-                let (id, url) = (issue.id.clone(), issue.url.clone());
+                let id = issue.id.clone();
+                let link = ItemLink { id: Some(issue.id.clone()), repo: issue.repo.clone(), number: issue.number, title: issue.title.clone(), url: issue.url.clone(), pull: Some(false), open: Some(true) };
                 list = list.child(row(("work-issue", index), green, issue.title.clone(), detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    // In a drawer when it's this org's, else on GitHub.
+                    // This org's opens over Issues; another's in a drawer
+                    // fetched from GitHub.
                     match this.issues.read(cx).issue(&id) {
                         Some(found) => {
                             this.navigate(Nav::Issues, false, window, cx);
                             this.push_drawer(found, cx);
                         }
-                        None => cx.open_url(&url),
+                        None => this.open_item(link.clone(), cx),
                     }
                 })));
                 index += 1;
@@ -6446,7 +6548,11 @@ impl Workspace {
                                 .id(SharedString::from(format!("{key}-{seq}-{}", pr.url)))
                                 .text_color(theme.selected)
                                 .cursor_pointer()
-                                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                                // Its drawer on top, from the PR cache or GitHub.
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match ItemLink::from_url(&url, None, "") {
+                                    Some(link) => this.open_item(link, cx),
+                                    None => cx.open_url(&url),
+                                }))
                                 .child(pr.repo.as_ref().map_or(format!("#{}", pr.number), |r| format!("{r}#{}", pr.number))),
                         )
                         .child(pill(label, color))
@@ -6718,8 +6824,8 @@ impl Workspace {
         // Linked issues open on top, from the issue store when it has them.
         let linked = (!pr.linked.is_empty()).then(|| {
             div().flex().flex_col().gap_1().child(heading("Linked issues", Some(pr.linked.len()))).children(pr.linked.iter().enumerate().map(|(i, issue)| {
-                let (id, url) = (issue.id.clone(), issue.url.clone());
                 let closed = issue.state.as_deref() == Some("CLOSED");
+                let link = ItemLink { id: Some(issue.id.clone()).filter(|i| !i.is_empty()), repo: issue.repo.clone().unwrap_or_else(|| pr.repo.clone()), number: issue.number, title: issue.title.clone(), url: issue.url.clone(), pull: Some(false), open: Some(!closed) };
                 div()
                     .id(SharedString::from(format!("pr-linked-{seq}-{i}")))
                     .flex()
@@ -6731,10 +6837,7 @@ impl Workspace {
                     .rounded_md()
                     .cursor_pointer()
                     .hover(|s| s.bg(theme.tile))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match this.issues.read(cx).issue(&id) {
-                        Some(found) => this.push_drawer(found, cx),
-                        None => cx.open_url(&url),
-                    }))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_item(link.clone(), cx)))
                     .child(if closed { pill("Closed", theme.slot(6)) } else { pill("Open", theme.good()) })
                     .child(div().flex_1().truncate().child(issue.title.clone()))
                     .child(div().text_color(theme.secondary).child(match issue.repo.as_deref().filter(|r| *r != pr.repo) {
@@ -6879,6 +6982,7 @@ impl Workspace {
                 let found = self.issues.read(cx).issue_by_number(&repo, number);
                 let title = found.as_ref().map(|f| f.title.clone()).unwrap_or_default();
                 let url = format!("https://github.com/{repo}/issues/{number}");
+                let repo_for_link = repo.clone();
                 div()
                     .id(SharedString::from(format!("doc-issue-{seq}-{i}")))
                     .flex()
@@ -6892,7 +6996,8 @@ impl Workspace {
                     .hover(|s| s.bg(theme.tile))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match &found {
                         Some(issue) => this.push_drawer(issue.clone(), cx),
-                        None => cx.open_url(&url),
+                        // Not synced: looked up on GitHub, then its drawer.
+                        None => this.open_item(ItemLink { id: None, repo: repo_for_link.clone(), number, title: String::new(), url: url.clone(), pull: None, open: None }, cx),
                     }))
                     .child(div().text_color(theme.selected).child(format!("{}#{number}", repo.rsplit('/').next().unwrap_or(&repo))))
                     .child(div().flex_1().truncate().child(title))

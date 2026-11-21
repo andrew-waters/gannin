@@ -448,7 +448,7 @@ impl ReviewPanel {
     /// window, to open in a drawer.
     pub fn set_pull(&mut self, parts: PullParts, cx: &mut Context<Self>) {
         use crate::pull_page::{OpenLinked, OpenPull};
-        cx.subscribe(&parts.sidebar, |_, _, e: &OpenLinked, cx| cx.emit(OpenLinked { id: e.id.clone(), url: e.url.clone() })).detach();
+        cx.subscribe(&parts.sidebar, |_, _, e: &OpenLinked, cx| cx.emit(e.clone())).detach();
         cx.subscribe(&parts.sidebar, |_, _, e: &OpenPull, cx| cx.emit(OpenPull(e.0.clone()))).detach();
         cx.subscribe(&parts.sidebar, |_, _, e: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(e.0.clone()))).detach();
         self.pull = Some(parts);

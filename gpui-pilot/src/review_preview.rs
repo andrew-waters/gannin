@@ -189,7 +189,7 @@ impl ReviewPreview {
         });
         // What the merged sidebar opens goes on to the window's drawers.
         use crate::pull_page::{OpenLinked, OpenPull};
-        cx.subscribe(&panel, |_, _, e: &OpenLinked, cx| cx.emit(OpenLinked { id: e.id.clone(), url: e.url.clone() })).detach();
+        cx.subscribe(&panel, |_, _, e: &OpenLinked, cx| cx.emit(e.clone())).detach();
         cx.subscribe(&panel, |_, _, e: &OpenPull, cx| cx.emit(OpenPull(e.0.clone()))).detach();
         cx.subscribe(&panel, |_, _, e: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(e.0.clone()))).detach();
         panel

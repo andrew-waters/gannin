@@ -30,10 +30,16 @@ pub enum PullAction {
     Explain(PrItem),
 }
 
-/// A linked issue was clicked: its drawer, or GitHub when it isn't stored.
+/// A linked issue was clicked: its drawer, a stub the drawer fills from
+/// GitHub when it isn't stored.
+#[derive(Clone)]
 pub struct OpenLinked {
     pub id: String,
     pub url: String,
+    pub repo: String,
+    pub number: i64,
+    pub title: String,
+    pub open: bool,
 }
 
 /// A synced issue that the PR closes or that mentions it, found in the
@@ -566,8 +572,12 @@ pub struct PullPage {
     error: Option<String>,
     loading: bool,
     section: Section,
-    /// The plans linked to the PR or the issues it closes, with progress.
+    /// The harness's plans and requirements about the PR or anything
+    /// related to it (what it closes, what mentions it, the synced issues
+    /// about it), with progress; from `docs`.
     plans: Vec<(crate::harness::Doc, bool)>,
+    /// The org's harness documents, read when the PR is fetched.
+    docs: std::sync::Arc<Vec<crate::harness::Doc>>,
     /// Open sessions about it, from the workspace.
     related: Vec<Related>,
     /// Synced issues it closes or that mention it, from the local cache.
@@ -584,7 +594,7 @@ pub struct PullPage {
 
 impl PullPage {
     pub fn new(pr: PrItem, org: String, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), _fetch: None };
+        let mut page = Self { pr, org, part: Part::Whole, data: None, error: None, loading: false, section: Section::Overview, plans: Vec::new(), docs: Default::default(), related: Vec::new(), local: Vec::new(), width: Default::default(), rounds_open: Default::default(), noise_open: Default::default(), _fetch: None };
         page.refresh(cx);
         page
     }
@@ -602,6 +612,7 @@ impl PullPage {
             loading: false,
             section: Section::Overview,
             plans: Vec::new(),
+            docs: Default::default(),
             related: Vec::new(),
             local: Vec::new(),
             width: Default::default(),
@@ -648,8 +659,20 @@ impl PullPage {
     pub fn set_local(&mut self, local: Vec<LocalIssue>, cx: &mut Context<Self>) {
         if self.local != local {
             self.local = local;
+            self.relink();
             cx.notify();
         }
+    }
+
+    /// The plans and requirements about the PR or anything Related lists.
+    fn relink(&mut self) {
+        let mut items = vec![(self.pr.repo.clone(), self.pr.number)];
+        if let Some(data) = &self.data {
+            items.extend(data.linked.iter().chain(data.mentions.iter()).map(|l| (l.repo.clone(), l.number)));
+        }
+        items.extend(self.local.iter().map(|l| (l.repo.clone(), l.number)));
+        let wanted = |d: &crate::harness::Doc| matches!(d.kind, crate::harness::HarnessKind::Plans | crate::harness::HarnessKind::Requirements);
+        self.plans = crate::harness::linked(&self.docs, &items).into_iter().filter(|(d, _)| wanted(d)).collect();
     }
 
     pub fn set_related(&mut self, related: Vec<Related>, cx: &mut Context<Self>) {
@@ -659,24 +682,14 @@ impl PullPage {
         }
     }
 
-    /// Fetches the PR, and the harness's plans for it and the issues it
-    /// closes, off the main thread.
+    /// Fetches the PR and reads the harness's documents, off the main
+    /// thread; `relink` then picks the plans and requirements.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         cx.notify();
         let (repo, number, org) = (self.pr.repo.clone(), self.pr.number, self.org.clone());
         self._fetch = Some(cx.spawn(async move |this, cx| {
-            let (fetched, plans) = cx
-                .background_executor()
-                .spawn(async move {
-                    let fetched = fetch(&repo, number);
-                    let mut items = vec![(repo.clone(), number)];
-                    if let Ok(data) = &fetched {
-                        items.extend(data.linked.iter().map(|l| (l.repo.clone(), l.number)));
-                    }
-                    (fetched, crate::harness::linked(&crate::harness::load(&org), &items))
-                })
-                .await;
+            let (fetched, docs) = cx.background_executor().spawn(async move { (fetch(&repo, number), crate::harness::load(&org)) }).await;
             this.update(cx, |page, cx| {
                 page.loading = false;
                 match fetched {
@@ -686,7 +699,8 @@ impl PullPage {
                     }
                     Err(e) => page.error = Some(e),
                 }
-                page.plans = plans;
+                page.docs = std::sync::Arc::new(docs);
+                page.relink();
                 cx.notify();
             })
             .ok();
@@ -1415,7 +1429,7 @@ impl PullPage {
         let caption = |text: &str| div().pt_1().text_xs().text_color(theme.tertiary).child(text.to_string());
         let own_repo = self.pr.repo.clone();
         let item_row = |key: (&'static str, usize), l: &Linked, cx: &mut Context<Self>| {
-            let (pull, id, url, repo, number, title) = (l.pull, l.id.clone(), l.url.clone(), l.repo.clone(), l.number, l.title.clone());
+            let (pull, id, url, repo, number, title, open) = (l.pull, l.id.clone(), l.url.clone(), l.repo.clone(), l.number, l.title.clone(), l.open);
             let reference = if l.repo.eq_ignore_ascii_case(&own_repo) { format!("#{}", l.number) } else { format!("{}#{}", l.repo.rsplit('/').next().unwrap_or(&l.repo), l.number) };
             div()
                 .id(key)
@@ -1430,7 +1444,7 @@ impl PullPage {
                     if pull {
                         cx.emit(OpenPull(PrItem::stub(&id, &repo, number, &title, &url)));
                     } else {
-                        cx.emit(OpenLinked { id: id.clone(), url: url.clone() });
+                        cx.emit(OpenLinked { id: id.clone(), url: url.clone(), repo: repo.clone(), number, title: title.clone(), open });
                     }
                 }))
                 .child(div().flex_none().size(px(7.)).rounded_full().bg(if l.open { theme.good() } else { theme.slot(5) }))
@@ -1469,8 +1483,12 @@ impl PullPage {
                 related = related.child(item_row(("pull-mention", i), l, cx));
             }
         }
-        if !self.plans.is_empty() {
-            related = related.child(caption("Plans and requirements")).children(crate::harness::plan_rows("pull-related-plan", &self.plans, theme, cx));
+        let (plans, requirements): (Vec<_>, Vec<_>) = self.plans.iter().cloned().partition(|(d, _)| d.kind == crate::harness::HarnessKind::Plans);
+        if !plans.is_empty() {
+            related = related.child(caption("Plans")).children(crate::harness::plan_rows("pull-related-plan", &plans, theme, cx));
+        }
+        if !requirements.is_empty() {
+            related = related.child(caption("Requirements")).children(crate::harness::plan_rows("pull-related-requirement", &requirements, theme, cx));
         }
         let mut participants = div().flex().flex_row().flex_wrap().gap_1();
         for p in &data.participants {
