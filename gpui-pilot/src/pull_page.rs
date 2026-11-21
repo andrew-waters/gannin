@@ -1632,12 +1632,14 @@ impl PullPage {
         if data.reviewers.is_empty() {
             reviewers = reviewers.child(none("No reviews"));
         }
-        for r in &data.reviewers {
-            let (mark, tint) = match r.state.as_str() {
-                "APPROVED" => ("✓", theme.good()),
-                "CHANGES_REQUESTED" => ("±", theme.orange()),
-                "REQUESTED" => ("●", gpui::rgb(0xEDA100).into()),
-                _ => ("💬", theme.secondary),
+        // A dot each: grey while asked, orange once they've commented,
+        // green approved, red for changes requested.
+        for (i, r) in data.reviewers.iter().enumerate() {
+            let (tint, what): (Hsla, &'static str) = match r.state.as_str() {
+                "APPROVED" => (theme.good(), "Approved"),
+                "CHANGES_REQUESTED" => (theme.critical(), "Changes requested"),
+                "REQUESTED" => (theme.tertiary, "Asked to review"),
+                _ => (theme.orange(), "Commented"),
             };
             reviewers = reviewers.child(
                 div()
@@ -1648,7 +1650,15 @@ impl PullPage {
                     .text_sm()
                     .child(Self::avatar(&r.person, 18., theme, cx))
                     .child(div().flex_1().min_w_0().truncate().child(r.person.login.clone()))
-                    .child(div().text_color(tint).child(mark)),
+                    .child(
+                        div()
+                            .id(("reviewer-state", i))
+                            .flex_none()
+                            .size(px(9.))
+                            .rounded_full()
+                            .bg(tint)
+                            .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(what.into())).into()),
+                    ),
             );
         }
         let mut assignees = group("Assignees");
