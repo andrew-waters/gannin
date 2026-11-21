@@ -5346,7 +5346,7 @@ impl Workspace {
                 d.child(
                     button(
                         "message-sessions",
-                        if messaging { "Cancel".into() } else { "Message".into() },
+                        if messaging { "Cancel".into() } else { "Message agents".into() },
                         if messaging { "Close the message without sending it".into() } else { "Send one message to several Claude Code sessions: tick them in the tabs".into() },
                     )
                     .border_1()
