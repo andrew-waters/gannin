@@ -468,11 +468,12 @@ fn main() {
         // The first window, when it was open at quit or nothing else was:
         // closed, it stays closed while other windows come back.
         let first = state::has_slot(0) || state::extra_slots().is_empty();
+        // Where it was left, unless the command line says otherwise.
+        let first_saved = state::SavedState::load();
         let workspace = first.then(|| cx.open_window(
-            shell::window_options(cx),
+            shell::window_options_for(first_saved.window, cx),
             |window, cx| {
-                // Where it was left, unless the command line says otherwise.
-                let mut saved = state::SavedState::load();
+                let mut saved = first_saved;
                 if org.is_some() {
                     saved.org = org;
                 }

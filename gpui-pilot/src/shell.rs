@@ -237,8 +237,20 @@ pub const APP_ID: &str = "gannin-gpui-pilot";
 /// The window every Gannin window opens with: its own title bar, with the
 /// traffic lights over it.
 pub fn window_options(cx: &App) -> gpui::WindowOptions {
+    window_options_for(None, cx)
+}
+
+/// A window's options, where it was when `saved` is on a screen still
+/// attached; else centred.
+pub fn window_options_for(saved: Option<crate::state::SavedBounds>, cx: &App) -> gpui::WindowOptions {
+    let placed = saved.and_then(|b| {
+        let bounds = gpui::Bounds::new(gpui::point(px(b.x), px(b.y)), gpui::size(px(b.width.max(480.)), px(b.height.max(320.))));
+        // Its top-left corner (with room to grab the title bar) on a screen.
+        let grab = gpui::point(bounds.origin.x + px(40.), bounds.origin.y + px(10.));
+        cx.displays().iter().any(|d| d.bounds().contains(&grab)).then_some(if b.maximized { gpui::WindowBounds::Maximized(bounds) } else { gpui::WindowBounds::Windowed(bounds) })
+    });
     gpui::WindowOptions {
-        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(1440.), px(940.)), cx))),
+        window_bounds: Some(placed.unwrap_or_else(|| gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(1440.), px(940.)), cx)))),
         titlebar: Some(gpui::TitlebarOptions { title: Some("Gannin".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(px(14.), px(12.))) }),
         app_id: Some(crate::shell::APP_ID.into()),
         ..Default::default()
@@ -544,6 +556,10 @@ pub struct Workspace {
     /// but for the one that was showing (by its launch).
     reopening: usize,
     show_on_reopen: Option<String>,
+    /// Session tabs' names, by saved key, waiting for their session to
+    /// open; and the window's place as last drawn, to save.
+    session_names: HashMap<String, String>,
+    window_place: Option<crate::state::SavedBounds>,
     /// The schedule's clock (the first window only), how often it's
     /// ticked, and this window, for the clock to act in.
     _scheduler: Option<gpui::Task<()>>,
@@ -697,6 +713,15 @@ impl Workspace {
                 groups
             },
             tab_names: Vec::new(),
+            session_names: self
+                .tabs
+                .iter()
+                .filter_map(|tab| match (tab.nav, &tab.name) {
+                    (Nav::Session(id), Some(name)) => Some((self.session(id, cx)?.read(cx).saved_key()?, name.clone())),
+                    _ => None,
+                })
+                .collect(),
+            window: self.window_place,
             sync: self.sync.prefs.clone(),
             ci: self.template_ci(cx),
             issues: self.template_issues(cx),
@@ -874,6 +899,7 @@ impl Workspace {
     }
 
     fn build(saved: SavedState, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let (session_names, window_place): (HashMap<String, String>, _) = (saved.session_names.iter().cloned().collect(), saved.window);
         let sync_prefs = saved.sync.clone();
         let orgs = data::orgs();
         // The saved org, while it still has a cache.
@@ -964,6 +990,8 @@ impl Workspace {
             window_handle: None,
             marra_dock: None,
             reopening: 0,
+            session_names,
+            window_place,
             slot: 0,
             closed: false,
             show_on_reopen: None,
@@ -977,10 +1005,10 @@ impl Workspace {
     }
 
     /// Shows `nav`: switches to a tab of it that hasn't been named, else
-    /// puts it in the current tab, else (Command held, or the current tab is
-    /// named, a session's, or holds a New Issue draft) opens a new tab beside
-    /// it. A named tab is a view someone made, and a draft is work started,
-    /// so neither is switched to or replaced from here.
+    /// (or with Command held) opens a new tab beside the current one. Never
+    /// replaces a tab: the page in it (a PR, a filtered list) may be one
+    /// someone means to come back to. A named tab is a view someone made,
+    /// and a draft is work started, so neither is switched to from here.
     fn navigate(&mut self, nav: Nav, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) {
         // Drawers belong to the page under them.
         self.drawers.clear();
@@ -993,9 +1021,7 @@ impl Workspace {
             }
         }
         let tab = self.make_tab(nav, None, window, cx);
-        if !new_tab && self.tabs.get(self.active).is_some_and(reusable) {
-            self.tabs[self.active] = tab;
-        } else if self.tabs.is_empty() {
+        if self.tabs.is_empty() {
             self.tabs.push(tab);
             self.active = 0;
         } else {
@@ -1476,7 +1502,9 @@ impl Workspace {
                 this.sync_reviewing(cx);
                 this.drawers.clear();
                 this.next_tab += 1;
-                let tab = Tab { id: this.next_tab, nav: Nav::Session(id), name: None, page: Page::None };
+                // A name it was given before a relaunch comes back with it.
+                let name = this.session(id, cx).and_then(|p| p.read(cx).saved_key()).and_then(|key| this.session_names.remove(&key));
+                let tab = Tab { id: this.next_tab, nav: Nav::Session(id), name, page: Page::None };
                 this.tabs.push(tab);
                 // Sessions reopened at launch don't take the tab that was showing.
                 if this.reopening > 0 {
@@ -3682,7 +3710,7 @@ impl Workspace {
     pub fn reopen_windows(cx: &mut App) {
         for slot in crate::state::extra_slots() {
             let saved = SavedState::load_slot(slot);
-            let options = window_options(cx);
+            let options = window_options_for(saved.window, cx);
             let _ = cx.open_window(options, move |window, cx| cx.new(|cx| Workspace::new(saved, slot, window, cx)));
         }
     }
@@ -7340,6 +7368,12 @@ fn state_tint(state: State, theme: &Theme) -> gpui::Hsla {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.window_place = match window.window_bounds() {
+            gpui::WindowBounds::Windowed(b) => Some(crate::state::SavedBounds { x: b.origin.x.into(), y: b.origin.y.into(), width: b.size.width.into(), height: b.size.height.into(), maximized: false }),
+            gpui::WindowBounds::Maximized(b) => Some(crate::state::SavedBounds { x: b.origin.x.into(), y: b.origin.y.into(), width: b.size.width.into(), height: b.size.height.into(), maximized: true }),
+            // Full screen comes back as the window it was.
+            gpui::WindowBounds::Fullscreen(_) => self.window_place,
+        };
         self.persist(cx);
         // A promised file or picture dropped on the window goes to New
         // Issue while it shows.

@@ -68,11 +68,29 @@ pub struct SavedState {
     pub expanded_groups: Vec<Nav>,
     /// Names given to tabs, in place of the page's own.
     pub tab_names: Vec<(Nav, String)>,
+    /// Names given to session tabs, by the session's saved key (as in
+    /// `sessions`), put back when each reopens.
+    pub session_names: Vec<(String, String)>,
+    /// Where the window was and how big, so each window comes back where
+    /// it was rather than all of them centred on one another.
+    pub window: Option<SavedBounds>,
     /// What a new tab of each page starts from (its filters reset).
     pub ci: CiSaved,
     pub issues: IssuesSaved,
     pub prs: PrsSaved,
     pub sync: SyncPrefs,
+}
+
+/// A window's place on screen, in points.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+pub struct SavedBounds {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    /// Zoomed to fill the screen (its bounds are where it returns to).
+    #[serde(default)]
+    pub maximized: bool,
 }
 
 /// A plain Claude Code session: its conversation ID and where it runs.
@@ -123,6 +141,8 @@ impl Default for SavedState {
             collapsed_sections: vec!["rituals".into(), "harness".into()],
             expanded_groups: Vec::new(),
             tab_names: Vec::new(),
+            session_names: Vec::new(),
+            window: None,
             ci: CiSaved::default(),
             issues: IssuesSaved::default(),
             prs: PrsSaved::default(),
