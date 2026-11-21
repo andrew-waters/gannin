@@ -28,6 +28,8 @@ use serde_json::{json, Value};
 pub enum PullAction {
     Review(PrItem),
     Explain(PrItem),
+    /// Pick up the work session that opened it.
+    Resume(PrItem),
 }
 
 /// A linked issue was clicked: its drawer, a stub the drawer fills from
@@ -804,6 +806,7 @@ impl PullPage {
         cx.subscribe(&panel, |_, _, e: &PullAction, cx| {
             cx.emit(match e {
                 PullAction::Review(pr) => PullAction::Review(pr.clone()),
+                PullAction::Resume(pr) => PullAction::Resume(pr.clone()),
                 PullAction::Explain(pr) => PullAction::Explain(pr.clone()),
             })
         })

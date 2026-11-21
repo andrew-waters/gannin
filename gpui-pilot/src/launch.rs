@@ -258,6 +258,22 @@ pub fn sessions_dir() -> PathBuf {
 }
 
 /// Every session the pilot has started, newest first.
+/// Whether `url` ("https://github.com/owner/repo/pull/12") is PR `number`
+/// of `repo`.
+pub fn is_pull_url(url: &str, repo: &str, number: i64) -> bool {
+    url.trim()
+        .split("github.com/")
+        .nth(1)
+        .and_then(|rest| rest.split_once("/pull/"))
+        .is_some_and(|(r, n)| r.eq_ignore_ascii_case(repo) && n.split(|c: char| !c.is_ascii_digit()).next() == Some(number.to_string().as_str()))
+}
+
+/// The work session (Work on This or a quick change) that opened PR
+/// `number` of `repo`, newest first, from the sessions kept on disk.
+pub fn opened_pull(repo: &str, number: i64) -> Option<Launch> {
+    saved().into_iter().find(|l| matches!(l.flow, Flow::Work | Flow::QuickChange) && l.pull_requests().iter().any(|u| is_pull_url(u, repo, number)))
+}
+
 pub fn saved() -> Vec<Launch> {
     let mut all: Vec<Launch> = std::fs::read_dir(sessions_dir())
         .into_iter()

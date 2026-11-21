@@ -216,6 +216,9 @@ pub struct ReviewPanel {
     /// than as GitHub draws it, and which folded sections are open.
     editing_body: bool,
     open_details: HashSet<String>,
+    /// A PR's own page: whether a work session opened it, which Resume
+    /// Session picks up.
+    resumable: bool,
     /// The PR page merged in (the sketch only): its parts in the list, the
     /// Overview and a sidebar.
     pull: Option<PullParts>,
@@ -311,8 +314,11 @@ impl ReviewPanel {
     /// whose Review with Claude starts one.
     pub fn for_pull(main: &Entity<crate::pull_page::PullPage>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pr = main.read(cx).pr().clone();
+        // The work session that opened it, to pick up from here.
+        let resumable = crate::launch::opened_pull(&pr.repo, pr.number).is_some();
         let mut panel = Self::preview(&pr.repo, pr.number, None, false, false, Snapshot::sample(false, &[]), None, window, cx);
         panel.source = Source::Pull { pr };
+        panel.resumable = resumable;
         let parts = PullParts::of(main, false, cx);
         panel.set_pull(parts, cx);
         panel
@@ -424,6 +430,7 @@ impl ReviewPanel {
             reviewed_head,
             editing_body: false,
             open_details: HashSet::new(),
+            resumable: false,
             record_with_post: crate::review_record::recording(),
             detail_width: Default::default(),
             show_grading: false,
@@ -482,6 +489,7 @@ impl ReviewPanel {
             reviewed_head: None,
             editing_body: false,
             open_details: HashSet::new(),
+            resumable: false,
             record_with_post: crate::review_record::recording(),
             detail_width: Default::default(),
             show_grading: false,
@@ -1548,11 +1556,22 @@ impl ReviewPanel {
                 let pr = pr.clone();
                 let (state, _) = parts.sidebar.read(cx).state_pill(theme);
                 let ended = matches!(state, "Merged" | "Closed") || pr.state != crate::prs::PrState::Open;
+                let resume = pr.clone();
                 div()
                     .pt_3()
                     .flex()
-                    .flex_row()
+                    .flex_col()
+                    .gap_2()
                     .text_sm()
+                    // The work session that opened it, closed or from before a relaunch.
+                    .when(self.resumable && !ended, |d| {
+                        d.child(
+                            Self::icon_button("review-resume", "icons/sparkle.svg", "Resume Session", false, true, theme)
+                                .flex()
+                                .justify_center()
+                                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(crate::pull_page::PullAction::Resume(resume.clone())))),
+                        )
+                    })
                     .when(!ended, |d| {
                         d.child(
                             Self::button("review-start", "Review with Claude", true, true, theme)

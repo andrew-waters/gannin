@@ -1179,6 +1179,11 @@ impl Workspace {
             Page::Pull(page) => vec![
                 cx.subscribe_in(page, window, |this, _, event: &crate::pull_page::PullAction, window, cx| match event {
                     crate::pull_page::PullAction::Review(pr) => this.review_pr(pr.clone(), window, cx),
+                    crate::pull_page::PullAction::Resume(pr) => {
+                        if let Some(launch) = this.work_session_for_pr(pr, cx) {
+                            this.resume_launch(launch, window, cx);
+                        }
+                    }
                     crate::pull_page::PullAction::Explain(pr) => this.explain_pr(pr.clone(), window, cx),
                 }),
                 cx.subscribe(page, |this, _, event: &crate::pull_page::OpenLinked, cx| {
@@ -1727,6 +1732,31 @@ impl Workspace {
 
     /// A launch the pilot started before about `subject_id` (in an earlier
     /// run), to resume.
+    /// The work session (Work on This or a quick change) that opened `pr`:
+    /// open in a tab, else kept from before, where this window runs
+    /// sessions (on this Mac or its server).
+    fn work_session_for_pr(&self, pr: &PrItem, cx: &App) -> Option<crate::launch::Launch> {
+        let opened = |l: &crate::launch::Launch| l.pull_requests().iter().any(|u| crate::launch::is_pull_url(u, &pr.repo, pr.number));
+        if let Some(open) = self.sessions.iter().filter_map(|s| s.read(cx).launch.clone()).find(|l| opened(l)) {
+            return Some(open);
+        }
+        let server = self.folder.as_ref().and_then(|f| f.location.server.clone());
+        crate::launch::opened_pull(&pr.repo, pr.number).filter(|l| l.server == server)
+    }
+
+    /// Shows a launch's tab, or opens it again, claude resuming.
+    fn resume_launch(&mut self, launch: crate::launch::Launch, window: &mut Window, cx: &mut Context<Self>) {
+        self.drawers.clear();
+        let open = self.tabs.iter().position(|t| matches!(t.nav, Nav::Session(id) if self.session(id, cx).and_then(|p| p.read(cx).launch.as_ref()).is_some_and(|l| l.id == launch.id)));
+        match open {
+            Some(index) => self.activate(index, window, cx),
+            None => {
+                let folder = launch.harness_path.clone();
+                self.open_session(Kind::Claude, folder, Some(launch), window, cx);
+            }
+        }
+    }
+
     fn saved_launch(subject_id: &str, flow: crate::launch::Flow) -> Option<crate::launch::Launch> {
         crate::launch::saved().into_iter().find(|l| l.flow == flow && l.subject.as_ref().is_some_and(|s| s.id == subject_id))
     }
@@ -4184,6 +4214,20 @@ impl Workspace {
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                         .into_any_element(),
                 );
+                // The work session that opened it: its tab, or picked up again.
+                if let Some(launch) = self.work_session_for_pr(pr, cx) {
+                    let open = self.sessions.iter().any(|s| s.read(cx).launch.as_ref().is_some_and(|l| l.id == launch.id));
+                    let (label, tip) = if open {
+                        ("Open Session", format!("Show the Claude Code session that opened this PR: {}", launch.title))
+                    } else {
+                        ("Resume Session", format!("Pick up the Claude Code session that opened this PR, claude carrying on: {}", launch.title))
+                    };
+                    actions.push(
+                        action("pr-resume", "icons/sparkle.svg", label.into(), tip)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.resume_launch(launch.clone(), window, cx)))
+                            .into_any_element(),
+                    );
+                }
             }
         }
         actions
