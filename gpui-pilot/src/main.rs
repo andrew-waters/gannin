@@ -170,6 +170,17 @@ fn window_menu() -> Menu {
 }
 
 fn main() {
+    // Launched from inside a Claude Code session (a relaunch from one of
+    // our own), Gannin inherits its markers, and every session it starts
+    // would too: Claude Code then takes each for a child session and saves
+    // no transcript, so nothing resumes after the next relaunch. Clear them
+    // before any thread or child process exists.
+    for (key, _) in std::env::vars_os() {
+        let Some(key) = key.to_str().map(str::to_string) else { continue };
+        if key == "CLAUDECODE" || key == "CLAUDE_PID" || key == "CLAUDE_EFFORT" || key.starts_with("CLAUDE_CODE_") {
+            std::env::remove_var(&key);
+        }
+    }
     let mut org = None;
     let mut days: Option<i64> = None;
     let mut args = std::env::args().skip(1);
