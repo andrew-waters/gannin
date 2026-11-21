@@ -18,7 +18,7 @@ use std::sync::Arc;
 use crate::metrics::RepoStats;
 use crate::page::{ActionsPage, OpenRepo};
 use crate::session::{self, Changed, Kind, SessionPage, State};
-use crate::prs::{OpenPr, OpenPrs, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs, ShowReview};
+use crate::prs::{OpenPr, OpenPrs, ResumePrs, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs, ShowReview};
 use crate::state::{remove_slot, CiSaved, SavedState, SavedTab};
 use crate::work::{self, Pr, Work};
 use gpui::{
@@ -1144,6 +1144,16 @@ impl Workspace {
                 cx.subscribe_in(page, window, |this, _, event: &OpenPrs, window, cx| {
                     for pr in event.0.clone() {
                         this.open_pull_page(pr, window, cx);
+                    }
+                }),
+                // Each PR's work session, once each (two PRs from one session
+                // open it once), open tabs shown, the rest reopened.
+                cx.subscribe_in(page, window, |this, _, event: &ResumePrs, window, cx| {
+                    let mut seen = HashSet::new();
+                    for pr in &event.0 {
+                        if let Some(launch) = this.work_session_for_pr(pr, cx).filter(|l| seen.insert(l.id.clone())) {
+                            this.resume_launch(launch, window, cx);
+                        }
                     }
                 }),
                 cx.subscribe_in(page, window, |this, _, event: &ShowReview, window, cx| {

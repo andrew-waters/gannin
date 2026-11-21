@@ -843,6 +843,11 @@ pub struct OpenPrs(pub Vec<PrItem>);
 
 impl EventEmitter<OpenPrs> for PrsPage {}
 
+/// Pick up the work session that opened each of these, picked together.
+pub struct ResumePrs(pub Vec<PrItem>);
+
+impl EventEmitter<ResumePrs> for PrsPage {}
+
 /// Show the review session open for this PR.
 pub struct ShowReview(pub PrItem);
 
@@ -1969,6 +1974,26 @@ impl PrsPage {
                 cx.notify();
             })))
             .child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.secondary).when(open.len() < picked.len(), |d| d.child("Only open pull requests can be reviewed.")))
+            // The work sessions that opened them, picked up together.
+            .when_some(
+                {
+                    let kept = crate::launch::saved();
+                    let resumable: Vec<PrItem> = picked
+                        .iter()
+                        .filter(|p| kept.iter().any(|l| matches!(l.flow, crate::launch::Flow::Work | crate::launch::Flow::QuickChange) && l.pull_requests().iter().any(|u| crate::launch::is_pull_url(u, &p.repo, p.number))))
+                        .cloned()
+                        .collect();
+                    (!resumable.is_empty()).then_some(resumable)
+                },
+                |d, resumable| {
+                    let count = resumable.len();
+                    d.child(button("picked-resume", if count == 1 { "Resume Session".into() } else { format!("Resume {count} Sessions") }, false).on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                        cx.emit(ResumePrs(resumable.clone()));
+                        page.picked.clear();
+                        cx.notify();
+                    })))
+                },
+            )
             .child({
                 let count = picked.len();
                 let opened = picked.clone();
