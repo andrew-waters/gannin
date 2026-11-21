@@ -316,13 +316,15 @@ pub fn plan_rows<T: EventEmitter<OpenDoc> + 'static>(id: &'static str, plans: &[
                 .id((id, i))
                 .flex()
                 .flex_row()
-                .items_center()
+                // The icon and progress on the title's line, not centred
+                // on the title and path together.
+                .items_start()
                 .gap_2()
                 .py_1()
                 .cursor_pointer()
                 .hover(|s| s.opacity(0.8))
                 .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(OpenDoc(opened.clone()))))
-                .child(gpui::svg().path(doc.kind.icon()).size(px(14.)).flex_none().text_color(theme.secondary))
+                .child(div().flex_none().h(px(20.)).flex().items_center().child(gpui::svg().path(doc.kind.icon()).size(px(14.)).text_color(theme.secondary)))
                 .child(
                     div()
                         .flex_1()
@@ -336,6 +338,7 @@ pub fn plan_rows<T: EventEmitter<OpenDoc> + 'static>(id: &'static str, plans: &[
                     d.child(
                         div()
                             .flex_none()
+                            .h(px(20.))
                             .flex()
                             .flex_row()
                             .items_center()
