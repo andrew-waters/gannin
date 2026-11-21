@@ -859,11 +859,6 @@ impl PullPage {
         div().id(id).flex_none().px_2().py_0p5().rounded_md().border_1().border_color(theme.border).text_sm().cursor_pointer().hover(|s| s.bg(theme.row_selected)).child(label.to_string())
     }
 
-    /// Its state's colour, for its tab's icon.
-    pub fn state_colour(&self, theme: &Theme) -> Hsla {
-        self.state_tint(theme).1
-    }
-
     fn state_tint(&self, theme: &Theme) -> (&'static str, Hsla) {
         let state = self.data.as_ref().map(|d| (d.state.as_str(), d.draft));
         match state {

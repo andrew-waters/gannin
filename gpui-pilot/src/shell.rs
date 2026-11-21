@@ -560,6 +560,9 @@ pub struct Workspace {
     /// open; and the window's place as last drawn, to save.
     session_names: HashMap<String, String>,
     window_place: Option<crate::state::SavedBounds>,
+    /// When each session's tab was last on screen (the active tab of the
+    /// active window): a session that's finished since then wants you.
+    seen: HashMap<u32, chrono::DateTime<chrono::Local>>,
     /// The schedule's clock (the first window only), how often it's
     /// ticked, and this window, for the clock to act in.
     _scheduler: Option<gpui::Task<()>>,
@@ -992,6 +995,7 @@ impl Workspace {
             reopening: 0,
             session_names,
             window_place,
+            seen: HashMap::new(),
             slot: 0,
             closed: false,
             show_on_reopen: None,
@@ -1509,6 +1513,8 @@ impl Workspace {
                 // Sessions reopened at launch don't take the tab that was showing.
                 if this.reopening > 0 {
                     this.reopening -= 1;
+                    // Coming back at launch isn't news: it starts as seen.
+                    this.seen.insert(id, chrono::Local::now());
                     let reopened = this.session(id, cx).and_then(|p| p.read(cx).saved_key());
                     if reopened.is_some() && reopened == this.show_on_reopen {
                         this.show_on_reopen = None;
@@ -5552,6 +5558,7 @@ impl Workspace {
     fn tab_element(&self, index: usize, vertical: bool, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
                 let tab = &self.tabs[index];
                 let (icon, tint) = (self.tab_icon(tab, cx), self.tab_tint(tab, theme, cx));
+                let working = self.tab_signal(tab, cx) == TabSignal::Working;
                 // Filtered to one kind, the tabs need no icon to tell them
                 // apart; a session's state still colours its name.
                 let filtered = self.tab_filter.is_some();
@@ -5635,7 +5642,19 @@ impl Workspace {
                             )
                         },
                     )
-                    .when(!filtered, |d| d.child(gpui::svg().path(icon).size(px(14.)).flex_none().text_color(tint)))
+                    .when(!filtered, |d| {
+                        let svg = gpui::svg().path(icon).size(px(14.)).flex_none().text_color(tint);
+                        if working {
+                            // Working: glows slowly from grey to white and back.
+                            use gpui::{Animation, AnimationExt};
+                            d.child(svg.with_animation(SharedString::from(format!("tab-working-{id}")), Animation::new(std::time::Duration::from_millis(1800)).repeat(), move |svg, delta| {
+                                let glow = (1. - (delta * std::f32::consts::TAU).cos()) / 2.;
+                                svg.text_color(tint.opacity(0.35 + 0.65 * glow))
+                            }))
+                        } else {
+                            d.child(svg)
+                        }
+                    })
                     .map(|d| match &self.renaming {
                         Some((renamed, field)) if *renamed == id => d.child(
                             div()
@@ -5850,24 +5869,33 @@ impl Workspace {
     /// The icon's colour, in place of a dot: a session's state (working,
     /// needs you, your turn, ended), a review's verdict once it's in and
     /// claude's waiting; a page's is plain.
+    /// What a tab's icon says, and only this: whether claude is working,
+    /// and whether it wants you. Outcomes (a verdict, a PR's state) are on
+    /// the page, not the icon.
+    fn tab_signal(&self, tab: &Tab, cx: &App) -> TabSignal {
+        let Nav::Session(id) = tab.nav else { return TabSignal::Quiet };
+        let Some(page) = self.session(id, cx).map(|p| p.read(cx)) else { return TabSignal::Quiet };
+        let unseen = self.seen.get(&id).is_none_or(|at| *at < page.since);
+        match page.state {
+            State::Working => TabSignal::Working,
+            // It can't go on without you, looked at or not.
+            State::NeedsYou => TabSignal::Asking,
+            State::YourTurn if unseen => TabSignal::Done,
+            State::YourTurn => TabSignal::Quiet,
+            State::Ended => TabSignal::Ended,
+        }
+    }
+
+    /// The icon's colour for its signal (working is drawn glowing, from
+    /// white).
     fn tab_tint(&self, tab: &Tab, theme: &Theme, cx: &App) -> gpui::Hsla {
-        // A PR's page in its state's colour.
-        if let Page::Pull(page) = &tab.page {
-            return page.read(cx).state_colour(theme);
+        match self.tab_signal(tab, cx) {
+            TabSignal::Working => theme.fg,
+            TabSignal::Asking => theme.orange(),
+            TabSignal::Done => theme.selected,
+            TabSignal::Quiet => theme.secondary,
+            TabSignal::Ended => theme.tertiary,
         }
-        let Nav::Session(id) = tab.nav else { return theme.secondary };
-        let Some(page) = self.session(id, cx) else { return theme.secondary };
-        let state = page.read(cx).state;
-        if matches!(state, State::YourTurn | State::Ended) {
-            if let Some(verdict) = page.read(cx).review().and_then(|r| r.read(cx).verdict()) {
-                return match verdict.as_str() {
-                    "approve" => theme.good(),
-                    "request_changes" => theme.critical(),
-                    _ => theme.selected,
-                };
-            }
-        }
-        state_tint(state, theme)
     }
 
     /// Whether a tab's session is waiting on the person.
@@ -7342,6 +7370,17 @@ fn work_brief(issue: &IssueItem, text: Option<&IssueText>, parent: Option<&Issue
     out
 }
 
+/// What a tab's icon tells: claude working, claude asking you something,
+/// finished and not looked at since, or nothing to say.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TabSignal {
+    Working,
+    Asking,
+    Done,
+    Quiet,
+    Ended,
+}
+
 /// A page's icon, on its tab and its row in the navigation.
 fn nav_icon(nav: Nav) -> &'static str {
     match nav {
@@ -7386,6 +7425,12 @@ impl Render for Workspace {
         // takes it.
         if window.focused(cx).is_none() && self.switcher.is_none() {
             self.focus_current(window, cx);
+        }
+        // The session on screen is seen as it is now.
+        if window.is_window_active() {
+            if let Some(Nav::Session(id)) = self.current() {
+                self.seen.insert(id, chrono::Local::now());
+            }
         }
         // A promised file or picture dropped on the window goes to New
         // Issue while it shows.
