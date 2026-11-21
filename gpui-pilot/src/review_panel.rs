@@ -212,6 +212,10 @@ pub struct ReviewPanel {
     /// its time): set by the first check after a result that finds no new
     /// commits, kept in the session's folder.
     reviewed_head: Option<(String, Option<chrono::DateTime<chrono::Utc>>)>,
+    /// The Post sheet: whether the body shows as its text to edit rather
+    /// than as GitHub draws it, and which folded sections are open.
+    editing_body: bool,
+    open_details: HashSet<String>,
     /// The PR page merged in (the sketch only): its parts in the list, the
     /// Overview and a sidebar.
     pull: Option<PullParts>,
@@ -418,6 +422,8 @@ impl ReviewPanel {
             plans: Vec::new(),
             author: None,
             reviewed_head,
+            editing_body: false,
+            open_details: HashSet::new(),
             record_with_post: crate::review_record::recording(),
             detail_width: Default::default(),
             show_grading: false,
@@ -474,6 +480,8 @@ impl ReviewPanel {
             plans: Vec::new(),
             author: None,
             reviewed_head: None,
+            editing_body: false,
+            open_details: HashSet::new(),
             record_with_post: crate::review_record::recording(),
             detail_width: Default::default(),
             show_grading: false,
@@ -753,6 +761,7 @@ impl ReviewPanel {
 
     /// Opens the sheet: the PR, its files and what's been said, fetched now.
     fn open_post(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing_body = false;
         let Some(result) = self.kept() else { return };
         let none = HashSet::new();
         let risk = self.risk();
@@ -1316,7 +1325,9 @@ impl ReviewPanel {
         let live = matches!(self.source, Source::Live { .. });
         let pull = matches!(self.source, Source::Pull { .. });
         let dot = if self.working() { theme.good() } else if status_tint == theme.orange() { theme.orange() } else if self.running() { theme.selected } else { theme.tertiary };
-        let controls = match &self.post {
+        // Merged with the PR page, posting's controls are in the status
+        // column (`post_side`), in place of Review Again and Post Review.
+        let controls = match self.post.as_ref().filter(|_| self.pull.is_none()) {
             Some(post) => self.post_controls(post, theme, cx).into_any_element(),
             None => div()
                 .flex_none()
@@ -1537,18 +1548,29 @@ impl ReviewPanel {
                 let pr = pr.clone();
                 let (state, _) = parts.sidebar.read(cx).state_pill(theme);
                 let ended = matches!(state, "Merged" | "Closed") || pr.state != crate::prs::PrState::Open;
-                div().pt_3().flex().flex_row().text_sm().when(!ended, |d| d.child(
-                    Self::button("review-start", "Review with Claude", true, true, theme)
-                        .flex_1()
-                        .flex()
-                        .justify_center()
-                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(crate::pull_page::PullAction::Review(pr.clone())))),
-                ))
+                div()
+                    .pt_3()
+                    .flex()
+                    .flex_row()
+                    .text_sm()
+                    .when(!ended, |d| {
+                        d.child(
+                            Self::button("review-start", "Review with Claude", true, true, theme)
+                                .flex_1()
+                                .flex()
+                                .justify_center()
+                                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(crate::pull_page::PullAction::Review(pr.clone())))),
+                        )
+                    })
+                    .into_any_element()
             }
+            // Posting: the kind of review, Record in harness, Cancel and
+            // Post to GitHub, where Review Again and Post Review were.
+            _ if self.post.is_some() => self.post_side(self.post.as_ref().unwrap(), theme, cx),
             _ => {
                 let again = self.again_button(theme, cx).flex_1().flex().justify_center();
                 let post = self.post_button(theme, cx).flex_1().flex().justify_center();
-                div().pt_3().flex().flex_row().gap_2().text_sm().child(again).child(post)
+                div().pt_3().flex().flex_row().gap_2().text_sm().child(again).child(post).into_any_element()
             }
         };
         div()
@@ -2757,6 +2779,117 @@ impl ReviewPanel {
 
     /// Posting, in the header: the kind of review and what goes, or where
     /// the post is. Nothing goes to GitHub until Post to GitHub is clicked.
+    /// Posting, in the status column, a step a row: the kind of review
+    /// (Comment only on your own PR or an out-of-date review), Record in
+    /// harness, then Cancel and Post to GitHub; or where the post is.
+    fn post_side(&self, post: &Post, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let close = |id: &'static str, label: &'static str, cx: &mut Context<Self>| {
+            Self::button(id, label, false, true, theme).flex_1().flex().justify_center().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.post = None;
+                cx.notify();
+            }))
+        };
+        let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
+        let column = div().pt_3().flex().flex_col().gap_2().text_sm();
+        match post {
+            Post::Loading => column.child(quiet("Loading the pull request".into())).child(div().flex().flex_row().child(close("post-cancel", "Cancel", cx))).into_any_element(),
+            Post::Posting => column.child(quiet("Posting to GitHub".into())).into_any_element(),
+            Post::Posted(url) => {
+                let url = url.clone();
+                column
+                    .child(div().text_color(theme.good()).child("Posted to GitHub"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(Self::button("posted-open", "Open It", false, true, theme).flex_1().flex().justify_center().on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                            .child(close("post-done", "Done", cx)),
+                    )
+                    .into_any_element()
+            }
+            Post::Failed(error) => column.child(div().text_color(theme.critical()).child(error.clone())).child(div().flex().flex_row().child(close("post-close", "Close", cx))).into_any_element(),
+            Post::Ready { snapshot, draft, event, .. } => {
+                let own = snapshot.is_own();
+                let stale = self.stale(Some(snapshot));
+                let event_now = *event;
+                let choice = |id: &'static str, label: &'static str, value: &'static str, cx: &mut Context<Self>| {
+                    let on = event_now == value;
+                    div()
+                        .id(id)
+                        .flex_1()
+                        .flex()
+                        .justify_center()
+                        .px_1()
+                        .py_0p5()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .text_color(if on { theme.fg } else { theme.secondary })
+                        .when(on, |d| d.bg(theme.bg))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            if let Some(Post::Ready { event, .. }) = this.post.as_mut() {
+                                *event = value;
+                            }
+                            cx.notify();
+                        }))
+                        .child(label)
+                };
+                let mut events = div().p_0p5().flex().flex_row().gap_0p5().rounded_md().bg(theme.grid).child(choice("event-comment", "Comment", "COMMENT", cx));
+                if !own && stale.is_none() {
+                    events = events.child(choice("event-approve", "Approve", "APPROVE", cx)).child(choice("event-changes", "Request Changes", "REQUEST_CHANGES", cx));
+                }
+                let recording = self.record_with_post;
+                column
+                    .child(events)
+                    .child(quiet(if own {
+                        "Your own PR: only a comment".into()
+                    } else if stale.is_some() {
+                        "Out of date: only a comment".into()
+                    } else {
+                        plural(draft.comments.len(), "inline comment", "inline comments")
+                    }))
+                    .child(
+                        div()
+                            .id("post-record")
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1p5()
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.record_with_post = !recording;
+                                crate::review_record::set_recording(!recording);
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .size(px(14.))
+                                    .rounded(px(3.))
+                                    .border_1()
+                                    .border_color(if recording { theme.selected } else { theme.secondary })
+                                    .when(recording, |d| d.bg(theme.selected))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_xs()
+                                    .text_color(theme.on_selected)
+                                    .child(if recording { "✓" } else { "" }),
+                            )
+                            .child("Record in harness"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(close("post-cancel", "Cancel", cx))
+                            .child(Self::button("post-confirm", "Post to GitHub", true, true, theme).flex_1().flex().justify_center().on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.confirm_post(cx)))),
+                    )
+                    .into_any_element()
+            }
+        }
+    }
+
     fn post_controls(&self, post: &Post, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let close = |id: &'static str, label: &'static str, cx: &mut Context<Self>| {
             Self::button(id, label, false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -2851,13 +2984,123 @@ impl ReviewPanel {
         }
     }
 
-    /// The draft being posted, in the detail column: the body to edit, the
-    /// inline comments and the findings left out.
-    fn post_draft(&self, post: &Post, theme: &Theme, cx: &gpui::App) -> Option<impl IntoElement> {
-        let Post::Ready { snapshot, draft, body, .. } = post else { return None };
+    /// GitHub-flavoured text as GitHub shows it: callouts as tinted boxes
+    /// with their kind, folded sections closed until their summary is
+    /// clicked (`open_details`, by `id`).
+    fn github_text(&self, id: &str, segments: &[crate::markdown::Segment], theme: &Theme, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        use crate::markdown::Segment;
+        segments
+            .iter()
+            .enumerate()
+            .map(|(i, segment)| {
+                let key = format!("{id}-{i}");
+                match segment {
+                    Segment::Text(text) => markdown(&key, text, theme),
+                    Segment::Callout { kind, body } => {
+                        let (label, tint) = match kind.as_str() {
+                            "TIP" => ("Tip", theme.good()),
+                            "IMPORTANT" => ("Important", theme.slot(5)),
+                            "WARNING" => ("Warning", theme.orange()),
+                            "CAUTION" => ("Caution", theme.critical()),
+                            _ => ("Note", theme.blue()),
+                        };
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .pl_3()
+                            .py_1()
+                            .border_l_2()
+                            .border_color(tint)
+                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(label))
+                            .children(self.github_text(&key, body, theme, cx))
+                            .into_any_element()
+                    }
+                    Segment::Details { summary, body } => {
+                        let open = self.open_details.contains(&key);
+                        let toggle = key.clone();
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("details-{key}")))
+                                    .flex()
+                                    .flex_row()
+                                    .gap_1p5()
+                                    .text_sm()
+                                    .text_color(theme.secondary)
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(theme.fg))
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        if !this.open_details.remove(&toggle) {
+                                            this.open_details.insert(toggle.clone());
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .child(div().flex_none().w(px(10.)).child(if open { "▾" } else { "▸" }))
+                                    .child(summary.clone()),
+                            )
+                            .when(open, |d| d.child(div().pl_4().flex().flex_col().gap_2().children(self.github_text(&key, body, theme, cx))))
+                            .into_any_element()
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// The review as it'll show on GitHub, in the detail column: a card
+    /// with who's reviewing, the kind of review and the body as GitHub draws
+    /// it (Edit swaps in the text to change), then each inline comment under
+    /// its file and line, then what's left out.
+    fn post_draft(&self, post: &Post, theme: &Theme, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let Post::Ready { snapshot, draft, body, event } = post else { return None };
         let text = body.read(cx).text(cx);
         let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
         let general = draft.body.lines().filter(|l| l.starts_with("- `")).count();
+        let (kind, tint) = match *event {
+            "APPROVE" => ("Approve", theme.good()),
+            "REQUEST_CHANGES" => ("Request changes", theme.orange()),
+            _ => ("Comment", theme.secondary),
+        };
+        let editing = self.editing_body;
+        let segments = crate::markdown::github_segments(&text);
+        let rendered = if text.trim().is_empty() { vec![quiet("No body: only the inline comments go up.".into()).into_any_element()] } else { self.github_text("post-body", &segments, theme, cx) };
+        let viewer = if snapshot.viewer.is_empty() { "You".to_string() } else { snapshot.viewer.clone() };
+        let card = |head: gpui::AnyElement, content: gpui::AnyElement| {
+            div()
+                .flex()
+                .flex_col()
+                .rounded_lg()
+                .border_1()
+                .border_color(theme.border)
+                .overflow_hidden()
+                .child(div().flex().flex_row().items_center().gap_2().px_3().py_1p5().bg(theme.tile).border_b_1().border_color(theme.border).text_sm().child(head))
+                .child(div().p_3().child(content))
+        };
+        let review_head = div()
+            .flex_1()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(viewer))
+            .child(div().px_1p5().rounded_sm().text_xs().border_1().border_color(tint).text_color(tint).child(kind))
+            .child(div().flex_1())
+            .child(
+                Self::button("post-edit-body", if editing { "Preview" } else { "Edit" }, false, true, theme).text_xs().on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.editing_body = !editing;
+                    if this.editing_body {
+                        if let Some(Post::Ready { body, .. }) = &this.post {
+                            window.focus(&body.focus_handle(cx), cx);
+                        }
+                    }
+                    cx.notify();
+                })),
+            )
+            .into_any_element();
+        let review_body = if editing { div().child(body.clone()).into_any_element() } else { div().flex().flex_col().gap_3().children(rendered).into_any_element() };
         Some(
             div()
                 .flex()
@@ -2882,69 +3125,63 @@ impl ReviewPanel {
                     div()
                         .flex()
                         .flex_col()
-                        .gap_1()
-                        .child(Self::section_heading("Review to post"))
+                        .gap_0p5()
+                        .child(Self::section_heading("As it'll show on GitHub"))
                         .child(quiet(if snapshot.is_own() {
                             "It's your own pull request, so GitHub only takes a comment.".into()
                         } else {
-                            "Pick the kind of review in the header, check the text, then Post to GitHub.".into()
+                            "Pick the kind of review in the header; Edit changes the text. Nothing goes until Post to GitHub.".into()
                         })),
                 )
-                .child(
-                    div()
+                .child(card(review_head, review_body))
+                .when(general > 0, |d| {
+                    d.child(quiet(format!(
+                        "{} {} on a line the diff shows, so {} in the body.",
+                        plural(general, "finding", "findings"),
+                        if general == 1 { "isn't" } else { "aren't" },
+                        if general == 1 { "it's" } else { "they're" }
+                    )))
+                })
+                .when(!draft.comments.is_empty(), |d| {
+                    d.child(div().pt_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(capitalised(&plural(draft.comments.len(), "inline comment", "inline comments"))))
+                })
+                .children(draft.comments.iter().enumerate().map(|(i, (path, line, body))| {
+                    let head = div()
                         .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Body"))
-                        .child(div().p_2().rounded_md().border_1().border_color(theme.border).bg(theme.bg).child(body.clone()))
-                        // What GitHub will show for the body above, as it's edited.
-                        .child(div().pt_2().font_weight(FontWeight::SEMIBOLD).child("On GitHub"))
-                        .child(
-                            div()
-                                .p_3()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(theme.border)
-                                .bg(theme.tile)
-                                .text_sm()
-                                .child(if text.trim().is_empty() { div().text_color(theme.secondary).child("(no body)").into_any_element() } else { crate::markdown::markdown("post-preview", &text, theme) }),
-                        )
-                        .when(general > 0, |d| {
-                            d.child(quiet(format!(
-                                "{} {} on a line the diff shows, so {} in the body.",
-                                plural(general, "finding", "findings"),
-                                if general == 1 { "isn't" } else { "aren't" },
-                                if general == 1 { "it's" } else { "they're" }
-                            )))
-                        }),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
+                        .flex_row()
                         .gap_2()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(capitalised(&plural(draft.comments.len(), "inline comment", "inline comments"))))
-                        .children(draft.comments.iter().map(|(path, line, body)| {
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_0p5()
-                                .p_2()
-                                .rounded_md()
-                                .bg(theme.tile)
-                                .child(div().font_family(crate::zed::MONO).text_xs().text_color(theme.selected).child(format!("{path}:{line}")))
-                                .child(div().text_sm().child(crate::markdown::markdown(&format!("post-inline-{path}-{line}"), body, theme)))
-                        })),
-                )
+                        .child(div().font_family(crate::zed::MONO).text_xs().text_color(theme.selected).child(format!("{path}:{line}")))
+                        .into_any_element();
+                    let segments = crate::markdown::github_segments(body);
+                    card(head, div().flex().flex_col().gap_2().children(self.github_text(&format!("post-inline-{i}"), &segments, theme, cx)).into_any_element())
+                }))
                 .when(!draft.left_out.is_empty(), |d| {
+                    let open = self.open_details.contains("post-left-out");
                     d.child(
                         div()
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(capitalised(&format!("{} left out", plural(draft.left_out.len(), "finding", "findings")))))
-                            .children(draft.left_out.iter().map(|f| div().text_sm().text_color(theme.secondary).child(format!("{}:{}: {}", f.path, f.line.unwrap_or(0), f.comment))))
-                            .child(quiet("A comment near its line, or an earlier review, already says much the same, so it isn't posted again.".into())),
+                            .child(
+                                div()
+                                    .id("post-left-out")
+                                    .flex()
+                                    .flex_row()
+                                    .gap_1p5()
+                                    .text_sm()
+                                    .text_color(theme.secondary)
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(theme.fg))
+                                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        if !this.open_details.remove("post-left-out") {
+                                            this.open_details.insert("post-left-out".into());
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .child(div().flex_none().w(px(10.)).child(if open { "▾" } else { "▸" }))
+                                    .child(format!("{} left out: already said near their line or in an earlier review", plural(draft.left_out.len(), "finding", "findings"))),
+                            )
+                            .when(open, |d| d.children(draft.left_out.iter().map(|f| div().pl_4().text_sm().text_color(theme.secondary).child(format!("{}:{}: {}", f.path, f.line.unwrap_or(0), f.comment))))),
                     )
                 }),
         )
@@ -2981,7 +3218,8 @@ impl Render for ReviewPanel {
         let pull_side = self.pull.as_ref().filter(|_| draft.is_none() && !matches!(self.selected, Selected::File(_) | Selected::Commits | Selected::Checks)).map(|p| p.sidebar.clone());
         // Merged: the review's standing and its buttons head that column,
         // on every page.
-        let status_side = self.pull.as_ref().filter(|_| draft.is_none()).map(|p| self.status_column(p, &theme, cx));
+        // It stays while posting: posting's controls are in it.
+        let status_side = self.pull.as_ref().map(|p| self.status_column(p, &theme, cx));
         let pull_part = |pick: fn(&PullParts) -> &Entity<crate::pull_page::PullPage>| self.pull.as_ref().map(|p| pick(p).clone().into_any_element()).unwrap_or_else(|| div().into_any_element());
         let detail = match self.selected.clone() {
             _ if draft.is_some() => draft.unwrap(),

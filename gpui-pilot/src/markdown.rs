@@ -275,3 +275,83 @@ pub fn markdown(id: &str, source: &str, theme: &Theme) -> AnyElement {
     renderer.flush();
     div().flex().flex_col().gap_2().children(renderer.blocks).into_any_element()
 }
+
+/// A piece of GitHub-flavoured text the plain renderer doesn't draw:
+/// a callout (`> [!TIP]` and its quoted lines) or a folded section
+/// (`<details><summary>`), each holding more of the same.
+pub enum Segment {
+    Text(String),
+    Callout { kind: String, body: Vec<Segment> },
+    Details { summary: String, body: Vec<Segment> },
+}
+
+/// Splits `source` into plain Markdown and the callouts and folded
+/// sections GitHub draws as boxes, nested either way round.
+pub fn github_segments(source: &str) -> Vec<Segment> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut out = Vec::new();
+    let mut text: Vec<&str> = Vec::new();
+    let flush = |text: &mut Vec<&str>, out: &mut Vec<Segment>| {
+        let joined = text.join("\n");
+        if !joined.trim().is_empty() {
+            out.push(Segment::Text(joined));
+        }
+        text.clear();
+    };
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        // A callout: its first quoted line names the kind.
+        if let Some(rest) = trimmed.strip_prefix('>').map(str::trim_start).and_then(|r| r.strip_prefix("[!")) {
+            if let Some((kind, after)) = rest.split_once(']') {
+                flush(&mut text, &mut out);
+                let mut inner: Vec<String> = Vec::new();
+                if !after.trim().is_empty() {
+                    inner.push(after.trim().to_string());
+                }
+                i += 1;
+                while i < lines.len() && lines[i].trim_start().starts_with('>') {
+                    let quoted = lines[i].trim_start().strip_prefix('>').unwrap_or("");
+                    inner.push(quoted.strip_prefix(' ').unwrap_or(quoted).to_string());
+                    i += 1;
+                }
+                out.push(Segment::Callout { kind: kind.trim().to_uppercase(), body: github_segments(&inner.join("\n")) });
+                continue;
+            }
+        }
+        // A folded section, to its matching close.
+        if trimmed.starts_with("<details") {
+            flush(&mut text, &mut out);
+            let mut depth = 0;
+            let mut inner: Vec<&str> = Vec::new();
+            while i < lines.len() {
+                let l = lines[i];
+                depth += l.matches("<details").count() as i32;
+                depth -= l.matches("</details>").count() as i32;
+                inner.push(l);
+                i += 1;
+                if depth <= 0 {
+                    break;
+                }
+            }
+            let joined = inner.join("\n");
+            let open_end = joined.find('>').map(|n| n + 1).unwrap_or(0);
+            let close = joined.rfind("</details>").unwrap_or(joined.len());
+            let mut body = joined[open_end..close.max(open_end)].to_string();
+            let mut summary = "Details".to_string();
+            if let (Some(s), Some(e)) = (body.find("<summary>"), body.find("</summary>")) {
+                if e > s {
+                    summary = body[s + "<summary>".len()..e].trim().to_string();
+                    body = format!("{}{}", &body[..s], &body[e + "</summary>".len()..]);
+                }
+            }
+            out.push(Segment::Details { summary, body: github_segments(&body) });
+            continue;
+        }
+        text.push(line);
+        i += 1;
+    }
+    flush(&mut text, &mut out);
+    out
+}
