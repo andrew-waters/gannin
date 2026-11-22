@@ -178,7 +178,7 @@ struct InvestmentTriage: View {
                 }
             }
             .padding(.top, 6)
-            .task(id: issue.id) { await details.load(issue.id) }
+            .task(id: issue.id) { await details.load(issue.id, org: org) }
         } label: {
             Text("Description").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         }

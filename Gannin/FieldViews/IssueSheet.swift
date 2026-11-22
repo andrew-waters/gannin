@@ -52,7 +52,7 @@ struct IssueSheet: View {
                 .formStyle(.grouped)
             }
         }
-        .task(id: reference.id) { await details.load(reference.id) }
+        .task(id: reference.id) { await details.load(reference.id, org: reference.org) }
         .loadsHarness(org: reference.org)
         // Arrows and Esc when nothing inside wants them (a field being
         // typed in keeps its arrows).

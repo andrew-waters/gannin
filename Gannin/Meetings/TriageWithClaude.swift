@@ -309,7 +309,7 @@ struct TriageWithClaudeSheet: View {
             await projects.loadDefinition(org: org, number: number)
         }
         for issue in issues where details.detail(for: issue.id) == nil {
-            await details.load(issue.id)
+            await details.load(issue.id, org: org)
         }
         let investments = configs.config(for: org).investmentConfig
         let fieldText = fields.map { "- \($0.name): \($0.options.map(\.name).joined(separator: " | "))" }.joined(separator: "\n")

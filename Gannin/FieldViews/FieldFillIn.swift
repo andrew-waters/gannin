@@ -163,7 +163,7 @@ struct FieldFillIn: View {
             }
             .padding(16)
         }
-        .task(id: issue.id) { await details.load(issue.id) }
+        .task(id: issue.id) { await details.load(issue.id, org: org) }
     }
 
     /// One field's options; the active one has the number keys, and says so.

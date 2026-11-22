@@ -1273,7 +1273,7 @@ private struct PageStack: View {
         if let workload, let pr = workload.pullRequest(id: id) {
             PullRequestColumn(pr: pr, workload: workload, timing: metrics?.pullRequest(id: id), selection: selection)
         } else if let pr = metrics?.pullRequest(id: id) {
-            MetricPullRequestColumn(pr: pr, selection: selection)
+            MetricPullRequestColumn(pr: pr, org: org, selection: selection)
         } else if let reference {
             PullRequestWindow(reference: reference, isEmbedded: true)
         } else {

@@ -41,6 +41,6 @@ enum DemoLaunch {
         let history = DemoFixture.metricsHistory
         PullRequestStore.shared.merge(history.pullRequests.values.map { StoredPullRequest(metrics: $0) }, org: org)
         MetricsStore.defaultCache.save(history, org: org)
-        DetailStore.writeCache(DemoFixture.details)
+        DetailStore.writeCache(DemoFixture.details, org: org)
     }
 }

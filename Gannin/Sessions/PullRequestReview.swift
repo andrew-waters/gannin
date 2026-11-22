@@ -1171,7 +1171,7 @@ struct PullRequestReviewView: View {
         }
         .task(id: session.id) { await load() }
         .task(id: review?.summary) { await loadStatus() }
-        .task(id: reference.id) { await details.load(reference.id) }
+        .task(id: reference.id) { await details.load(reference.id, org: reference.org) }
         .confirmationDialog("Finish this review?", isPresented: $confirmingFinish) {
             Button("Finish Review") { Task { await sessions.archiveReview(session.id) } }
         } message: {

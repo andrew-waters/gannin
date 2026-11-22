@@ -70,7 +70,7 @@ struct IssueWindow: View {
         }
         .frame(minWidth: isEmbedded ? nil : 860, minHeight: isEmbedded ? nil : 480)
         .ownWindowTitle(isEmbedded ? nil : "\(reference.repo)#\(reference.number)", subtitle: reference.title)
-        .task(id: reference.id) { await details.load(reference.id) }
+        .task(id: reference.id) { await details.load(reference.id, org: reference.org) }
         .loadsHarness(org: reference.org)
         .modifier(OwnInvestmentPrompt(isEnabled: !isEmbedded))
         // Toolbar content is hosted outside this view's normal body updates
