@@ -1326,6 +1326,7 @@ struct OrgSidebar: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(RoutineStore.self) private var routines
     @Environment(\.openWindow) private var openWindow
+    @State private var showingReviewHistory = false
 
     /// Documents of the kind that follow the harness's standard, as the page
     /// lists them.
@@ -1445,7 +1446,7 @@ struct OrgSidebar: View {
                     row(.agents)
                     row(.routines)
                     row(.agentQueue)
-                    SessionSidebarRows(org: selectedOrg)
+                    SessionSidebarRows(org: selectedOrg, showingReviewHistory: $showingReviewHistory)
                 }
 
             }
@@ -1456,6 +1457,11 @@ struct OrgSidebar: View {
                         .font(.caption)
                 }
             }
+        }
+        // On the list, which is always present, so the sheet outlives the
+        // session groups inside it.
+        .sheet(isPresented: $showingReviewHistory) {
+            if let selectedOrg { ReviewHistorySheet(org: selectedOrg) }
         }
         .task(id: selectedOrg) {
             if let selectedOrg { await projectStore.loadBoards(org: selectedOrg) }

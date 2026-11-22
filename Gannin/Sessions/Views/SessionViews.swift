@@ -2235,13 +2235,17 @@ struct SessionSidebarRows: View {
     @AppStorage("sidebarSessionsPlanning") private var planningExpanded = true
     @AppStorage("sidebarSessionsAsk") private var askExpanded = true
     @AppStorage("sidebarSessionsRefine") private var refineExpanded = true
+    /// Whether Review History is showing. The sheet is presented by the
+    /// sidebar's list (`OrgSidebar`), not here: these groups come and go, and
+    /// removing the last finished review can empty the Reviews group.
+    @Binding var showingReviewHistory: Bool
 
     var body: some View {
         // An active review posted with comments or requested changes is in
         // its own group: it waits on the author.
         let groups = SessionSidebarGroups(sessions.sessions(for: org), awaitsAuthor: sessions.awaitsAuthor)
         group("Working on issues", symbol: "terminal", sessions: groups.issues, expanded: $issuesExpanded)
-        group("Reviews", symbol: "eye", sessions: groups.reviews, expanded: $reviewsExpanded)
+        group("Reviews", symbol: "eye", sessions: groups.reviews, expanded: $reviewsExpanded, listsHistory: true)
         group("Awaiting author", symbol: "hourglass", sessions: groups.awaitingAuthor, expanded: $awaitingExpanded)
         group("Planning", symbol: "list.bullet.clipboard", sessions: groups.planning, expanded: $planningExpanded)
         group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
@@ -2249,11 +2253,13 @@ struct SessionSidebarRows: View {
     }
 
     /// A kind of session, with how many are waiting on you; empty kinds
-    /// aren't shown.
+    /// aren't shown. `listsHistory` adds Review History to the group's menu
+    /// when it holds finished reviews.
     @ViewBuilder
-    private func group(_ title: String, symbol: String, sessions list: [CodeSession], expanded: Binding<Bool>) -> some View {
+    private func group(_ title: String, symbol: String, sessions list: [CodeSession], expanded: Binding<Bool>, listsHistory: Bool = false) -> some View {
         if !list.isEmpty {
             let waiting = list.filter { sessions.attention[$0.id] != nil }.count
+            let hasHistory = listsHistory && list.contains { $0.archivedAt != nil }
             DisclosureGroup(isExpanded: expanded) {
                 ForEach(list) { session in
                     row(session)
@@ -2261,6 +2267,11 @@ struct SessionSidebarRows: View {
             } label: {
                 Label(title, systemImage: symbol)
                     .badge(waiting > 0 ? Text("\(waiting) waiting") : Text("\(list.count)"))
+                    .contextMenu {
+                        if hasHistory {
+                            Button("Review History…") { showingReviewHistory = true }
+                        }
+                    }
             }
         }
     }
@@ -2288,6 +2299,7 @@ struct SessionSidebarRows: View {
                         sessions.show(session.id, with: openWindow)
                     }
                     Button("Remove from History", role: .destructive) { sessions.remove(session.id) }
+                    Button("Review History…") { showingReviewHistory = true }
                 }
                 if let url = session.reviewOf?.url {
                     Link("Open on GitHub", destination: url)

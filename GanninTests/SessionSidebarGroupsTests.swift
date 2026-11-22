@@ -57,6 +57,16 @@ struct SessionSidebarGroupsTests {
         #expect(groups.reviews.map(\.id) == [active.id, newer.id, older.id])
     }
 
+    @Test func finishedReviewsListsOnlyArchivedOnesNewestFirst() {
+        let active = review(1)
+        let waiting = review(4)
+        let older = review(2, archivedAt: Date(timeIntervalSince1970: 100))
+        let newer = review(3, archivedAt: Date(timeIntervalSince1970: 200))
+        let work = session(5) { $0.archivedAt = Date(timeIntervalSince1970: 300) }
+        let groups = SessionSidebarGroups([older, active, waiting, newer, work], awaitsAuthor: { $0.id == waiting.id })
+        #expect(groups.finishedReviews.map(\.id) == [newer.id, older.id])
+    }
+
     @Test func archivedPlanningIsLeftOut() {
         let info = PlanningInfo(topic: "Topic", documentPath: nil, slug: "topic")
         let live = session(1) { $0.planning = info }
