@@ -36,7 +36,7 @@ The header shows what was posted (Approved, Commented or Changes requested, with
 
 In the sidebar, a review that's still open sits under Reviews until it's posted. Once you've posted its latest result, as comments, requested changes or an approval, it moves to Awaiting author, where it waits for the PR's author. A new round's result that isn't posted yet puts it back in Reviews. Finished reviews stay in Reviews as the history.
 
-To look through the history and clear out old reviews, right-click the Reviews heading and choose Review History…. The sheet lists finished reviews, newest first, and its search box narrows them by title, repo, branch or PR. Select one or more (Select All picks everything shown) and choose Remove Selected…. Gannin forgets those reviews. Their findings already committed to a harness stay there for Agents › Metrics, and the pull requests aren't touched. Right-clicking one finished review and choosing Remove from History does the same for just that review.
+To look through the history and clear out old reviews, right-click the Reviews heading, or a finished review, and choose Review History…. It covers PR reviews only: a finished issue session is forgotten when you finish it, and Ask and planning sessions are removed from their own lists. The sheet lists finished reviews, newest first, and its search box narrows them by title, repo or PR. Select one or more (Select All picks everything shown) and choose Remove Selected…. Gannin forgets those reviews. Their findings already committed to a harness stay there for Agents › Metrics, and the pull requests aren't touched. Right-clicking one finished review and choosing Remove from History does the same for just that review.
 
 ## Files and findings
 

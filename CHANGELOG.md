@@ -12,7 +12,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ### Added
 - PR reviews rate their merge risk (Low, Medium or High), shown on the Overview beside Effort and kept in the review record
 - ⇧⌘F finishes a PR review, asking first as the Finish button does
-- Review History, from the Reviews heading's menu in the sidebar, lists finished reviews with search and removes several at once
+- Review History, from the menu of the sidebar's Reviews heading or a finished review, lists finished PR reviews with search and removes several at once
 
 ### Changed
 - A PR review's Overview no longer says "Approved" when the reviewer who approved has been asked to review again: it waits on them, and a session's PR row says "Re-review requested"

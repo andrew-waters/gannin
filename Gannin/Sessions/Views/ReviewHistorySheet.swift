@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// The finished reviews of an org, newest first, to look through and remove
-/// in bulk. A search narrows them to those matching every word typed
+/// The finished PR reviews of an org, newest first, to look through and
+/// remove in bulk. Other kinds of session aren't listed: finished issue
+/// sessions are forgotten when they finish, and Ask and planning sessions
+/// have their own lists. A search narrows them to those matching every word typed
 /// (`SessionSearch`). Removing forgets a review as the sidebar's Remove from
 /// History does: its record already committed to a harness stays there.
 struct ReviewHistorySheet: View {
@@ -15,8 +17,7 @@ struct ReviewHistorySheet: View {
     /// Finished reviews, most recently finished first. Read from the store
     /// so a review removed elsewhere drops out.
     private var finished: [CodeSession] {
-        SessionSidebarGroups(sessions.sessions(for: org), awaitsAuthor: { _ in false }).reviews
-            .filter { $0.archivedAt != nil }
+        SessionSidebarGroups(sessions.sessions(for: org), awaitsAuthor: { _ in false }).finishedReviews
     }
 
     var body: some View {
@@ -26,7 +27,7 @@ struct ReviewHistorySheet: View {
         let chosen = shown.filter { selection.contains($0.id) }
         VStack(spacing: 0) {
             HStack {
-                FilterSearchField(text: $search, prompt: "Title, repo, branch or PR", fills: true)
+                FilterSearchField(text: $search, prompt: "Title, repo or PR", fills: true)
                     .onEscape { search = "" }
             }
             .controlSize(.small)
@@ -70,8 +71,8 @@ struct ReviewHistorySheet: View {
         HStack {
             Text(session.title).lineLimit(1)
             Spacer()
-            if let repo = session.reviewOf?.repo {
-                Text(repo).font(.caption).foregroundStyle(.secondary)
+            if let pullRequest = session.reviewOf {
+                Text("\(pullRequest.repo)#\(pullRequest.number)").font(.caption).foregroundStyle(.secondary)
             }
             if let archived = session.archivedAt {
                 Text(archived.formatted(date: .abbreviated, time: .omitted))

@@ -9,6 +9,8 @@ struct SessionSidebarGroups: Equatable {
     /// Active reviews that still need posting, in the order `sessions` came
     /// in, then finished ones, most recently archived first.
     var reviews: [CodeSession]
+    /// The finished reviews alone, most recently archived first.
+    var finishedReviews: [CodeSession]
     /// Active reviews whose latest result is posted: they wait on the author.
     var awaitingAuthor: [CodeSession]
     /// Planning sessions not yet archived.
@@ -27,6 +29,7 @@ struct SessionSidebarGroups: Equatable {
         let finished = all.filter { $0.archivedAt != nil }
             .sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
         reviews = active.filter { !awaitsAuthor($0) } + finished
+        finishedReviews = finished
         awaitingAuthor = active.filter(awaitsAuthor)
         planning = sessions.filter { $0.isPlanning && $0.archivedAt == nil }
     }

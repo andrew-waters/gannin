@@ -2241,12 +2241,20 @@ struct SessionSidebarRows: View {
         // An active review posted with comments or requested changes is in
         // its own group: it waits on the author.
         let groups = SessionSidebarGroups(sessions.sessions(for: org), awaitsAuthor: sessions.awaitsAuthor)
-        group("Working on issues", symbol: "terminal", sessions: groups.issues, expanded: $issuesExpanded)
-        group("Reviews", symbol: "eye", sessions: groups.reviews, expanded: $reviewsExpanded, listsHistory: true)
-        group("Awaiting author", symbol: "hourglass", sessions: groups.awaitingAuthor, expanded: $awaitingExpanded)
-        group("Planning", symbol: "list.bullet.clipboard", sessions: groups.planning, expanded: $planningExpanded)
-        group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
-        group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
+        // One sheet for the whole sidebar, outside the groups: removing the
+        // last finished review can empty the Reviews group, and a sheet
+        // attached inside it would be torn down with it.
+        Group {
+            group("Working on issues", symbol: "terminal", sessions: groups.issues, expanded: $issuesExpanded)
+            group("Reviews", symbol: "eye", sessions: groups.reviews, expanded: $reviewsExpanded, listsHistory: true)
+            group("Awaiting author", symbol: "hourglass", sessions: groups.awaitingAuthor, expanded: $awaitingExpanded)
+            group("Planning", symbol: "list.bullet.clipboard", sessions: groups.planning, expanded: $planningExpanded)
+            group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
+            group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
+        }
+        .sheet(isPresented: $showingReviewHistory) {
+            ReviewHistorySheet(org: org)
+        }
     }
 
     /// A kind of session, with how many are waiting on you; empty kinds
@@ -2269,9 +2277,6 @@ struct SessionSidebarRows: View {
                             Button("Review History…") { showingReviewHistory = true }
                         }
                     }
-            }
-            .sheet(isPresented: listsHistory ? $showingReviewHistory : .constant(false)) {
-                ReviewHistorySheet(org: org)
             }
         }
     }
@@ -2299,6 +2304,7 @@ struct SessionSidebarRows: View {
                         sessions.show(session.id, with: openWindow)
                     }
                     Button("Remove from History", role: .destructive) { sessions.remove(session.id) }
+                    Button("Review History…") { showingReviewHistory = true }
                 }
                 if let url = session.reviewOf?.url {
                     Link("Open on GitHub", destination: url)
