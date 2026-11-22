@@ -247,6 +247,23 @@ pub fn read_shared(org: &str, login: Option<&str>) -> Vec<Note> {
     out
 }
 
+/// Whether each plan item is ticked in its harness, for those found. Runs
+/// git: call off the main thread.
+fn plan_ticks(plans: &[crate::todos::PlanItem]) -> Vec<(crate::todos::PlanItem, bool)> {
+    let mut owners: Vec<&str> = plans.iter().filter_map(|p| p.harness.split('/').next()).collect();
+    owners.sort();
+    owners.dedup();
+    let snapshots: Vec<_> = owners.into_iter().flat_map(crate::harness_git::snapshots).collect();
+    plans
+        .iter()
+        .filter_map(|plan| {
+            let snapshot = snapshots.iter().find(|s| s.repo.eq_ignore_ascii_case(&plan.harness))?;
+            let (_, text) = snapshot.files.iter().find(|(path, _)| path == &plan.path)?;
+            Some((plan.clone(), crate::todos::item_ticked(text, &plan.item)?))
+        })
+        .collect()
+}
+
 /// The harness a shared note's copy is in.
 pub fn shared_harness(shared: &str) -> Option<String> {
     if shared.contains('/') {
@@ -268,7 +285,13 @@ pub struct NotesStore {
     /// Notes opened out to read where they're listed beside what they're
     /// about (`note_editor::linked_section`); not kept.
     pub expanded: std::collections::HashSet<String>,
+    /// The todo, or plan item, whose due menu is open; not kept.
+    pub due_menu: Option<String>,
+    /// The menu last closed by a click outside it, and when: that click
+    /// landing on its own chip shouldn't open it again.
+    due_closed: Option<(String, std::time::Instant)>,
     _refresh: gpui::Task<()>,
+    _remind: gpui::Task<()>,
 }
 
 impl NotesStore {
@@ -296,10 +319,40 @@ impl NotesStore {
                     {
                         return;
                     }
+                    // Todos for plan items, ticked off once the plan's are.
+                    let Ok(plans) = this.update(cx, |store: &mut NotesStore, _| store.todos.iter().filter(|t| t.done.is_none()).filter_map(|t| t.plan.clone()).collect::<Vec<_>>()) else { return };
+                    if !plans.is_empty() {
+                        let ticked = cx.background_executor().spawn(async move { plan_ticks(&plans) }).await;
+                        let _ = this.update(cx, |store: &mut NotesStore, cx| {
+                            if crate::todos::tick_plan_items(&mut store.todos, |p| ticked.iter().find(|(q, _)| q == p).map(|(_, t)| *t)) {
+                                cx.notify();
+                            }
+                        });
+                    }
                     cx.background_executor().timer(std::time::Duration::from_secs(300)).await;
                 }
             });
-            NotesStore { notes: load_all(), categories: load_categories(), todos: crate::todos::load(), shared: Vec::new(), expanded: Default::default(), _refresh: refresh }
+            // Reminders: a notification once on the day a todo's due.
+            let remind = cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(10)).await;
+                let Ok(due) = this.update(cx, |store: &mut NotesStore, cx| {
+                    let due = crate::todos::remind(&mut store.todos, Local::now());
+                    if !due.is_empty() {
+                        cx.notify();
+                    }
+                    due
+                }) else {
+                    return;
+                };
+                if !due.is_empty() {
+                    let title = if due.len() == 1 { "Todo due".to_string() } else { format!("{} todos due", due.len()) };
+                    let body = due.iter().map(|t| t.text.as_str()).collect::<Vec<_>>().join("\n");
+                    // Clicking it opens Marra's Todos.
+                    let _ = this.update(cx, |_, cx| cx.show_system_notification(gpui::SystemNotification { tag: "thread:todos".into(), title: title.into(), body: body.into(), actions: Vec::new() }));
+                }
+                cx.background_executor().timer(std::time::Duration::from_secs(50)).await;
+            });
+            NotesStore { notes: load_all(), categories: load_categories(), todos: crate::todos::load(), shared: Vec::new(), expanded: Default::default(), due_menu: None, due_closed: None, _refresh: refresh, _remind: remind }
         });
         cx.set_global(NotesGlobal(entity.clone()));
         entity
@@ -503,6 +556,40 @@ impl NotesStore {
     pub fn add_todo(&mut self, text: &str, links: Vec<Link>, cx: &mut Context<Self>) {
         crate::todos::add(&mut self.todos, text, links.iter().map(Link::to_string).collect());
         cx.notify();
+    }
+
+    /// A todo for a plan's checklist item, linked to what the plan is about.
+    pub fn add_plan_todo(&mut self, plan: crate::todos::PlanItem, due: Option<chrono::NaiveDate>, links: Vec<Link>, cx: &mut Context<Self>) {
+        crate::todos::add_plan(&mut self.todos, plan, due, links.iter().map(Link::to_string).collect());
+        self.due_menu = None;
+        cx.notify();
+    }
+
+    pub fn set_due(&mut self, id: &str, due: Option<chrono::NaiveDate>, cx: &mut Context<Self>) {
+        crate::todos::set_due(&mut self.todos, id, due);
+        self.due_menu = None;
+        cx.notify();
+    }
+
+    /// Opens a due menu, or closes it when it's the one open.
+    pub fn toggle_due_menu(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.due_closed.take().is_some_and(|(closed, at)| closed == key && at.elapsed() < std::time::Duration::from_millis(400)) {
+            return;
+        }
+        self.due_menu = if self.due_menu.as_deref() == Some(key) { None } else { Some(key.to_string()) };
+        cx.notify();
+    }
+
+    pub fn close_due_menu(&mut self, cx: &mut Context<Self>) {
+        if let Some(key) = self.due_menu.take() {
+            self.due_closed = Some((key, std::time::Instant::now()));
+            cx.notify();
+        }
+    }
+
+    /// The open todo for a plan's item, if there is one.
+    pub fn plan_todo(&self, harness: &str, path: &str, item: &str) -> Option<&Todo> {
+        self.todos.iter().find(|t| t.done.is_none() && t.plan.as_ref().is_some_and(|p| p.harness == harness && p.path == path && p.item == item))
     }
 
     pub fn toggle_todo(&mut self, id: &str, cx: &mut Context<Self>) {

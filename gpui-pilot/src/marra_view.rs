@@ -327,10 +327,13 @@ impl MarraView {
         // The checklist next, always: it isn't a conversation.
         let store = self.notes.read(cx);
         let open: Vec<&crate::todos::Todo> = store.todos.iter().filter(|t| t.done.is_none()).collect();
-        let last = match open.len() {
-            0 => "Nothing to do".to_string(),
-            1 => open[0].text.clone(),
-            n => format!("{n} to do: {}", open[0].text),
+        let due = crate::todos::due_now(&store.todos, chrono::Local::now().date_naive());
+        let last = match (due.len(), open.len()) {
+            (_, 0) => "Nothing to do".to_string(),
+            (1, _) => format!("Due: {}", due[0].text),
+            (d, _) if d > 1 => format!("{d} due: {}", due[0].text),
+            (_, 1) => open[0].text.clone(),
+            (_, n) => format!("{n} to do: {}", open[0].text),
         };
         let at = threads.iter().position(|t| t.kind != ThreadKind::Main).unwrap_or(threads.len());
         threads.insert(at, Thread { id: "todos".into(), kind: ThreadKind::Todos, title: "Todos".into(), last, activity: None, working: false, org: None });
@@ -2015,7 +2018,9 @@ impl MarraView {
     fn todos_view(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let todos = self.notes.read(cx).todos.clone();
         let mut open: Vec<crate::todos::Todo> = todos.iter().filter(|t| t.done.is_none()).cloned().collect();
-        open.sort_by_key(|t| t.added);
+        // Those with a due date first, the soonest first.
+        open.sort_by_key(|t| (t.due.is_none(), t.due, t.added));
+        let due_open = self.notes.read(cx).due_menu.clone();
         let mut done: Vec<crate::todos::Todo> = todos.iter().filter(|t| t.done.is_some()).cloned().collect();
         done.sort_by(|a, b| b.done.cmp(&a.done));
         let has_done = !done.is_empty();
@@ -2042,7 +2047,7 @@ impl MarraView {
             // What it's about, each opening where it lives.
             let mut todo_links = crate::links::parse_all(&todo.links);
             todo_links.extend(crate::links::mentions(&todo.text).into_iter().filter(|m| !todo_links.iter().any(|l| l.key() == m.key())).collect::<Vec<_>>());
-            let links: Vec<AnyElement> = todo_links
+            let mut links: Vec<AnyElement> = todo_links
                 .into_iter()
                 .enumerate()
                 .map(|(n, link)| {
@@ -2055,12 +2060,24 @@ impl MarraView {
                         .into_any_element()
                 })
                 .collect();
+            // The plan whose checklist it's from, ahead of the rest.
+            if let Some(plan) = todo.plan.clone() {
+                let url = plan.url();
+                links.insert(
+                    0,
+                    crate::note_editor::chip(SharedString::from(format!("todo-plan-{}", todo.id)), Some(crate::harness::HarnessKind::Plans.icon()), plan.title.clone(), false, theme)
+                        .on_click(move |_, _, cx| cx.open_url(&url))
+                        .into_any_element(),
+                );
+            }
+            let due = crate::note_editor::due_chip(&todo, due_open.as_deref() == Some(todo.id.as_str()), Some("marra-todo"), theme);
             let times = match (todo.done, crate::todos::took(&todo)) {
                 (Some(at), Some(took)) => format!("Added {} · done {} · {took}", crate::todos::when(todo.added), crate::todos::when(at)),
                 _ => format!("Added {}", crate::todos::when(todo.added)),
             };
             div()
                 .id(SharedString::from(format!("todo-{}", todo.id)))
+                .group("marra-todo")
                 .flex()
                 .flex_row()
                 .items_start()
@@ -2092,7 +2109,7 @@ impl MarraView {
                         .flex()
                         .flex_col()
                         .child(div().text_sm().text_color(if is_done { theme.secondary } else { theme.fg }).when(is_done, |d| d.line_through()).child(todo.text.clone()))
-                        .child(div().text_xs().text_color(theme.tertiary).child(times))
+                        .child(div().flex().flex_row().items_center().gap_1().child(div().text_xs().text_color(theme.tertiary).child(times)).child(due))
                         .when(!links.is_empty(), |d| d.child(div().flex().flex_row().flex_wrap().gap_1().pt_1().children(links))),
                 )
                 .child(
@@ -2123,7 +2140,7 @@ impl MarraView {
             .flex()
             .flex_col()
             .py_2()
-            .when(empty, |d| d.child(div().px_4().py_6().text_sm().text_color(theme.secondary).text_center().child("Nothing yet. Type below and press Return to add one; /todo adds one from any thread.")))
+            .when(empty, |d| d.child(div().px_4().py_6().text_sm().text_color(theme.secondary).text_center().child("Nothing yet. Type below and press Return to add one; /todo adds one from any thread. End it with a day (\"in a week\", \"by fri\", \"on 29 Nov\") to be reminded then.")))
             .children(open_rows)
             .when(!done_rows.is_empty(), |d| d.child(div().px_4().pt_3().pb_1().text_xs().text_color(theme.secondary).child("Done")))
             .children(done_rows);

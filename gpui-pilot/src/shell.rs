@@ -4997,8 +4997,44 @@ impl Workspace {
             // Where the tabs go: down a column on the left, or across the top.
             .child(self.tabs_layout(theme, cx))
             .child(div().flex_1())
+            .children(self.due_button(theme, cx))
             .when(self.viewer.is_some(), |d| d.child(self.sync_button(theme, cx)))
 
+    }
+
+    /// How many todos are due today or overdue, opening Marra's Todos; none
+    /// when nothing's due.
+    fn due_button(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let store = crate::notes::NotesStore::get(cx);
+        let today = chrono::Local::now().date_naive();
+        let (count, overdue, first) = {
+            let s = store.read(cx);
+            let due = crate::todos::due_now(&s.todos, today);
+            (due.len(), due.iter().any(|t| t.due.is_some_and(|d| d < today)), due.first().map(|t| t.text.clone()))
+        };
+        let first = first?;
+        let colour = crate::note_editor::due_colour(if overdue { crate::todos::Urgency::Overdue } else { crate::todos::Urgency::Today }, theme);
+        let tip = if count == 1 { format!("Due: {first}") } else { format!("{count} todos due, first: {first}") };
+        Some(
+            div()
+                .id("todos-due")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .px_1p5()
+                .mr_2()
+                .rounded_md()
+                .text_xs()
+                .text_color(colour)
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.row_selected))
+                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+                .on_click(|_, _, cx| cx.defer(|cx| crate::marra_view::show_thread(Some("todos".into()), cx)))
+                .child(div().size(px(6.)).rounded_full().bg(colour))
+                .child(if count == 1 { "1 todo due".to_string() } else { format!("{count} todos due") })
+                .into_any_element(),
+        )
     }
 
     /// The tab layout as one button: its icon is the layout in use, and a
@@ -7052,6 +7088,75 @@ impl Workspace {
 
     /// A harness document: its title, status, date and path; what it's
     /// about; its front matter as facts; and its text.
+    /// A plan's unticked checklist items, each with a reminder: Remind Me
+    /// makes a private todo for it, due on the day picked, linked to the
+    /// issues the plan is about. It ticks itself off with the item.
+    fn doc_tasks(&self, doc: &crate::harness::Doc, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let open: Vec<String> = crate::todos::checklist(doc.body()).into_iter().filter(|(ticked, _)| !ticked).map(|(_, item)| item).collect();
+        if open.is_empty() {
+            return None;
+        }
+        let store = crate::notes::NotesStore::get(cx);
+        let (todos, menu): (Vec<Option<crate::todos::Todo>>, Option<String>) = {
+            let s = store.read(cx);
+            (open.iter().map(|item| s.plan_todo(&doc.harness, &doc.path, item).cloned()).collect(), s.due_menu.clone())
+        };
+        let about: Vec<crate::links::Link> = doc.references.iter().filter(|r| r.2).filter_map(|(repo, number, _)| Some(crate::links::Link::Issue { repo: repo.clone()?, number: u64::try_from(*number).ok()? })).collect();
+        let mut section = div().flex().flex_col().gap_1().child(div().font_weight(FontWeight::SEMIBOLD).child(format!("Open Tasks · {}", open.len())));
+        for (i, (item, todo)) in open.into_iter().zip(todos).enumerate() {
+            let key = format!("plan:{}:{}", doc.path, i);
+            let control = match &todo {
+                Some(todo) => crate::note_editor::due_chip(todo, menu.as_deref() == Some(todo.id.as_str()), None, theme),
+                None => {
+                    let opened = menu.as_deref() == Some(key.as_str());
+                    let toggle_key = key.clone();
+                    let plan = crate::todos::PlanItem { harness: doc.harness.clone(), path: doc.path.clone(), title: doc.title.clone(), item: item.clone() };
+                    let links = about.clone();
+                    div()
+                        .flex_none()
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("remind-{key}")))
+                                .px_1p5()
+                                .rounded_md()
+                                .text_xs()
+                                .text_color(theme.secondary)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme.row_selected).text_color(theme.fg))
+                                .when(opened, |d| d.bg(theme.row_selected))
+                                .child("Remind Me")
+                                .on_click(move |_, _, cx| {
+                                    let store = crate::notes::NotesStore::get(cx);
+                                    store.update(cx, |s, cx| s.toggle_due_menu(&toggle_key, cx));
+                                }),
+                        )
+                        .when(opened, |d| {
+                            d.child(crate::note_editor::due_menu(&key, None, theme, std::rc::Rc::new(move |due, cx| {
+                                let store = crate::notes::NotesStore::get(cx);
+                                store.update(cx, |s, cx| s.add_plan_todo(plan.clone(), due, links.clone(), cx));
+                            })))
+                        })
+                        .into_any_element()
+                }
+            };
+            section = section.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .py_0p5()
+                    .px_2()
+                    .rounded_md()
+                    .hover(|s| s.bg(theme.tile))
+                    .child(div().flex_none().size(px(12.)).rounded(px(3.)).border_1().border_color(theme.secondary))
+                    .child(div().flex_1().min_w_0().text_sm().child(item))
+                    .child(control),
+            );
+        }
+        Some(section.into_any_element())
+    }
+
     fn doc_page(&self, drawer: &Drawer, doc: &crate::harness::Doc, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let seq = drawer.seq;
         let quiet = |text: String| div().text_xs().text_color(theme.secondary).child(text);
@@ -7153,6 +7258,7 @@ impl Workspace {
                     .flex_col()
                     .gap_6()
                     .p_5()
+                    .children(self.doc_tasks(doc, theme, cx))
                     .children(issues)
                     .child(markdown(&format!("doc-{seq}"), doc.body(), theme)),
             )
