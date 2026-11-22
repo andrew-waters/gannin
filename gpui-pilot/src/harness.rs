@@ -312,7 +312,10 @@ pub fn plan_rows<T: EventEmitter<OpenDoc> + 'static>(id: &'static str, plans: &[
         .enumerate()
         .map(|(i, (doc, about))| {
             let opened = doc.clone();
-            div()
+            let fold = format!("plan:{}:{}", doc.harness, doc.path);
+            let folded = crate::notes::NotesStore::get(cx).read(cx).folded.contains(&fold);
+            let tasks = if folded { None } else { open_tasks(&format!("{id}-{i}"), doc, theme, cx) };
+            let row = div()
                 .id((id, i))
                 .flex()
                 .flex_row()
@@ -335,23 +338,112 @@ pub fn plan_rows<T: EventEmitter<OpenDoc> + 'static>(id: &'static str, plans: &[
                         .child(div().text_xs().text_color(theme.secondary).truncate().child(if *about { doc.path.clone() } else { format!("{} · mentions it", doc.path) })),
                 )
                 .when(doc.tasks > 0, |d| {
+                    let open = doc.tasks > doc.tasks_done;
                     d.child(
                         div()
+                            .id((SharedString::from(format!("{id}-fold")), i))
                             .flex_none()
                             .h(px(20.))
+                            .px_1()
+                            .rounded_md()
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap_1p5()
                             .text_xs()
                             .text_color(theme.secondary)
+                            // The count folds the open tasks away, and back.
+                            .when(open, |d| {
+                                d.hover(|s| s.bg(theme.row_selected))
+                                    .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(if folded { "Show open tasks".into() } else { "Hide open tasks".into() })).into())
+                                    .on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        let store = crate::notes::NotesStore::get(cx);
+                                        store.update(cx, |s, cx| s.toggle_folded(&fold, cx));
+                                    })
+                            })
                             .child(crate::charts::progress_ring(doc.tasks_done, doc.tasks, 14., theme))
-                            .child(format!("{}/{}", doc.tasks_done, doc.tasks)),
+                            .child(format!("{}/{}", doc.tasks_done, doc.tasks))
+                            .when(open, |d| d.child(gpui::svg().path(if folded { "icons/chevron_right.svg" } else { "icons/chevron_down.svg" }).size(px(10.)).text_color(theme.tertiary))),
                     )
-                })
-                .into_any_element()
+                });
+            div().flex().flex_col().child(row).children(tasks.map(|t| div().pl(px(22.)).pb_1().child(t))).into_any_element()
         })
         .collect()
+}
+
+/// A plan's unticked checklist items, each with a reminder: Remind Me makes
+/// a private todo for it, due on the day picked and linked to the issues
+/// the plan is about, which ticks itself off with the item; once there's
+/// one, when it's due, to change. `place` keeps menus apart where the same
+/// plan shows twice.
+pub fn open_tasks(place: &str, doc: &Doc, theme: &Theme, cx: &mut gpui::App) -> Option<gpui::AnyElement> {
+    let open: Vec<String> = crate::todos::checklist(doc.body()).into_iter().filter(|(ticked, _)| !ticked).map(|(_, item)| item).collect();
+    if open.is_empty() {
+        return None;
+    }
+    let store = crate::notes::NotesStore::get(cx);
+    let (todos, menu): (Vec<Option<crate::todos::Todo>>, Option<String>) = {
+        let s = store.read(cx);
+        (open.iter().map(|item| s.plan_todo(&doc.harness, &doc.path, item).cloned()).collect(), s.due_menu.clone())
+    };
+    let about: Vec<crate::links::Link> = doc.references.iter().filter(|r| r.2).filter_map(|(repo, number, _)| Some(crate::links::Link::Issue { repo: repo.clone()?, number: u64::try_from(*number).ok()? })).collect();
+    let mut list = div().flex().flex_col();
+    for (i, (item, todo)) in open.into_iter().zip(todos).enumerate() {
+        let key = format!("{place}:task:{}:{i}", doc.path);
+        let opened = menu.as_deref() == Some(key.as_str());
+        let control = match &todo {
+            Some(todo) => crate::note_editor::due_chip(todo, key.clone(), opened, None, theme),
+            None => {
+                let toggle_key = key.clone();
+                let plan = crate::todos::PlanItem { harness: doc.harness.clone(), path: doc.path.clone(), title: doc.title.clone(), item: item.clone() };
+                let links = about.clone();
+                div()
+                    .flex_none()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("remind-{key}")))
+                            .px_1()
+                            .rounded_sm()
+                            .text_xs()
+                            .text_color(theme.tertiary)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme.row_selected).text_color(theme.fg))
+                            .map(|d| if opened { d.bg(theme.row_selected) } else { d.invisible().group_hover("open-task", |s| s.visible()) })
+                            .child("Remind Me")
+                            .on_click(move |_, _, cx| {
+                                cx.stop_propagation();
+                                let store = crate::notes::NotesStore::get(cx);
+                                store.update(cx, |s, cx| s.toggle_due_menu(&toggle_key, cx));
+                            }),
+                    )
+                    .when(opened, |d| {
+                        d.child(crate::note_editor::due_menu(&key, None, theme, std::rc::Rc::new(move |due, cx| {
+                            let store = crate::notes::NotesStore::get(cx);
+                            store.update(cx, |s, cx| s.add_plan_todo(plan.clone(), due, links.clone(), cx));
+                        })))
+                    })
+                    .into_any_element()
+            }
+        };
+        list = list.child(
+            div()
+                .id(SharedString::from(format!("task-{key}")))
+                .group("open-task")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .py(px(1.))
+                .px_1()
+                .rounded_md()
+                .hover(|s| s.bg(theme.tile))
+                .child(div().flex_none().size(px(10.)).rounded(px(2.)).border_1().border_color(theme.tertiary))
+                .child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.secondary).child(item))
+                .child(control),
+        );
+    }
+    Some(list.into_any_element())
 }
 
 /// The status in a word or two, as Gannin's `shortStatus`.

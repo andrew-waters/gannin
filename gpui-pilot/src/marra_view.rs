@@ -2070,7 +2070,7 @@ impl MarraView {
                         .into_any_element(),
                 );
             }
-            let due = crate::note_editor::due_chip(&todo, due_open.as_deref() == Some(todo.id.as_str()), Some("marra-todo"), theme);
+            let due = crate::note_editor::due_chip(&todo, todo.id.clone(), due_open.as_deref() == Some(todo.id.as_str()), Some("marra-todo"), theme);
             let times = match (todo.done, crate::todos::took(&todo)) {
                 (Some(at), Some(took)) => format!("Added {} · done {} · {took}", crate::todos::when(todo.added), crate::todos::when(at)),
                 _ => format!("Added {}", crate::todos::when(todo.added)),

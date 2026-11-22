@@ -309,6 +309,9 @@ impl ReviewPanel {
     pub fn new(launch: Launch, terminal: Entity<Terminal>, view: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let place = launch.subject.clone().map(|s| (s, launch.org.clone()));
         let mut panel = Self::session(launch, terminal, view, window, cx);
+        // Plans' open tasks show their reminders.
+        let notes = crate::notes::NotesStore::get(cx);
+        cx.observe(&notes, |_, _, cx| cx.notify()).detach();
         if let Some((s, org)) = place {
             let main = cx.new(|cx| crate::pull_page::PullPage::new(crate::prs::PrItem::stub(&s.id, &s.repo, s.number, &s.title, &s.url), org, cx));
             let parts = PullParts::of(&main, true, cx);

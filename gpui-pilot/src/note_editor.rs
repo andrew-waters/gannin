@@ -480,7 +480,7 @@ pub fn todo_row(todo: &Todo, due_open: bool, theme: &Theme, on_toggle: impl Fn(&
                 .map(|d| if done { d.bg(theme.selected).border_color(theme.selected).text_color(theme.on_selected).text_xs().child("✓") } else { d.border_color(theme.secondary) }),
         )
         .child(div().flex_1().min_w_0().truncate().text_sm().text_color(if done { theme.secondary } else { theme.fg }).when(done, |d| d.line_through()).child(todo.text.clone()))
-        .child(due_chip(todo, due_open, Some("linked-todo"), theme))
+        .child(due_chip(todo, todo.id.clone(), due_open, Some("linked-todo"), theme))
 }
 
 /// A due date's colour: red once overdue, orange on the day.
@@ -496,7 +496,7 @@ pub fn due_colour(urgency: crate::todos::Urgency, theme: &Theme) -> gpui::Hsla {
 /// When a todo's due, opening a menu to change it. With none, it's "Due
 /// Date", shown only while `group` is hovered when there's one; a done
 /// todo just shows the day it was due.
-pub fn due_chip(todo: &Todo, open: bool, group: Option<&'static str>, theme: &Theme) -> AnyElement {
+pub fn due_chip(todo: &Todo, key: String, open: bool, group: Option<&'static str>, theme: &Theme) -> AnyElement {
     let today = chrono::Local::now().date_naive();
     let (label, colour) = match todo.due {
         Some(due) if todo.done.is_some() => (crate::todos::due_label(due, today).0, theme.tertiary),
@@ -507,11 +507,11 @@ pub fn due_chip(todo: &Todo, open: bool, group: Option<&'static str>, theme: &Th
         None if todo.done.is_some() => return div().into_any_element(),
         None => ("Due Date".to_string(), theme.tertiary),
     };
-    let id = todo.id.clone();
+    let id = key.clone();
     let pick_id = todo.id.clone();
     let unset = todo.due.is_none();
     let chip = div()
-        .id(SharedString::from(format!("todo-due-{}", todo.id)))
+        .id(SharedString::from(format!("todo-due-{key}")))
         .flex_none()
         .px_1()
         .rounded_sm()
@@ -534,7 +534,7 @@ pub fn due_chip(todo: &Todo, open: bool, group: Option<&'static str>, theme: &Th
         .flex_none()
         .child(chip)
         .when(open, |d| {
-            d.child(due_menu(&todo.id, todo.due, theme, std::rc::Rc::new(move |due, cx| {
+            d.child(due_menu(&key, todo.due, theme, std::rc::Rc::new(move |due, cx| {
                 let store = NotesStore::get(cx);
                 store.update(cx, |s, cx| s.set_due(&pick_id, due, cx));
             })))

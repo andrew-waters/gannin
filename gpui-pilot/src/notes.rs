@@ -285,6 +285,8 @@ pub struct NotesStore {
     /// Notes opened out to read where they're listed beside what they're
     /// about (`note_editor::linked_section`); not kept.
     pub expanded: std::collections::HashSet<String>,
+    /// Plans whose open tasks are folded away under their rows; not kept.
+    pub folded: std::collections::HashSet<String>,
     /// The todo, or plan item, whose due menu is open; not kept.
     pub due_menu: Option<String>,
     /// The menu last closed by a click outside it, and when: that click
@@ -352,7 +354,7 @@ impl NotesStore {
                 }
                 cx.background_executor().timer(std::time::Duration::from_secs(50)).await;
             });
-            NotesStore { notes: load_all(), categories: load_categories(), todos: crate::todos::load(), shared: Vec::new(), expanded: Default::default(), due_menu: None, due_closed: None, _refresh: refresh, _remind: remind }
+            NotesStore { notes: load_all(), categories: load_categories(), todos: crate::todos::load(), shared: Vec::new(), expanded: Default::default(), folded: Default::default(), due_menu: None, due_closed: None, _refresh: refresh, _remind: remind }
         });
         cx.set_global(NotesGlobal(entity.clone()));
         entity
@@ -396,6 +398,13 @@ impl NotesStore {
             None => (None, None),
         };
         save(note);
+        cx.notify();
+    }
+
+    pub fn toggle_folded(&mut self, key: &str, cx: &mut Context<Self>) {
+        if !self.folded.remove(key) {
+            self.folded.insert(key.to_string());
+        }
         cx.notify();
     }
 
