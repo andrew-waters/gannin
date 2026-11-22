@@ -723,15 +723,7 @@ pub fn check(token: &str, repo: &str, number: i64, since: Option<chrono::DateTim
     let nodes = |v: &Value| v["nodes"].as_array().cloned().unwrap_or_default();
     let commits = nodes(&pr["commits"]);
     let head = pr["headRefOid"].as_str().unwrap_or_default().to_string();
-    let by_time = commits.iter().filter(|c| after(&c["commit"]["committedDate"])).count();
-    let new_commits = match reviewed {
-        Some(sha) if sha == head => 0,
-        Some(sha) => match commits.iter().position(|c| c["commit"]["oid"].as_str() == Some(sha)) {
-            Some(i) => commits.len() - i - 1,
-            None => by_time.max(1),
-        },
-        None => by_time,
-    };
+    let new_commits = commits_after(&commits, &head, reviewed, &after);
     let others = |n: &Value| n["author"]["login"].as_str().is_some_and(|l| l != viewer);
     let reviews = nodes(&pr["reviews"]);
     let new_comments = nodes(&pr["comments"]).iter().filter(|c| others(c) && after(&c["createdAt"])).count()
@@ -742,4 +734,69 @@ pub fn check(token: &str, repo: &str, number: i64, since: Option<chrono::DateTim
         .filter_map(|r| Some((r["state"].as_str()?.to_string(), r["submittedAt"].as_str()?.parse().ok()?, r["url"].as_str().unwrap_or_default().to_string())))
         .max_by_key(|r| r.1);
     Ok(Changes { state: pr["state"].as_str().unwrap_or("OPEN").to_string(), new_commits, head, new_comments, mine })
+}
+
+/// The review panel's once-a-minute watch: like `check`, but only the PR's
+/// state, its commits and the viewer's own reviews, so it's one small
+/// query and leaves comments to Check for Changes. `new_comments` is
+/// always 0. Read only.
+pub fn check_commits(token: &str, repo: &str, number: i64, since: Option<chrono::DateTime<chrono::Utc>>, reviewed: Option<&str>) -> Result<Changes, String> {
+    let (owner, name) = repo.split_once('/').ok_or("Not a repository")?;
+    let query = "query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) { state headRefOid commits(last: 100) { nodes { commit { oid committedDate } } } reviews(last: 50) { nodes { state submittedAt url author { login } } } } } }";
+    let data = crate::github::graphql(token, query, json!({ "owner": owner, "name": name, "number": number })).map_err(|e| e.to_string())?;
+    let viewer = data["viewer"]["login"].as_str().unwrap_or("");
+    let pr = &data["repository"]["pullRequest"];
+    let after = |v: &Value| v.as_str().and_then(|t| t.parse::<chrono::DateTime<chrono::Utc>>().ok()).is_some_and(|t| since.is_none_or(|s| t > s));
+    let nodes = |v: &Value| v["nodes"].as_array().cloned().unwrap_or_default();
+    let commits = nodes(&pr["commits"]);
+    let head = pr["headRefOid"].as_str().unwrap_or_default().to_string();
+    let new_commits = commits_after(&commits, &head, reviewed, &after);
+    let mine = nodes(&pr["reviews"])
+        .iter()
+        .filter(|r| r["author"]["login"].as_str() == Some(viewer) && after(&r["submittedAt"]))
+        .filter_map(|r| Some((r["state"].as_str()?.to_string(), r["submittedAt"].as_str()?.parse().ok()?, r["url"].as_str().unwrap_or_default().to_string())))
+        .max_by_key(|r| r.1);
+    Ok(Changes { state: pr["state"].as_str().unwrap_or("OPEN").to_string(), new_commits, head, new_comments: 0, mine })
+}
+
+/// The commits after the one the review read (`reviewed`), or, when that
+/// isn't known, those dated after the review. A reviewed head no longer
+/// in the list (a force-push) counts as at least one.
+fn commits_after(commits: &[Value], head: &str, reviewed: Option<&str>, after: &dyn Fn(&Value) -> bool) -> usize {
+    let by_time = commits.iter().filter(|c| after(&c["commit"]["committedDate"])).count();
+    match reviewed {
+        Some(sha) if sha == head => 0,
+        Some(sha) => match commits.iter().position(|c| c["commit"]["oid"].as_str() == Some(sha)) {
+            Some(i) => commits.len() - i - 1,
+            None => by_time.max(1),
+        },
+        None => by_time,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commits(oids: &[(&str, &str)]) -> Vec<Value> {
+        oids.iter().map(|(oid, at)| json!({ "commit": { "oid": oid, "committedDate": at } })).collect()
+    }
+
+    fn after(since: &str) -> impl Fn(&Value) -> bool {
+        let since: chrono::DateTime<chrono::Utc> = since.parse().unwrap();
+        move |v: &Value| v.as_str().and_then(|t| t.parse::<chrono::DateTime<chrono::Utc>>().ok()).is_some_and(|t| t > since)
+    }
+
+    #[test]
+    fn counts_commits_after_the_reviewed_head() {
+        let list = commits(&[("a", "2026-11-01T00:00:00Z"), ("b", "2026-11-02T00:00:00Z"), ("c", "2026-11-03T00:00:00Z")]);
+        let after = after("2026-11-01T12:00:00Z");
+        assert_eq!(commits_after(&list, "c", Some("c"), &after), 0);
+        assert_eq!(commits_after(&list, "c", Some("a"), &after), 2);
+        // A force-push: the reviewed head's gone, at least one.
+        assert_eq!(commits_after(&list, "c", Some("gone"), &after), 2);
+        assert_eq!(commits_after(&commits(&[("x", "2026-10-01T00:00:00Z")]), "x", Some("gone"), &after), 1);
+        // No reviewed head known: by date.
+        assert_eq!(commits_after(&list, "c", None, &after), 2);
+    }
 }

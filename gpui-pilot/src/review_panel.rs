@@ -145,6 +145,8 @@ impl PullParts {
 const SETTLE: Duration = Duration::from_millis(1500);
 /// How long Review Again waits for claude to show it took the prompt.
 const AGAIN_PATIENCE: Duration = Duration::from_secs(60);
+/// How often an open review checks its PR for new commits.
+const WATCH_EVERY: Duration = Duration::from_secs(60);
 
 pub struct ReviewPanel {
     /// The panel's own focus, so the window's shortcuts work with the
@@ -175,6 +177,9 @@ pub struct ReviewPanel {
     /// The last Check for Changes: when, and what it found or why it failed.
     checked: Option<(chrono::DateTime<chrono::Utc>, Result<review::Changes, String>)>,
     checking: bool,
+    /// The watch's last look at the PR's commits (`check_commits`), for the
+    /// review it was made against: cleared with each new result.
+    watched: Option<(chrono::DateTime<chrono::Utc>, review::Changes)>,
     /// Something to say about the review's record in the harness (a pull
     /// request left open, or a failure).
     record_note: Option<String>,
@@ -223,6 +228,8 @@ pub struct ReviewPanel {
     /// Overview and a sidebar.
     pull: Option<PullParts>,
     _poll: Option<Task<()>>,
+    /// Checks the PR for new commits once a minute (live sessions only).
+    _watch: Option<Task<()>>,
     /// Redraws the relative times now and then.
     _clock: Task<()>,
 }
@@ -341,6 +348,8 @@ impl ReviewPanel {
                 .update(cx, |this, cx| {
                     if result.is_some() && this.result != result {
                         this.result = result;
+                        // The watch counts from the new review.
+                        this.watched = None;
                         this.remember_risk(cx);
                         // A check with each new result, so Review Again knows
                         // whether anything's changed since, and the commit the
@@ -419,6 +428,7 @@ impl ReviewPanel {
             posted,
             checked: None,
             checking: false,
+            watched: None,
             record_note: None,
             resolve_note: None,
             seen_state: None,
@@ -453,6 +463,7 @@ impl ReviewPanel {
             shortcuts,
             post: None,
             _poll: Some(poll),
+            _watch: Some(Self::watch(cx)),
         }
     }
 
@@ -477,6 +488,7 @@ impl ReviewPanel {
             posted,
             checked: None,
             checking: false,
+            watched: None,
             record_note: None,
             resolve_note: None,
             seen_state: None,
@@ -511,6 +523,7 @@ impl ReviewPanel {
             shortcuts: Self::shortcut_bar(None, window, cx),
             post,
             _poll: None,
+            _watch: None,
         }
     }
 
@@ -923,10 +936,7 @@ impl ReviewPanel {
     /// count: the code the findings describe hasn't changed.
     fn stale(&self, snapshot: Option<&Snapshot>) -> Option<usize> {
         self.result.as_ref()?;
-        let checked = match &self.checked {
-            Some((_, Ok(c))) if c.state == "OPEN" => c.new_commits,
-            _ => 0,
-        };
+        let checked = self.commits_since();
         let moved = matches!((self.reviewed_head(), snapshot), (Some(head), Some(s)) if !s.head_sha.is_empty() && head != s.head_sha);
         if checked > 0 {
             Some(checked)
@@ -949,7 +959,96 @@ impl ReviewPanel {
     /// Whether the last check found new commits or comments since the
     /// review, so reviewing again is worth it.
     fn has_changes(&self) -> bool {
-        matches!(&self.checked, Some((_, Ok(c))) if c.state == "OPEN" && (c.new_commits > 0 || c.new_comments > 0))
+        self.commits_since() > 0 || matches!(&self.checked, Some((_, Ok(c))) if c.state == "OPEN" && c.new_comments > 0)
+    }
+
+    /// New commits since the review, from whichever is newer of the last
+    /// Check for Changes and the watch; 0 once the PR's merged or closed.
+    fn commits_since(&self) -> usize {
+        let checked = match &self.checked {
+            Some((at, Ok(c))) => Some((*at, c)),
+            _ => None,
+        };
+        let watched = self.watched.as_ref().map(|(at, c)| (*at, c));
+        match [checked, watched].into_iter().flatten().max_by_key(|(at, _)| *at) {
+            Some((_, c)) if c.state == "OPEN" => c.new_commits,
+            _ => 0,
+        }
+    }
+
+    /// The new commits for the tab's badge: none until there's a review.
+    pub fn new_commits(&self) -> usize {
+        if self.result.is_some() { self.commits_since() } else { 0 }
+    }
+
+    /// Once a minute, while the review has a result and its PR is open,
+    /// looks for new commits (`review::check_commits`): read only, quiet
+    /// (no Checking… state), and holding off while GitHub's budget is low.
+    /// It stops once the PR's merged or closed; it doesn't record that in
+    /// the harness, which Check for Changes still does.
+    fn watch(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(WATCH_EVERY).await;
+            let Ok(ask) = this.update(cx, |this, _| {
+                let ended = [this.checked.as_ref().and_then(|(_, c)| c.as_ref().ok()), this.watched.as_ref().map(|(_, c)| c)]
+                    .into_iter()
+                    .flatten()
+                    .any(|c| c.state != "OPEN");
+                if ended {
+                    return Err(());
+                }
+                if this.result.is_none() || this.checking || crate::github::should_hold_off() {
+                    return Ok(None);
+                }
+                let (repo, number) = this.subject();
+                let since = this.result.as_ref().and_then(|r| r.at);
+                Ok((!repo.is_empty()).then(|| (repo, number, since, this.reviewed_head().map(str::to_string))))
+            }) else {
+                return;
+            };
+            let Some((repo, number, since, reviewed)) = (match ask {
+                Err(()) => return,
+                Ok(ask) => ask,
+            }) else {
+                continue;
+            };
+            let found = cx
+                .background_executor()
+                .spawn(async move {
+                    let token = crate::auth::token().ok_or("Not signed in")?;
+                    review::check_commits(&token, &repo, number, since, reviewed.as_deref())
+                })
+                .await;
+            // A failed look is tried again next minute; it says nothing.
+            let Ok(changes) = found else { continue };
+            if this
+                .update(cx, |this, cx| {
+                    // The result may have moved on while it looked.
+                    if this.result.as_ref().and_then(|r| r.at) != since {
+                        return;
+                    }
+                    if let Some((state, at, url)) = &changes.mine {
+                        if this.posted.as_ref().is_none_or(|p| p.at < *at) {
+                            this.record_posted(Posted { event: state.clone(), at: *at, url: url.clone() });
+                            cx.notify();
+                        }
+                    }
+                    if this.reviewed_head().is_none() && changes.new_commits == 0 && !changes.head.is_empty() {
+                        this.remember_head(changes.head.clone());
+                    }
+                    let before = this.commits_since();
+                    let moved = this.watched.as_ref().is_none_or(|(_, c)| c.head != changes.head || c.state != changes.state || c.new_commits != changes.new_commits);
+                    this.watched = Some((chrono::Utc::now(), changes));
+                    if moved || before != this.commits_since() {
+                        this.hold_to_comment();
+                        cx.notify();
+                    }
+                })
+                .is_err()
+            {
+                return;
+            }
+        })
     }
 
     /// The review as its record needs it (live sessions only).

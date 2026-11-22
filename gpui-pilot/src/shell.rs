@@ -5790,6 +5790,10 @@ impl Workspace {
                     Nav::Session(session) => self.session(session, cx).and_then(|p| p.read(cx).outcome),
                     _ => None,
                 };
+                let new_commits = match tab.nav {
+                    Nav::Session(session) => self.session(session, cx).map(|p| p.read(cx).new_commits).unwrap_or(0),
+                    _ => 0,
+                };
                 let landing = theme.row_selected;
                 let pinned = self.is_pinned(tab, cx);
                 div()
@@ -5923,6 +5927,25 @@ impl Workspace {
                         _ => None,
                     }, |d, count| {
                         d.child(div().text_xs().text_color(theme.secondary).child(count))
+                    })
+                    // A review's PR has new commits since it: the count,
+                    // before the review's own badge.
+                    .when(new_commits > 0 && self.renaming.as_ref().is_none_or(|(r, _)| *r != id), |d| {
+                        let tip = format!("{new_commits} new commit{} since the review", if new_commits == 1 { "" } else { "s" });
+                        d.child(
+                            div()
+                                .id(("tab-commits", index))
+                                .flex_none()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_0p5()
+                                .text_xs()
+                                .text_color(theme.orange())
+                                .child(gpui::svg().path(crate::icons::COMMIT).size(px(12.)).text_color(theme.orange()))
+                                .child(new_commits.to_string())
+                                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into()),
+                        )
                     })
                     // Approved (a review you posted, or every PR of the
                     // work), every PR merged, or changes requested.
