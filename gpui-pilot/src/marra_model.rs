@@ -320,6 +320,9 @@ pub struct SessionInfo {
     pub claude_id: Option<String>,
     /// A review with a result not yet posted: findings kept and the verdict.
     pub review_ready: Option<(usize, Option<String>)>,
+    /// A review's new commits on its PR since the review (0 when none).
+    pub new_commits: usize,
+    pub new_commits_since: DateTime<Local>,
 }
 
 /// Every session open, in every window, as Marra last read them. Read
@@ -372,6 +375,8 @@ fn live_sessions(cx: &App) -> Vec<SessionInfo> {
                 subject_link: launch.and_then(|l| l.subject.clone()),
                 claude_id: launch.map(|l| l.claude_id()).or_else(|| p.claude_id.clone()),
                 review_ready: p.review_ready(cx),
+                new_commits: p.new_commits,
+                new_commits_since: p.new_commits_since,
             });
         }
     }
@@ -735,7 +740,7 @@ impl Marra {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for s in self.sessions.clone() {
-            (s.key, s.title, s.state.label(), s.since.timestamp(), s.review_ready.map(|r| r.0)).hash(&mut hasher);
+            (s.key, s.title, s.state.label(), s.since.timestamp(), s.review_ready.map(|r| r.0), s.new_commits).hash(&mut hasher);
         }
         let work = self.work.clone();
         for pr in work.reviews.iter().chain(&work.mine) {
@@ -871,7 +876,7 @@ impl Marra {
                     None => (404, json!({ "error": "No such request; it may have been answered." })),
                 }
             }
-            ("GET", ["sessions"]) => (200, json!({ "sessions": self.sessions.clone().iter().map(|s| json!({ "id": s.key, "title": s.title, "kind": s.kind, "state": s.state.label(), "since": s.since.to_rfc3339(), "subject": s.subject, "server": s.server, "review_ready": s.review_ready.as_ref().map(|(kept, verdict)| json!({ "kept": kept, "verdict": verdict })) })).collect::<Vec<_>>() })),
+            ("GET", ["sessions"]) => (200, json!({ "sessions": self.sessions.clone().iter().map(|s| json!({ "id": s.key, "title": s.title, "kind": s.kind, "state": s.state.label(), "since": s.since.to_rfc3339(), "subject": s.subject, "server": s.server, "review_ready": s.review_ready.as_ref().map(|(kept, verdict)| json!({ "kept": kept, "verdict": verdict })), "new_commits": s.new_commits })).collect::<Vec<_>>() })),
             ("POST", ["sessions", key, "message"]) if !text.is_empty() => {
                 let key = urldecode(key);
                 match self.sessions.clone().into_iter().find(|s| s.key == key) {
@@ -1217,6 +1222,14 @@ impl Marra {
                 pr: None,
                 returned: false,
             };
+            // New commits on a review's PR since the review: until Review
+            // Again catches up. The count is in the task (and so the key),
+            // so another push tells again.
+            if s.new_commits > 0 {
+                let n = s.new_commits;
+                let task = format!("{n} new commit{} since the review", if n == 1 { "" } else { "s" });
+                out.push(Need { since: s.new_commits_since, ..base(1, &task, "Review Again to catch up".into()) });
+            }
             if let Some((kept, verdict)) = &s.review_ready {
                 let verdict = verdict.clone().map(|v| format!("{v}, ")).unwrap_or_default();
                 out.push(base(1, "Review ready to post", format!("{verdict}{kept} finding{} kept", if *kept == 1 { "" } else { "s" })));

@@ -90,6 +90,11 @@ pub struct SessionPage {
     /// Where a review or a piece of work has got (approved, merged), for
     /// its tab's badge. Kept here so the tab redraws only when it changes.
     pub outcome: Option<Outcome>,
+    /// A review's new commits on its PR since the review, for its tab's
+    /// badge: 0 when none, or not a review.
+    pub new_commits: usize,
+    /// When `new_commits` last changed, for how long it's waited.
+    pub new_commits_since: chrono::DateTime<chrono::Local>,
     /// When the state last changed, for "waiting since".
     pub since: chrono::DateTime<chrono::Local>,
     /// When the tab opened: a plain session's state file from before then
@@ -333,6 +338,12 @@ impl SessionPage {
             subscriptions.push(cx.observe(review, |this: &mut Self, review, cx| {
                 let outcome = review.read(cx).outcome();
                 this.set_outcome(outcome, cx);
+                let commits = review.read(cx).new_commits();
+                if this.new_commits != commits {
+                    this.new_commits = commits;
+                    this.new_commits_since = chrono::Local::now();
+                    cx.emit(Changed);
+                }
             }));
             // Explain starts a session of its own, so the workspace hears of it.
             subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone(), event.1.clone()))));
@@ -383,6 +394,8 @@ impl SessionPage {
             show,
             state: State::Working,
             outcome,
+            new_commits: 0,
+            new_commits_since: chrono::Local::now(),
             since: chrono::Local::now(),
             opened: std::time::SystemTime::now(),
             server,

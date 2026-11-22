@@ -13,6 +13,8 @@ pub const PULL: &str = "icons/pull_request.svg";
 /// Merged: GitHub's git-merge mark (Octicons, MIT), a branch joining
 /// the line it came from.
 pub const MERGE: &str = "icons/gannin_merge.svg";
+/// A commit: GitHub's git-commit mark (Octicons, MIT), a ring on a line.
+pub const COMMIT: &str = "icons/gannin_commit.svg";
 /// Tabs down a column on the left: a window with its left strip filled.
 pub const TABS_LEFT: &str = "icons/gannin_tabs_left.svg";
 /// Tabs across the top: a window with its top strip filled.
@@ -21,6 +23,10 @@ pub const TABS_TOP: &str = "icons/gannin_tabs_top.svg";
 pub const NOTE: &str = "icons/file_text_outlined.svg";
 
 const OWN: &[(&str, &str)] = &[
+    (
+        COMMIT,
+        r#"<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path fill="black" d="M11.93 8.5a4.002 4.002 0 0 1-7.86 0H.75a.75.75 0 0 1 0-1.5h3.32a4.002 4.002 0 0 1 7.86 0h3.32a.75.75 0 0 1 0 1.5Zm-1.43-.75a2.5 2.5 0 1 0-5 0 2.5 2.5 0 0 0 5 0Z"/></svg>"#,
+    ),
     (
         TABS_LEFT,
         r#"<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="black" stroke-width="1.2"/><rect x="2.6" y="3.6" width="3.9" height="8.8" rx="0.9" fill="black"/></svg>"#,
