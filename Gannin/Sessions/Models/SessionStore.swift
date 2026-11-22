@@ -1615,16 +1615,19 @@ final class SessionStore {
     func keepReview(_ review: SessionTranscript.ReviewResult, for id: UUID) {
         guard sessions[id]?.isPullRequestReview == true, sessions[id]?.reviewResult != review,
               !ReviewRunMerge.isRound(review, ofFinishedRunLedBy: id, in: sessions[id]?.reviewRun) else { return }
-        let previous = sessions[id]?.reviewResult
-        sessions[id]?.reviewResult = review
-        // A re-run that would post what the last result did leaves
-        // `resultAt` alone: bumping it would show an already posted
-        // review as "Not Posted" again.
-        if previous.map({ $0.postsSame(as: review) }) != true {
-            reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
-        }
+        setReviewResult(review, for: id)
         save()
         reviewFinished(id)
+    }
+
+    /// Keeps `result` as the review's and stamps `ReviewDraft.resultAt`,
+    /// unless it would post what the previous result did: bumping it then
+    /// would show an already posted review as "Not Posted" again. Doesn't save.
+    func setReviewResult(_ result: SessionTranscript.ReviewResult, for id: UUID) {
+        let previous = sessions[id]?.reviewResult
+        sessions[id]?.reviewResult = result
+        if previous?.postsSame(as: result) ?? false { return }
+        reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
     }
 
     /// `wake` restarts a loop that's asleep, for a session that needs a
