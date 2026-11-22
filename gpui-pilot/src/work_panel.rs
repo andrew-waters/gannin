@@ -1415,11 +1415,11 @@ impl WorkPanel {
                             div()
                                 .flex()
                                 .flex_row()
-                                .items_center()
+                                .items_start()
                                 .gap_2()
-                                .child(div().px_1p5().rounded_full().text_xs().bg(orange.opacity(0.2)).child(q.header.clone()))
-                                .child(div().font_weight(FontWeight::SEMIBOLD).child(q.question.clone()))
-                                .when(q.multi, |d| d.child(div().text_xs().text_color(theme.secondary).child("Pick any"))),
+                                .child(div().flex_none().mt(px(2.)).px_1p5().rounded_full().text_xs().bg(orange.opacity(0.2)).child(q.header.clone()))
+                                .child(div().flex_1().min_w_0().font_weight(FontWeight::SEMIBOLD).child(q.question.clone()))
+                                .when(q.multi, |d| d.child(div().flex_none().mt(px(2.)).text_xs().text_color(theme.secondary).child("Pick any"))),
                         )
                         .child(div().flex().flex_row().flex_wrap().gap_2().children(q.options.iter().enumerate().map(|(oi, (label, desc, recommended))| {
                             let on = self.picked.get(qi).is_some_and(|p| p.contains(&oi));
