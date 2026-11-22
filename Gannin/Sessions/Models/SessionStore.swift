@@ -1615,8 +1615,14 @@ final class SessionStore {
     func keepReview(_ review: SessionTranscript.ReviewResult, for id: UUID) {
         guard sessions[id]?.isPullRequestReview == true, sessions[id]?.reviewResult != review,
               !ReviewRunMerge.isRound(review, ofFinishedRunLedBy: id, in: sessions[id]?.reviewRun) else { return }
+        let previous = sessions[id]?.reviewResult
         sessions[id]?.reviewResult = review
-        reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
+        // A re-run that would post what the last result did leaves
+        // `resultAt` alone: bumping it would show an already posted
+        // review as "Not Posted" again.
+        if previous.map({ $0.postsSame(as: review) }) != true {
+            reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
+        }
         save()
         reviewFinished(id)
     }
