@@ -2235,26 +2235,21 @@ struct SessionSidebarRows: View {
     @AppStorage("sidebarSessionsPlanning") private var planningExpanded = true
     @AppStorage("sidebarSessionsAsk") private var askExpanded = true
     @AppStorage("sidebarSessionsRefine") private var refineExpanded = true
-    @State private var showingReviewHistory = false
+    /// Whether Review History is showing. The sheet is presented by the
+    /// sidebar's list (`OrgSidebar`), not here: these groups come and go, and
+    /// removing the last finished review can empty the Reviews group.
+    @Binding var showingReviewHistory: Bool
 
     var body: some View {
         // An active review posted with comments or requested changes is in
         // its own group: it waits on the author.
         let groups = SessionSidebarGroups(sessions.sessions(for: org), awaitsAuthor: sessions.awaitsAuthor)
-        // One sheet for the whole sidebar, outside the groups: removing the
-        // last finished review can empty the Reviews group, and a sheet
-        // attached inside it would be torn down with it.
-        Group {
-            group("Working on issues", symbol: "terminal", sessions: groups.issues, expanded: $issuesExpanded)
-            group("Reviews", symbol: "eye", sessions: groups.reviews, expanded: $reviewsExpanded, listsHistory: true)
-            group("Awaiting author", symbol: "hourglass", sessions: groups.awaitingAuthor, expanded: $awaitingExpanded)
-            group("Planning", symbol: "list.bullet.clipboard", sessions: groups.planning, expanded: $planningExpanded)
-            group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
-            group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
-        }
-        .sheet(isPresented: $showingReviewHistory) {
-            ReviewHistorySheet(org: org)
-        }
+        group("Working on issues", symbol: "terminal", sessions: groups.issues, expanded: $issuesExpanded)
+        group("Reviews", symbol: "eye", sessions: groups.reviews, expanded: $reviewsExpanded, listsHistory: true)
+        group("Awaiting author", symbol: "hourglass", sessions: groups.awaitingAuthor, expanded: $awaitingExpanded)
+        group("Planning", symbol: "list.bullet.clipboard", sessions: groups.planning, expanded: $planningExpanded)
+        group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
+        group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
     }
 
     /// A kind of session, with how many are waiting on you; empty kinds
