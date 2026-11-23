@@ -105,6 +105,10 @@ pub struct WorkPr {
     pub passed: usize,
     pub failures_sent: bool,
     pub feedback: Vec<Feedback>,
+    /// What its description says it needs merged first (`pr_deps`).
+    pub needs: Vec<crate::pr_deps::Key>,
+    pub base: String,
+    pub head: String,
 }
 
 /// What claude is asking, over the terminal.
@@ -1929,9 +1933,21 @@ impl WorkPanel {
         let folding = self.pr_state.is_none();
         let mut active: Vec<&WorkPr> = shown.iter().copied().filter(|p| !folding || !ended(p)).collect();
         let mut done: Vec<&WorkPr> = if folding { shown.iter().copied().filter(|p| ended(p)).collect() } else { Vec::new() };
+        // What each needs first, from stacked branches and written links.
+        let nodes: Vec<crate::pr_deps::Node> = d.prs.iter().map(|p| crate::pr_deps::Node { key: (p.repo.clone(), p.number), base: p.base.clone(), head: p.head.clone(), needs: p.needs.clone() }).collect();
+        let deps = crate::pr_deps::graph(&nodes);
+        let mut depth: std::collections::HashMap<i64, usize> = Default::default();
         if self.pr_by_repo {
             active.sort_by(|a, b| a.repo.cmp(&b.repo));
             done.sort_by(|a, b| a.repo.cmp(&b.repo));
+        } else if !deps.is_empty() {
+            // What has to merge first on top, what needs it under it.
+            let keys: Vec<crate::pr_deps::Key> = active.iter().map(|p| (p.repo.clone(), p.number)).collect();
+            let ordered = crate::pr_deps::order(&keys, &deps);
+            for &(i, d) in &ordered {
+                depth.insert(active[i].number, d);
+            }
+            active = ordered.into_iter().map(|(i, _)| active[i]).collect();
         }
         let ended_open = self.ended_open;
         let merged_n = done.iter().filter(|p| p.state == PrState::Merged).count();
@@ -1948,7 +1964,8 @@ impl WorkPanel {
                     *last_repo = Some(pr.repo.clone());
                     list.push(div().pt_1().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string()).into_any_element());
                 }
-                list.push(self.pr_line(pr, running, theme, cx));
+                let needs = deps.get(&(pr.repo.clone(), pr.number)).cloned().unwrap_or_default();
+                list.push(self.pr_line(pr, &needs, depth.get(&pr.number).copied().unwrap_or(0), running, theme, cx));
             }
         };
         rows(active, &mut list, &mut last_repo, cx);
@@ -2031,11 +2048,9 @@ impl WorkPanel {
     }
 
     /// One PR's line, and under it (open) what needs acting on.
-    fn pr_line(&self, pr: &WorkPr, running: bool, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let number = pr.number;
-        let open = pr.state == PrState::Open;
-        // The status as the Pull Requests table words and colours it.
-        let (label, tint): (&str, Hsla) = match pr.state {
+    /// The status of a PR as the Pull Requests table words and colours it.
+    fn pr_status(pr: &WorkPr, theme: &Theme) -> (&'static str, Hsla) {
+        match pr.state {
             PrState::Merged => ("Merged", theme.slot(6)),
             PrState::Closed => ("Closed", theme.critical()),
             PrState::Draft => ("Draft", theme.secondary),
@@ -2045,7 +2060,61 @@ impl WorkPanel {
                 Some(_) => ("In review", theme.blue()),
                 None => ("Open", theme.good()),
             },
+        }
+    }
+
+    /// What a PR needs merged first, each in its status's colour: "Needs
+    /// mono#1630 · Draft", or "After mono#1630" once merged. Flagged when it
+    /// merged first, or is approved while what it needs isn't.
+    fn needs_line(&self, pr: &WorkPr, needs: &[crate::pr_deps::Key], theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if needs.is_empty() {
+            return None;
+        }
+        let mut row = div().flex().flex_row().flex_wrap().items_center().gap_1().text_xs();
+        let mut waiting = false;
+        for (n, key) in needs.iter().enumerate() {
+            let listed = self.data.prs.iter().find(|p| crate::pr_deps::same(&(p.repo.clone(), p.number), key));
+            let short = format!("{}#{}", key.0.rsplit('/').next().unwrap_or(&key.0), key.1);
+            let (text, tint) = match listed {
+                Some(dep) if dep.state == PrState::Merged => (format!("After {short} ✓"), theme.slot(6)),
+                Some(dep) => {
+                    waiting = true;
+                    let (status, tint) = Self::pr_status(dep, theme);
+                    (format!("Needs {short} · {status}"), tint)
+                }
+                None => {
+                    waiting = true;
+                    (format!("Needs {short}"), theme.secondary)
+                }
+            };
+            let opened = crate::prs::PrItem::stub("", &key.0, key.1, "", &format!("https://github.com/{}/pull/{}", key.0, key.1));
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("needs-{}-{n}", pr.number)))
+                    .px_1p5()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(tint.opacity(0.5))
+                    .text_color(tint)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.row_selected))
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(crate::pull_page::OpenPull(opened.clone()))))
+                    .child(text),
+            );
+        }
+        let warning = match pr.state {
+            PrState::Merged if waiting => Some("Merged before what it needs"),
+            PrState::Open if waiting && pr.review.as_deref() == Some("APPROVED") => Some("Approved, but wait for what it needs"),
+            _ => None,
         };
+        Some(row.when_some(warning, |d, w| d.child(div().text_color(theme.orange()).child(w))).into_any_element())
+    }
+
+    fn pr_line(&self, pr: &WorkPr, needs: &[crate::pr_deps::Key], depth: usize, running: bool, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let number = pr.number;
+        let open = pr.state == PrState::Open;
+        // The status as the Pull Requests table words and colours it.
+        let (label, tint) = Self::pr_status(pr, theme);
         let pill = div().flex_none().px_1p5().rounded_sm().text_xs().border_1().border_color(tint).text_color(tint).child(label);
         // The checks as one mark: failing first, then running, then passed.
         let checks = if !pr.failed.is_empty() {
@@ -2158,11 +2227,14 @@ impl WorkPanel {
             }
         }
         let has_items = !items.is_empty();
-        div()
+        let needs_line = self.needs_line(pr, needs, theme, cx);
+        // Under what it needs, joined to it.
+        let line = div()
             .flex()
             .flex_col()
             .gap_1()
             .child(head)
+            .children(needs_line)
             .when(has_items, |d| {
                 d.child(
                     div()
@@ -2187,7 +2259,16 @@ impl WorkPanel {
                             .when(running && ticked_n > 0, |b| b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.send_ticked(number, cx)))),
                         )),
                 )
-            })
+            });
+        if depth == 0 {
+            return line.into_any_element();
+        }
+        div()
+            .flex()
+            .flex_row()
+            .pl(px(14. * (depth - 1) as f32))
+            .child(div().flex_none().w(px(14.)).pt_0p5().text_sm().text_color(theme.tertiary).child("↳"))
+            .child(line.flex_1().min_w_0())
             .into_any_element()
     }
 

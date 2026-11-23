@@ -75,6 +75,7 @@ mod settings_page;
 mod pr_diff;
 mod pr_picker;
 mod prs;
+mod pr_deps;
 mod pull_page;
 mod servers;
 mod remotes;

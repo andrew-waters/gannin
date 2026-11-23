@@ -567,7 +567,7 @@ pub fn working_here(harness_repo: &str, harness_path: &Path, branch: &str, refer
     }
     match (reference, quick) {
         (Some(reference), _) => lines.push(format!(
-            "- Commit in each worktree, and open a pull request per repo with `gh pr create`, putting \"Closes {reference}\" in its body so it links to the issue."
+            "- Commit in each worktree, and open a pull request per repo with `gh pr create`, putting \"Closes {reference}\" in its body so it links to the issue. When one of them needs another merged first (an API before the page that calls it, config before the code that reads it), put a line \"Depends on: owner/repo#number\" in the body of the one that waits, and keep it right as PRs are added, so the order shows in Gannin."
         )),
         (None, _) => lines.push(format!(
             "- Commit in the worktree, and open a pull request with `gh pr create`. There's no issue, so don't make one or invent a reference: put \"Quick change, no issue.\" in its body where `Closes` would go, and keep the branch's name, `{branch}`."

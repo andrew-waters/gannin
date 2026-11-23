@@ -230,7 +230,7 @@ pub fn screen_choices(screen: &str) -> Vec<String> {
 /// checks, and the feedback others left (reviews with words, and the first
 /// comment of each unresolved thread).
 pub fn pull_requests(token: &str, urls: &[String], viewer: &str) -> Vec<WorkPr> {
-    let query = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { title state isDraft reviewDecision mergeable commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 60) { nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } } reviews(last: 30) { nodes { author { login } state body } } reviewThreads(last: 50) { nodes { isResolved path line comments(first: 1) { nodes { author { login } body } } } } } } }";
+    let query = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { title body baseRefName headRefName state isDraft reviewDecision mergeable commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 60) { nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } } reviews(last: 30) { nodes { author { login } state body } } reviewThreads(last: 50) { nodes { isResolved path line comments(first: 1) { nodes { author { login } body } } } } } } }";
     let mut out = Vec::new();
     for url in urls {
         let Some((repo, number)) = parse_pr(url) else { continue };
@@ -296,6 +296,9 @@ pub fn pull_requests(token: &str, urls: &[String], viewer: &str) -> Vec<WorkPr> 
             passed,
             failures_sent: false,
             feedback,
+            needs: crate::pr_deps::needs(pr["body"].as_str().unwrap_or(""), &repo),
+            base: pr["baseRefName"].as_str().unwrap_or("").into(),
+            head: pr["headRefName"].as_str().unwrap_or("").into(),
         });
     }
     out
