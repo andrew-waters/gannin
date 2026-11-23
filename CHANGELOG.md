@@ -30,6 +30,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A review from a workflow with several steps keeps every step's findings once the run finishes, instead of reverting to the first reviewer's alone when its session is read again
 - The "waiting" count in the sidebar and the Dock badge no longer include a review that has finished a turn but has nothing for you to post; reviews count while they need you or have a result you haven't posted
 - Finish Review closes the review's tab right away, instead of waiting on its harness record to be written first
+- A review that Claude re-runs with the same summary, verdict and findings no longer shows as Not Posted again after you've posted it
 - A review you finish no longer comes straight back under Needs your review in the Inbox; it returns only if you're asked to review the PR again
 
 ### Changed

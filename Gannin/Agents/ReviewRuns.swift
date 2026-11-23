@@ -477,11 +477,8 @@ extension SessionStore {
         guard var run = sessions[lead]?.reviewRun, run.finishedAt == nil else { return }
         run.finishedAt = .now
         let result = ReviewRunMerge.combined(run, lead: lead)
-        update(lead) {
-            $0.reviewRun = run
-            $0.reviewResult = result
-        }
-        reviewDrafts[lead, default: sessions[lead]?.reviewDraft ?? ReviewDraft()].resultAt = .now
+        update(lead) { $0.reviewRun = run }
+        setReviewResult(result, for: lead)
         save()
         reviewFinished(lead)
         advanceWaitingRuns()

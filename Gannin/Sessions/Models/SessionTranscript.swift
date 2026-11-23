@@ -469,6 +469,15 @@ nonisolated extension SessionTranscript.ReviewResult {
     /// The risk as a level, nil when the reviewer gave none.
     var riskLevel: ReviewRisk? { risk.flatMap { ReviewRisk(rawValue: $0) } }
 
+    /// Whether posting `other` would say what posting this one did: the same
+    /// summary and verdict, and the same set of findings, in any order, each
+    /// equal in every field (severity and suggestion are posted too). The
+    /// walkthrough, flow, `resolved`, learnings and the rest are only for
+    /// Gannin, so a re-run that differs only there isn't news to the PR's author.
+    func postsSame(as other: Self) -> Bool {
+        summary == other.summary && verdict == other.verdict && Set(findings) == Set(other.findings)
+    }
+
     /// As synthesised, except that learnings Gannin can't read are
     /// left out rather than losing the review.
     init(from decoder: any Decoder) throws {
