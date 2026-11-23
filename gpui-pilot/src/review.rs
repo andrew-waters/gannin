@@ -81,13 +81,14 @@ impl ReviewResult {
 }
 
 /// When the review's posted content was last new: `since` carried over to a
-/// `new` result that posts what `previous` did, else the new result's own
-/// time. A post counts as of the latest result when it's at or after this,
-/// so a re-run that says the same doesn't turn a posted review back into one
-/// not posted.
+/// `new` result that posts what `previous` did (`previous`'s own time when
+/// there's no `since`, as for a panel opened with a result already read),
+/// else the new result's own time. A post counts as of the latest result when
+/// it's at or after this, so a re-run that says the same doesn't turn a posted
+/// review back into one not posted.
 pub fn content_since(previous: Option<&ReviewResult>, since: Option<chrono::DateTime<chrono::Utc>>, new: &ReviewResult) -> Option<chrono::DateTime<chrono::Utc>> {
     match previous {
-        Some(previous) if previous.posts_same(new) => since.or(new.at),
+        Some(previous) if previous.posts_same(new) => since.or(previous.at),
         _ => new.at,
     }
 }
@@ -869,8 +870,9 @@ mod tests {
         assert_eq!(content_since(Some(&first), first.at, &again), first.at);
         // Something new: its own time.
         assert_eq!(content_since(Some(&again), first.at, &changed), changed.at);
-        // Nothing carried over to keep: its own time.
-        assert_eq!(content_since(Some(&first), None, &again), again.at);
+        // Nothing carried over yet (a panel opened with a result read): the
+        // previous result's time, not the new one's.
+        assert_eq!(content_since(Some(&first), None, &again), first.at);
     }
 
     fn after(since: &str) -> impl Fn(&Value) -> bool {
