@@ -46,6 +46,7 @@ mod planning;
 mod planning_agree;
 mod planning_docs;
 mod planning_panel;
+mod planning_preview;
 mod paths;
 mod projects;
 #[cfg(target_os = "macos")]
@@ -218,6 +219,27 @@ fn main() {
                 });
                 return;
             }
+            // Planning with a made-up plan, in its own window and process:
+            // no Claude Code, no GitHub, nothing a running Gannin uses.
+            "--planning-preview" => {
+                gpui_platform::application().with_assets(icons::Assets).run(|cx: &mut App| {
+                    zed::init(cx);
+                    cx.bind_keys(window_key_bindings());
+                    cx.on_action(|_: &Quit, cx| cx.quit());
+                    handle_window_actions(cx);
+                    cx.set_menus(vec![Menu { name: "Planning Preview".into(), items: app_menu_items(), disabled: false }, window_menu()]);
+                    let options = gpui::WindowOptions {
+                        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(760.), gpui::px(900.)), cx))),
+                        titlebar: Some(gpui::TitlebarOptions { title: Some("Planning Preview".into()), appears_transparent: false, traffic_light_position: None }),
+                        app_id: Some(crate::shell::APP_ID.into()),
+                        ..Default::default()
+                    };
+                    cx.open_window(options, |window, cx| cx.new(|cx| planning_panel::PlanningPanel::preview(window, cx))).expect("open the preview");
+                    cx.on_window_closed(|cx, _| cx.quit()).detach();
+                    cx.activate(true);
+                });
+                return;
+            }
             // Marra's engine and Gannin's MCP server against a real claude,
             // without a window: `--marra-check [model] [prompt]`. Tool calls
             // get canned answers; permission requests are allowed.
@@ -231,6 +253,7 @@ fn main() {
                 marra_check(args.next(), args.next());
                 return;
             }
+            "--beside" => state::set_beside(),
             "--org" => org = args.next(),
             "--days" => days = args.next().and_then(|d| d.parse().ok()),
             // Writes a Work on This launch against the harness folder given
@@ -477,7 +500,7 @@ fn main() {
 
         // The first window, when it was open at quit or nothing else was:
         // closed, it stays closed while other windows come back.
-        let first = state::has_slot(0) || state::extra_slots().is_empty();
+        let first = state::beside() || state::has_slot(0) || state::extra_slots().is_empty();
         // Where it was left, unless the command line says otherwise.
         let first_saved = state::SavedState::load();
         let workspace = first.then(|| cx.open_window(
@@ -494,12 +517,15 @@ fn main() {
             },
         )
         .expect("open the window"));
-        // The other windows that were open come back too.
-        Workspace::reopen_windows(cx);
+        // The other windows that were open come back too; not in a test
+        // copy, which is one window.
+        if !state::beside() {
+            Workspace::reopen_windows(cx);
+            // Marra watches from the start, so what needs you notifies before
+            // its window is first opened; claude itself waits for a message.
+            marra_model::Marra::get(cx);
+        }
         let _ = workspace;
-        // Marra watches from the start, so what needs you notifies before
-        // its window is first opened; claude itself waits for a message.
-        marra_model::Marra::get(cx);
         // Quit asks first while sessions run, in any window.
         cx.on_action(move |_: &Quit, cx| {
             let window = cx.active_window().and_then(|w| w.downcast::<Workspace>()).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));

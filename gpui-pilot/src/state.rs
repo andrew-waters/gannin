@@ -184,6 +184,20 @@ pub fn remove_slot(slot: usize) {
 }
 
 /// Whether a window's state was saved, so it opens at launch.
+/// A test copy running beside the Gannin in use (`--beside`): one fresh
+/// window that reopens no sessions, runs no schedule, phone API or
+/// reminders, and saves no window state, so the copy in use carries on
+/// untouched. Sessions started in it work as ever.
+static BESIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn beside() -> bool {
+    BESIDE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_beside() {
+    BESIDE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn has_slot(slot: usize) -> bool {
     path_for(slot).exists()
 }

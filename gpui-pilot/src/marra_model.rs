@@ -589,7 +589,8 @@ impl Marra {
                 return;
             }
         });
-        let (api, api_error) = if saved.api {
+        // A test copy leaves the phone API to the copy in use.
+        let (api, api_error) = if saved.api && !crate::state::beside() {
             match crate::marra_api::Api::start() {
                 Ok(api) => (Some(api), None),
                 Err(e) => (None, Some(e)),

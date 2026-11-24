@@ -344,7 +344,8 @@ impl NotesStore {
             let remind = cx.spawn(async move |this, cx| loop {
                 cx.background_executor().timer(std::time::Duration::from_secs(10)).await;
                 let Ok(due) = this.update(cx, |store: &mut NotesStore, cx| {
-                    let due = crate::todos::remind(&mut store.todos, Local::now());
+                    // A test copy leaves reminding to the copy in use.
+                    let due = if crate::state::beside() { Vec::new() } else { crate::todos::remind(&mut store.todos, Local::now()) };
                     // Redrawn each minute while one has a time today, so
                     // "Due in 25m" counts down and turns red.
                     let today = Local::now().date_naive();

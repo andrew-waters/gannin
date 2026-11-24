@@ -764,7 +764,7 @@ impl Workspace {
             Page::Prs(page) => page.read(cx).is_resizing(),
             _ => false,
         });
-        if self.closed || self.resizing.is_some() || resizing_column {
+        if self.closed || self.resizing.is_some() || resizing_column || crate::state::beside() {
             return;
         }
         let state = self.snapshot(cx);
@@ -795,7 +795,7 @@ impl Workspace {
         let mut workspace = Self::build(saved, window, cx);
         workspace.slot = slot;
         workspace.window_handle = Some(window.window_handle());
-        if slot == 0 {
+        if slot == 0 && !crate::state::beside() {
             // Scouts ended with the app: theirs start again.
             let mut sched = crate::schedule::Schedule::load();
             let before = sched.readiness.len();
@@ -815,6 +815,8 @@ impl Workspace {
         // the one that was showing shows again.
         workspace.show_on_reopen = active_session;
         let launches = crate::launch::saved();
+        // A test copy leaves the sessions to the copy in use.
+        let sessions = if crate::state::beside() { Vec::new() } else { sessions };
         for id in &sessions {
             if let Some(plain) = id.strip_prefix("plain:").and_then(|id| plain_sessions.iter().find(|p| p.id == id)).cloned() {
                 workspace.reopening += 1;
@@ -3935,7 +3937,8 @@ impl Workspace {
         let own = window.window_handle();
         let others = cx.windows().into_iter().any(|h| h != own && h.downcast::<Workspace>().is_some());
         let forget = move || {
-            if others {
+            // A test copy's windows have no state of their own to forget.
+            if others && !crate::state::beside() {
                 remove_slot(slot);
             }
         };
@@ -4835,6 +4838,9 @@ impl Workspace {
                 d.child(div().text_color(theme.tertiary).child("/")).child(self.switcher_button(Pick::Project, name, theme, cx))
             })
             .child(div().flex_1())
+            .when(crate::state::beside(), |d| {
+                d.child(div().px_2().py_0p5().rounded_md().text_xs().bg(theme.orange().opacity(0.18)).text_color(theme.orange()).child("Test Copy"))
+            })
             .child(self.account(theme, cx))
     }
 

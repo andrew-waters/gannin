@@ -22,7 +22,14 @@ use terminal::Terminal;
 
 pub struct PlanningPanel {
     launch: Launch,
-    terminal: Entity<Terminal>,
+    /// None in the preview, where messages to claude are only shown.
+    terminal: Option<Entity<Terminal>>,
+    /// Where approvals, the room's comments and Agree's record are kept.
+    dir: std::path::PathBuf,
+    /// The made-up plan (`planning_preview`): claude's part is played here.
+    preview: bool,
+    /// In the preview, the last message claude would have been sent.
+    sent: Option<String>,
     state: Option<State>,
     approvals: Approvals,
     agreed: Agreed,
@@ -59,7 +66,42 @@ impl PlanningPanel {
             editor
         });
         let dir = launch.dir();
-        Self { approvals: Approvals::load(&dir), agreed: Agreed::load(&dir), launch, terminal, state: None, comment, notice: None, agree: None, _poll: poll }
+        Self { approvals: Approvals::load(&dir), agreed: Agreed::load(&dir), dir, preview: false, sent: None, launch, terminal: Some(terminal), state: None, comment, notice: None, agree: None, _poll: poll }
+    }
+
+    /// The made-up plan, from its first stage, with nothing kept from
+    /// last time.
+    pub fn preview(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let dir = crate::planning_preview::dir();
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let comment = cx.new(|cx| {
+            let mut editor = editor::Editor::single_line(window, cx);
+            editor.set_placeholder_text("Say something from the room", window, cx);
+            editor
+        });
+        Self {
+            launch: crate::planning_preview::launch(),
+            terminal: None,
+            approvals: Approvals::default(),
+            agreed: Agreed::default(),
+            dir,
+            preview: true,
+            sent: None,
+            state: Some(crate::planning_preview::state(Stage::Outcome, false)),
+            comment,
+            notice: None,
+            agree: None,
+            _poll: Task::ready(()),
+        }
+    }
+
+    /// The preview's claude: the stage it's on, answered.
+    fn answer(&mut self, cx: &mut Context<Self>) {
+        let stage = self.stage();
+        self.state = Some(crate::planning_preview::state(stage, true));
+        self.sent = Some(format!("(Claude asks the room about {} and fills it in.)", stage.title().to_lowercase()));
+        cx.notify();
     }
 
     fn stage(&self) -> Stage {
@@ -69,8 +111,11 @@ impl PlanningPanel {
     /// Sends claude a message: Esc first when a question is waiting, as
     /// Gannin answers, then the text as one message.
     fn send(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(terminal) = self.terminal.clone() else {
+            self.sent = Some(message);
+            return cx.notify();
+        };
         let waiting = self.launch.state().as_deref() == Some("needs-you");
-        let terminal = self.terminal.clone();
         cx.spawn_in(window, async move |_, cx| {
             if waiting {
                 terminal.update(cx, |t, _| t.input(b"\x1b[27u".to_vec()));
@@ -88,7 +133,7 @@ impl PlanningPanel {
         let text = self.comment.read(cx).text(cx).trim().to_string();
         if !text.is_empty() {
             self.comment.update(cx, |editor, cx| editor.set_text("", window, cx));
-            planning::add_comment(&self.launch.dir(), Comment { stage: self.stage().title().to_lowercase(), text: text.clone(), at: chrono::Utc::now() });
+            planning::add_comment(&self.dir, Comment { stage: self.stage().title().to_lowercase(), text: text.clone(), at: chrono::Utc::now() });
         }
         text
     }
@@ -125,7 +170,7 @@ impl PlanningPanel {
             None
         };
         self.approvals.approve(stage, &state, reason.clone(), chrono::Utc::now());
-        self.approvals.save(&self.launch.dir());
+        self.approvals.save(&self.dir);
         self.notice = None;
         let message = match &reason {
             Some(why) => format!(
@@ -138,6 +183,10 @@ impl PlanningPanel {
             None => format!("The room approved {}. Move on to {}: set `phase` to `{}`.", stage.title().to_lowercase(), next.title().to_lowercase(), next.key()),
         };
         self.send(message, window, cx);
+        // The preview's claude moves on, and begins the next stage.
+        if self.preview {
+            self.state = Some(crate::planning_preview::state(next, next == Stage::Agree));
+        }
         cx.notify();
     }
 
@@ -151,7 +200,12 @@ impl PlanningPanel {
         }
         let why = self.take_comment(window, cx);
         self.approvals.reopen(to);
-        self.approvals.save(&self.launch.dir());
+        self.approvals.save(&self.dir);
+        if self.preview {
+            if let Some(state) = self.state.as_mut() {
+                state.phase = to.key().to_string();
+            }
+        }
         self.notice = None;
         self.send(format!("Back to {}: {why}. Set `phase` to `{}`.", to.title().to_lowercase(), to.key()), window, cx);
         cx.notify();
@@ -159,7 +213,7 @@ impl PlanningPanel {
 
     fn open_agree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(state) = self.state.clone() else { return };
-        let view = cx.new(|cx| AgreeView::new(self.launch.clone(), state, self.approvals.clone(), window, cx));
+        let view = cx.new(|cx| AgreeView::new(self.launch.clone(), self.dir.clone(), self.preview, state, self.approvals.clone(), window, cx));
         let subscription = cx.subscribe_in(&view, window, |this, _, event: &AgreeEvent, window, cx| {
             match event {
                 AgreeEvent::Agreed(agreed) => {
@@ -432,12 +486,39 @@ impl Render for PlanningPanel {
                 .into_any_element()
         };
 
+        let strip = self.preview.then(|| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_1p5()
+                .bg(theme.tile)
+                .border_b_1()
+                .border_color(theme.border)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .text_xs()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Preview: a made-up plan. Nothing runs, and nothing is filed or committed."))
+                        .child(div().text_color(theme.secondary).child(match &self.sent {
+                            Some(sent) => format!("Claude was sent: {sent}"),
+                            None => "Press Claude Answers to have the stage filled in, as Claude would after asking the room.".to_string(),
+                        })),
+                )
+                .when(stage != Stage::Agree && !self.agreed.finished(), |d| d.child(button("plan-preview-answer", "Claude Answers", false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.answer(cx)))))
+        });
         div()
             .size_full()
             .flex()
             .flex_col()
             .bg(theme.bg)
             .child(div().flex_none().px_3().py_2().border_b_1().border_color(theme.border).child(stepper))
+            .children(strip)
             .child(div().id("plan-body").flex_1().min_h_0().overflow_y_scroll().p_4().child(body))
             .child(
                 div()

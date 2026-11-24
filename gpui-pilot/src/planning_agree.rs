@@ -27,6 +27,12 @@ pub enum AgreeEvent {
 
 pub struct AgreeView {
     launch: Launch,
+    /// Where the session keeps what Agree has done.
+    dir: PathBuf,
+    /// Writes nothing: shows what it would have (`planning_preview`).
+    preview: bool,
+    /// In the preview, what GitHub would have been asked, as Markdown.
+    written: Option<String>,
     state: State,
     approvals: Approvals,
     drafts: Vec<Draft>,
@@ -49,7 +55,7 @@ impl EventEmitter<AgreeEvent> for AgreeView {}
 const ORG_TYPES: &str = "query($login: String!) { organization(login: $login) { issueTypes(first: 25) { nodes { id name isEnabled } } } }";
 
 impl AgreeView {
-    pub fn new(launch: Launch, state: State, approvals: Approvals, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(launch: Launch, dir: PathBuf, preview: bool, state: State, approvals: Approvals, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let drafts = planning::drafts(&state);
         let titles = drafts
             .iter()
@@ -80,13 +86,16 @@ impl AgreeView {
         let mut seen = std::collections::HashSet::new();
         repos.retain(|r| seen.insert(r.clone()));
         let parent_repo = repos.first().cloned();
-        let agreed = Agreed::load(&launch.dir());
+        let agreed = Agreed::load(&dir);
         // The org's issue types, for the top issue's and the epics'.
         let org = launch.org.clone();
         cx.spawn(async move |this, cx| {
             let types = cx
                 .background_executor()
                 .spawn(async move {
+                    if preview {
+                        return Some(crate::planning_preview::types());
+                    }
                     let token = crate::auth::token()?;
                     let data = github::graphql(&token, ORG_TYPES, json!({ "login": org })).ok()?;
                     Some(
@@ -116,6 +125,9 @@ impl AgreeView {
         .detach();
         Self {
             launch,
+            dir,
+            preview,
+            written: None,
             state,
             approvals,
             drafts,
@@ -191,7 +203,7 @@ impl AgreeView {
         let mut repos: Vec<String> = included.iter().map(|d| d.task.repo.clone()).collect();
         repos.sort();
         repos.dedup();
-        let shared = planning::docs(&self.launch.dir());
+        let shared = planning::docs(&self.dir);
         let committed: Vec<String> = shared.iter().filter(|d| d.commit).map(|d| d.name.clone()).collect();
         let top = match (&subject, &new_parent) {
             (Some(s), _) => format!("under {}#{}", s.repo, s.number),
@@ -218,11 +230,14 @@ impl AgreeView {
         if !self.agreed.made.is_empty() || self.agreed.parent.is_some() {
             detail.push("What was filed last time is kept, not filed again.".into());
         }
+        if self.preview {
+            detail.push("This is the preview: nothing is filed or committed. You'll see what would have been.".into());
+        }
         let answer = window.prompt(gpui::PromptLevel::Info, "Agree and write it all?", Some(&detail.join("\n\n")), &["Agree and Write", "Cancel"], cx);
         let job = Job {
             harness: self.launch.harness_repo.clone(),
             branch: self.launch.branch.clone(),
-            dir: self.launch.dir(),
+            dir: self.dir.clone(),
             slug: crate::launch::slug(if self.state.title.is_empty() { &self.launch.title } else { &self.state.title }, 40),
             state: self.state.clone(),
             drafts,
@@ -234,6 +249,7 @@ impl AgreeView {
             owner: crate::auth::saved_viewer().map(|v| v.login).unwrap_or_default(),
             shared,
         };
+        let rehearse = self.preview;
         cx.spawn_in(window, async move |this, cx| {
             if answer.await != Ok(0) {
                 return;
@@ -246,13 +262,17 @@ impl AgreeView {
             {
                 return;
             }
-            let result = cx.background_executor().spawn(async move { job.run() }).await;
+            let result = cx.background_executor().spawn(async move { job.run(rehearse) }).await;
             this.update(cx, |this, cx| {
                 this.running = false;
                 match result {
-                    Ok(agreed) => {
+                    Ok((agreed, written)) => {
                         this.agreed = agreed.clone();
-                        cx.emit(AgreeEvent::Agreed(agreed));
+                        // The preview stays open on what it would have written.
+                        match written {
+                            Some(written) => this.written = Some(written),
+                            None => cx.emit(AgreeEvent::Agreed(agreed)),
+                        }
                     }
                     Err((agreed, error)) => {
                         this.agreed = agreed;
@@ -298,19 +318,163 @@ const ISSUE: &str = "query($id: ID!) { node(id: $id) { ... on Issue { id number 
 const UPDATE: &str = "mutation($id: ID!, $body: String!) { updateIssue(input: { id: $id, body: $body }) { issue { id } } }";
 const COMMENT: &str = "mutation($id: ID!, $body: String!) { addComment(input: { subjectId: $id, body: $body }) { clientMutationId } }";
 
+/// An issue as Agree reads it back: its type, body, URL and repository.
+struct Existing {
+    kind: Option<String>,
+    body: String,
+    url: String,
+    repo: String,
+}
+
+/// Agree's writes, so the same steps run against GitHub or, in the
+/// preview and the tests, against a stand-in that only records them.
+trait Writer {
+    /// Files an issue; its node ID, number and URL.
+    fn create(&mut self, repo: &str, title: &str, body: &str, labels: &[String], type_id: Option<&String>) -> Result<(String, i64, String), String>;
+    fn place(&mut self, parent: &str, child: &str, child_ref: &str) -> Result<(), String>;
+    fn issue(&mut self, id: &str, reference: &str) -> Result<Existing, String>;
+    fn update(&mut self, id: &str, reference: &str, body: &str) -> Result<(), String>;
+    fn commit(&mut self, harness: &str, files: &[(String, Vec<u8>)], message: &str) -> Result<String, String>;
+    fn comment(&mut self, id: &str, reference: &str, body: &str) -> Result<(), String>;
+}
+
+struct GitHub {
+    token: String,
+    /// Each repository's node ID and labels (lower-cased name to ID).
+    repos: HashMap<String, (String, HashMap<String, String>)>,
+}
+
+impl GitHub {
+    fn repo(&mut self, name: &str) -> Result<(String, HashMap<String, String>), String> {
+        if let Some(found) = self.repos.get(name) {
+            return Ok(found.clone());
+        }
+        let (owner, short) = name.split_once('/').ok_or(format!("{name} isn't owner/name."))?;
+        let data = github::graphql(&self.token, REPO, json!({ "owner": owner, "name": short })).map_err(|e| format!("Couldn't find {name}: {e}"))?;
+        let id = data["repository"]["id"].as_str().ok_or(format!("Couldn't find {name}."))?.to_string();
+        let labels: HashMap<String, String> = data["repository"]["labels"]["nodes"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|l| Some((l["name"].as_str()?.to_lowercase(), l["id"].as_str()?.to_string()))).collect())
+            .unwrap_or_default();
+        self.repos.insert(name.to_string(), (id.clone(), labels.clone()));
+        Ok((id, labels))
+    }
+}
+
+impl Writer for GitHub {
+    fn create(&mut self, repo: &str, title: &str, body: &str, wanted: &[String], type_id: Option<&String>) -> Result<(String, i64, String), String> {
+        let (repo_id, labels) = self.repo(repo)?;
+        let mut input = json!({ "repositoryId": repo_id, "title": title, "body": body });
+        let ids: Vec<&String> = wanted.iter().filter_map(|l| labels.get(&l.to_lowercase())).collect();
+        if !ids.is_empty() {
+            input["labelIds"] = json!(ids);
+        }
+        if let Some(id) = type_id {
+            input["issueTypeId"] = json!(id);
+        }
+        let made = github::mutate(&self.token, CREATE, json!({ "input": input }), "createIssue").map_err(|e| format!("GitHub didn't take \"{title}\": {e}"))?;
+        Ok((
+            made["issue"]["id"].as_str().unwrap_or_default().to_string(),
+            made["issue"]["number"].as_i64().unwrap_or_default(),
+            made["issue"]["url"].as_str().unwrap_or_default().to_string(),
+        ))
+    }
+
+    fn place(&mut self, parent: &str, child: &str, child_ref: &str) -> Result<(), String> {
+        github::mutate(&self.token, SUB, json!({ "parent": parent, "child": child }), "addSubIssue").map(|_| ()).map_err(|e| format!("Couldn't put {child_ref} under its parent: {e}"))
+    }
+
+    fn issue(&mut self, id: &str, reference: &str) -> Result<Existing, String> {
+        let data = github::graphql(&self.token, ISSUE, json!({ "id": id })).map_err(|e| format!("Couldn't read {reference}: {e}"))?;
+        let node = &data["node"];
+        Ok(Existing {
+            kind: node["issueType"]["name"].as_str().map(str::to_string),
+            body: node["body"].as_str().unwrap_or_default().to_string(),
+            url: node["url"].as_str().unwrap_or_default().to_string(),
+            repo: node["repository"]["nameWithOwner"].as_str().unwrap_or_default().to_string(),
+        })
+    }
+
+    fn update(&mut self, id: &str, reference: &str, body: &str) -> Result<(), String> {
+        github::mutate(&self.token, UPDATE, json!({ "id": id, "body": body }), "updateIssue").map(|_| ()).map_err(|e| format!("Couldn't add the plan to {reference}: {e}"))
+    }
+
+    fn commit(&mut self, harness: &str, files: &[(String, Vec<u8>)], message: &str) -> Result<String, String> {
+        crate::issue_parts::commit_files(&self.token, harness, files, message).map_err(|e| format!("Couldn't commit the plan to {harness}: {e}"))
+    }
+
+    fn comment(&mut self, id: &str, reference: &str, body: &str) -> Result<(), String> {
+        github::mutate(&self.token, COMMENT, json!({ "id": id, "body": body }), "addComment").map(|_| ()).map_err(|e| format!("Couldn't comment on {reference}: {e}"))
+    }
+}
+
+/// The preview's stand-in: numbers issues from 101 and keeps a record of
+/// what GitHub would have been asked, as Markdown to show.
+#[derive(Default)]
+pub struct Rehearsal {
+    next: i64,
+    pub record: Vec<String>,
+}
+
+impl Writer for Rehearsal {
+    fn create(&mut self, repo: &str, title: &str, body: &str, labels: &[String], type_id: Option<&String>) -> Result<(String, i64, String), String> {
+        self.next = self.next.max(100) + 1;
+        let n = self.next;
+        let kind = type_id.map(|t| format!(" ({})", t.trim_start_matches("IT_"))).unwrap_or_default();
+        let labels = if labels.is_empty() { String::new() } else { format!("\n\nLabels: {}", labels.join(", ")) };
+        self.record.push(format!("### Files {repo}#{n}{kind}: {title}\n\n{body}{labels}"));
+        Ok((format!("I_{n}"), n, format!("https://github.com/{repo}/issues/{n}")))
+    }
+
+    fn place(&mut self, parent: &str, _: &str, child_ref: &str) -> Result<(), String> {
+        self.record.push(format!("Puts {child_ref} under {}.", parent.trim_start_matches("I_").parse::<i64>().map(|n| format!("#{n}")).unwrap_or_else(|_| parent.to_string())));
+        Ok(())
+    }
+
+    fn issue(&mut self, _: &str, reference: &str) -> Result<Existing, String> {
+        Ok(Existing { kind: None, body: String::new(), url: String::new(), repo: reference.split('#').next().unwrap_or_default().to_string() })
+    }
+
+    fn update(&mut self, _: &str, reference: &str, body: &str) -> Result<(), String> {
+        self.record.push(format!("### Adds the plan to {reference}\n\n{body}"));
+        Ok(())
+    }
+
+    fn commit(&mut self, harness: &str, files: &[(String, Vec<u8>)], message: &str) -> Result<String, String> {
+        for (path, bytes) in files {
+            let text = String::from_utf8(bytes.clone()).unwrap_or_else(|_| format!("({} bytes)", bytes.len()));
+            let shown = if path.ends_with(".md") { format!("```markdown\n{text}\n```") } else { text };
+            self.record.push(format!("### Commits {path} to {harness}, \"{message}\"\n\n{shown}"));
+        }
+        Ok("preview".into())
+    }
+
+    fn comment(&mut self, _: &str, reference: &str, body: &str) -> Result<(), String> {
+        self.record.push(format!("### Comments on {reference}\n\n{body}"));
+        Ok(())
+    }
+}
+
 impl Job {
-    fn run(self) -> Result<Agreed, (Agreed, String)> {
+    /// Writes it all; `rehearse` writes nothing, and says what it would have.
+    fn run(self, rehearse: bool) -> Result<(Agreed, Option<String>), (Agreed, String)> {
         let mut agreed = Agreed::load(&self.dir);
-        match self.steps(&mut agreed) {
-            Ok(()) => Ok(agreed),
+        if rehearse {
+            let mut writer = Rehearsal::default();
+            return match self.steps(&mut agreed, &mut writer) {
+                Ok(()) => Ok((agreed, Some(writer.record.join("\n\n")))),
+                Err(e) => Err((agreed, e)),
+            };
+        }
+        let Some(token) = crate::auth::token() else { return Err((agreed, "Not signed in to GitHub.".into())) };
+        let mut writer = GitHub { token, repos: HashMap::new() };
+        match self.steps(&mut agreed, &mut writer) {
+            Ok(()) => Ok((agreed, None)),
             Err(e) => Err((agreed, e)),
         }
     }
 
-    fn steps(&self, agreed: &mut Agreed) -> Result<(), String> {
-        let token = crate::auth::token().ok_or("Not signed in to GitHub.")?;
-        let token = token.as_str();
-        let err = |what: String| move |e: github::Error| format!("{what}: {e}");
+    fn steps(&self, agreed: &mut Agreed, w: &mut dyn Writer) -> Result<(), String> {
         // The paths are fixed the first time, so a retry another day writes the same plan.
         if agreed.plan_path.is_empty() {
             agreed.plan_path = docs::plan_path(&chrono::Local::now().format("%Y-%m-%d").to_string(), &self.slug);
@@ -321,60 +485,27 @@ impl Job {
         let plan_url = docs::harness_url(&self.harness, &agreed.plan_path);
         let title = if self.state.title.is_empty() { "the plan".to_string() } else { self.state.title.clone() };
 
-        let mut repos: HashMap<String, (String, HashMap<String, String>)> = HashMap::new();
-        let mut repo = |name: &str| -> Result<(String, HashMap<String, String>), String> {
-            if let Some(found) = repos.get(name) {
-                return Ok(found.clone());
-            }
-            let (owner, short) = name.split_once('/').ok_or(format!("{name} isn't owner/name."))?;
-            let data = github::graphql(token, REPO, json!({ "owner": owner, "name": short })).map_err(err(format!("Couldn't find {name}")))?;
-            let id = data["repository"]["id"].as_str().ok_or(format!("Couldn't find {name}."))?.to_string();
-            let labels: HashMap<String, String> = data["repository"]["labels"]["nodes"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|l| Some((l["name"].as_str()?.to_lowercase(), l["id"].as_str()?.to_string()))).collect())
-                .unwrap_or_default();
-            repos.insert(name.to_string(), (id.clone(), labels.clone()));
-            Ok((id, labels))
-        };
-        let create = |repo_id: &str, labels: &HashMap<String, String>, title: &str, body: &str, wanted: &[String], type_id: Option<&String>| -> Result<(String, i64, String), String> {
-            let mut input = json!({ "repositoryId": repo_id, "title": title, "body": body });
-            let ids: Vec<&String> = wanted.iter().filter_map(|l| labels.get(&l.to_lowercase())).collect();
-            if !ids.is_empty() {
-                input["labelIds"] = json!(ids);
-            }
-            if let Some(id) = type_id {
-                input["issueTypeId"] = json!(id);
-            }
-            let made = github::mutate(token, CREATE, json!({ "input": input }), "createIssue").map_err(err(format!("GitHub didn't take \"{title}\"")))?;
-            Ok((
-                made["issue"]["id"].as_str().unwrap_or_default().to_string(),
-                made["issue"]["number"].as_i64().unwrap_or_default(),
-                made["issue"]["url"].as_str().unwrap_or_default().to_string(),
-            ))
-        };
-
         // 1. The top issue: the one being planned, or a new one.
         let (parent_type, parent_body) = match (&self.subject, &self.new_parent) {
             (Some(subject), _) => {
-                let data = github::graphql(token, ISSUE, json!({ "id": subject.id })).map_err(err(format!("Couldn't read {}#{}", subject.repo, subject.number)))?;
-                let node = &data["node"];
+                let reference = format!("{}#{}", subject.repo, subject.number);
+                let found = w.issue(&subject.id, &reference)?;
                 if agreed.parent.is_none() {
                     agreed.parent = Some(Made {
                         key: "parent".into(),
                         id: subject.id.clone(),
-                        repo: node["repository"]["nameWithOwner"].as_str().unwrap_or(&subject.repo).to_string(),
+                        repo: Some(found.repo).filter(|r| !r.is_empty()).unwrap_or_else(|| subject.repo.clone()),
                         number: subject.number,
-                        url: node["url"].as_str().unwrap_or(&subject.url).to_string(),
+                        url: Some(found.url).filter(|u| !u.is_empty()).unwrap_or_else(|| subject.url.clone()),
                     });
                     agreed.save(&self.dir);
                 }
-                (node["issueType"]["name"].as_str().map(str::to_string), node["body"].as_str().unwrap_or_default().to_string())
+                (found.kind, found.body)
             }
             (None, Some(new)) => {
                 let body = top_body(&self.state, &title, &plan_url);
                 if agreed.parent.is_none() {
-                    let (repo_id, labels) = repo(&new.repo)?;
-                    let (id, number, url) = create(&repo_id, &labels, &new.title, &body, &[], new.type_id.as_ref())?;
+                    let (id, number, url) = w.create(&new.repo, &new.title, &body, &[], new.type_id.as_ref())?;
                     agreed.parent = Some(Made { key: "parent".into(), id, repo: new.repo.clone(), number, url });
                     agreed.save(&self.dir);
                 }
@@ -393,8 +524,7 @@ impl Job {
             let draft = included.iter().find(|d| !d.task.is_epic()).ok_or("No issue.")?;
             if agreed.made(&draft.key).is_none() {
                 let work = docs::issue_body(&draft.task, &self.state, &[], (&title, &plan_url));
-                github::mutate(token, UPDATE, json!({ "id": parent.id, "body": docs::merge_into(&parent_body, &agreed.plan_path, &work) }), "updateIssue")
-                    .map_err(err(format!("Couldn't add the plan to {}", parent.reference())))?;
+                w.update(&parent.id, &parent.reference(), &docs::merge_into(&parent_body, &agreed.plan_path, &work))?;
                 agreed.merged_into_parent = true;
                 agreed.made.push(Made { key: draft.key.clone(), ..parent.clone() });
                 agreed.save(&self.dir);
@@ -413,9 +543,8 @@ impl Job {
                             .filter_map(|d| agreed.made(&d.key).map(|m| m.reference()))
                             .collect();
                         let body = docs::issue_body(task, &self.state, &depends, (&title, &plan_url));
-                        let (repo_id, labels) = repo(&task.repo)?;
                         let type_id = if task.is_epic() { epic_type.as_ref() } else { None };
-                        let (id, number, url) = create(&repo_id, &labels, &task.title, &body, &task.labels, type_id)?;
+                        let (id, number, url) = w.create(&task.repo, &task.title, &body, &task.labels, type_id)?;
                         let made = Made { key: draft.key.clone(), id, repo: task.repo.clone(), number, url };
                         agreed.made.push(made.clone());
                         agreed.save(&self.dir);
@@ -430,7 +559,7 @@ impl Job {
                         .and_then(|d| agreed.made(&d.key))
                         .map(|m| m.id.clone())
                         .unwrap_or_else(|| parent.id.clone());
-                    github::mutate(token, SUB, json!({ "parent": under, "child": made.id }), "addSubIssue").map_err(err(format!("Couldn't put {} under its parent", made.reference())))?;
+                    w.place(&under, &made.id, &made.reference())?;
                     agreed.placed.push(draft.key.clone());
                     agreed.save(&self.dir);
                 }
@@ -467,8 +596,7 @@ impl Job {
                 let bytes = std::fs::read(self.dir.join("docs").join(name)).map_err(|e| format!("Couldn't read {name}: {e}"))?;
                 files.push((format!("{}/{name}", docs::assets_dir(&self.slug)), bytes));
             }
-            let commit = crate::issue_parts::commit_files(token, &self.harness, &files, &format!("Plan: {title}")).map_err(err(format!("Couldn't commit the plan to {}", self.harness)))?;
-            agreed.commit = Some(commit);
+            agreed.commit = Some(w.commit(&self.harness, &files, &format!("Plan: {title}"))?);
             agreed.save(&self.dir);
         }
 
@@ -476,7 +604,7 @@ impl Job {
         if let (Some(subject), false) = (&self.subject, agreed.commented) {
             let list: Vec<String> = agreed.made.iter().filter(|m| m.number != parent.number || m.repo != parent.repo).map(|m| format!("- {}", m.reference())).collect();
             let body = format!("Planned in [{}]({plan_url}).{}", agreed.plan_path, if list.is_empty() { String::new() } else { format!("\n\n{}", list.join("\n")) });
-            github::mutate(token, COMMENT, json!({ "id": subject.id, "body": body }), "addComment").map_err(err(format!("Couldn't comment on {}#{}", subject.repo, subject.number)))?;
+            w.comment(&subject.id, &format!("{}#{}", subject.repo, subject.number), &body)?;
             agreed.commented = true;
             agreed.save(&self.dir);
         }
@@ -665,6 +793,74 @@ impl Render for AgreeView {
                         button("agree-write", label, true, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.agree(window, cx))).into_any_element()
                     }),
             );
+        if let Some(written) = &self.written {
+            let agreed = self.agreed.clone();
+            return div()
+                .id("agree")
+                .size_full()
+                .overflow_y_scroll()
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("What Agree would have written"))
+                .child(quiet("Nothing was filed or committed. This is what GitHub and the harness would have been sent, in order.".into()))
+                .child(div().flex().flex_row().child(button("agree-preview-done", "Done", true, &theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(AgreeEvent::Agreed(agreed.clone()))))))
+                .child(crate::markdown::markdown("agree-written", written, &theme));
+        }
         div().id("agree").size_full().overflow_y_scroll().p_4().child(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planning::Stage;
+
+    fn job(dir: PathBuf) -> Job {
+        let state = crate::planning_preview::state(Stage::Agree, true);
+        Job {
+            harness: "acme/harness".into(),
+            branch: "plan-x".into(),
+            dir,
+            slug: "failed-job-alerts".into(),
+            drafts: planning::drafts(&state),
+            state,
+            subject: None,
+            new_parent: Some(NewParent { title: "Failed job alerts".into(), repo: "acme/notify".into(), type_id: Some("IT_initiative".into()), type_name: Some("Initiative".into()) }),
+            types: crate::planning_preview::types(),
+            write_requirement: true,
+            by: vec!["aw".into()],
+            owner: "aw".into(),
+            shared: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn agree_files_the_tree_once_and_writes_the_plan() {
+        let dir = std::env::temp_dir().join(format!("gannin-agree-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut agreed = Agreed::load(&dir);
+        let mut w = Rehearsal::default();
+        job(dir.clone()).steps(&mut agreed, &mut w).unwrap();
+        // The top issue, the epic and its three issues, each placed.
+        assert_eq!(agreed.parent.as_ref().map(|p| p.number), Some(101));
+        assert_eq!(agreed.made.len(), 4);
+        assert_eq!(agreed.placed.len(), 4);
+        assert!(agreed.finished() && agreed.commit.is_some());
+        let record = w.record.join("\n\n");
+        // What it needs first was filed first, and named.
+        assert!(record.contains("Files acme/scheduler#104: Rerun a job from its alert") && record.contains("Depends on: acme/notify#103"));
+        assert!(record.contains("Puts acme/scheduler#104 under #102."));
+        assert!(record.contains("Commits plans/") && record.contains("Commits requirements/failed-job-alerts.md"));
+        // Trying again files nothing twice.
+        let mut again = Agreed::load(&dir);
+        again.at = None;
+        again.commit = None;
+        let mut w = Rehearsal::default();
+        job(dir.clone()).steps(&mut again, &mut w).unwrap();
+        assert!(!w.record.iter().any(|r| r.starts_with("### Files")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
