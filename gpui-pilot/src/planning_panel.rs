@@ -16,7 +16,7 @@ use crate::launch::Launch;
 use crate::markdown::markdown;
 use crate::planning::{self, Agreed, Approvals, Comment, Stage, State, Status};
 use crate::planning_agree::{AgreeEvent, AgreeView};
-use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, FontWeight, KeyDownEvent, SharedString, Subscription, Task, Window};
+use gpui::{div, prelude::*, px, relative, ClickEvent, Context, Entity, FontWeight, KeyDownEvent, SharedString, Subscription, Task, Window};
 use std::time::Duration;
 use terminal::Terminal;
 
@@ -37,20 +37,43 @@ pub struct PlanningPanel {
     /// What the footer has to say: why a button did nothing.
     notice: Option<String>,
     agree: Option<(Entity<AgreeView>, Subscription)>,
+    /// An earlier stage the room is looking back at, on the left.
+    viewing: Option<Stage>,
+    /// The question waiting for the room, when claude's asked one.
+    question: Option<crate::work_panel::Question>,
     _poll: Task<()>,
 }
 
 impl PlanningPanel {
     pub fn new(launch: Launch, terminal: Entity<Terminal>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let path = launch.folder().join("planning.json");
-        // Re-read every few seconds, off the main thread.
+        let dir = launch.dir();
+        // Re-read every few seconds, off the main thread, with the question
+        // claude's waiting on.
         let poll = cx.spawn(async move |this, cx| loop {
             let file = path.clone();
-            let state = cx.background_executor().spawn(async move { State::read(&file) }).await;
+            let session = dir.clone();
+            let (state, question) = cx
+                .background_executor()
+                .spawn(async move {
+                    let waiting = std::fs::read_to_string(session.join("state")).is_ok_and(|s| s.trim() == "needs-you");
+                    let question = match waiting.then(|| crate::work_live::ask(&session, "")) {
+                        Some(crate::work_panel::Ask::Questions(qs)) => qs.into_iter().next(),
+                        _ => None,
+                    };
+                    (State::read(&file), question)
+                })
+                .await;
             if this
                 .update(cx, |this, cx| {
+                    let changed_question = this.question.as_ref().map(|q| &q.question) != question.as_ref().map(|q| &q.question);
+                    if changed_question {
+                        this.question = question;
+                    }
                     if state.is_some() && this.state != state {
                         this.state = state;
+                        cx.notify();
+                    } else if changed_question {
                         cx.notify();
                     }
                 })
@@ -66,7 +89,7 @@ impl PlanningPanel {
             editor
         });
         let dir = launch.dir();
-        Self { approvals: Approvals::load(&dir), agreed: Agreed::load(&dir), dir, preview: false, sent: None, launch, terminal: Some(terminal), state: None, comment, notice: None, agree: None, _poll: poll }
+        Self { approvals: Approvals::load(&dir), agreed: Agreed::load(&dir), dir, preview: false, sent: None, launch, terminal: Some(terminal), state: None, comment, notice: None, agree: None, viewing: None, question: None, _poll: poll }
     }
 
     /// The made-up plan, from its first stage, with nothing kept from
@@ -92,6 +115,8 @@ impl PlanningPanel {
             comment,
             notice: None,
             agree: None,
+            viewing: None,
+            question: crate::planning_preview::question(Stage::Outcome),
             _poll: Task::ready(()),
         }
     }
@@ -100,6 +125,7 @@ impl PlanningPanel {
     fn answer(&mut self, cx: &mut Context<Self>) {
         let stage = self.stage();
         self.state = Some(crate::planning_preview::state(stage, true));
+        self.question = None;
         self.sent = Some(format!("(Claude asks the room about {} and fills it in.)", stage.title().to_lowercase()));
         cx.notify();
     }
@@ -186,6 +212,7 @@ impl PlanningPanel {
         // The preview's claude moves on, and begins the next stage.
         if self.preview {
             self.state = Some(crate::planning_preview::state(next, next == Stage::Agree));
+            self.question = crate::planning_preview::question(next);
         }
         cx.notify();
     }
@@ -241,18 +268,21 @@ impl Render for PlanningPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
         let stage = self.stage();
-        let heading = |text: &str| div().pt_3().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(text.to_string());
+        // Looking back at a stage only while it's an earlier one.
+        let shown = self.viewing.filter(|v| v.index() < stage.index()).unwrap_or(stage);
         let quiet = |text: String| div().text_xs().text_color(theme.secondary).child(text);
         let empty = State::default();
         let state = self.state.as_ref().unwrap_or(&empty);
 
+        // The stages; an earlier one opens on the left to look back at.
         let stepper = div().flex().flex_row().flex_wrap().items_center().gap_1().children(Stage::ALL.iter().enumerate().map(|(i, s)| {
-            let status = if *s == Stage::Agree {
+            let s = *s;
+            let status = if s == Stage::Agree {
                 if self.agreed.finished() { Status::Approved } else { Status::Open }
             } else {
-                self.approvals.status(*s, state)
+                self.approvals.status(s, state)
             };
-            let (bg, fg) = if *s == stage {
+            let (bg, fg) = if s == stage {
                 (theme.selected, theme.on_selected)
             } else if status == Status::Approved {
                 (theme.selected.opacity(0.18), theme.selected)
@@ -266,13 +296,32 @@ impl Render for PlanningPanel {
                 Status::Recheck => format!("{} · Recheck", s.title()),
                 Status::Open => s.title().to_string(),
             };
+            let earlier = s.index() < stage.index();
             div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap_1()
                 .when(i > 0, |d| d.child(div().text_color(theme.tertiary).child("›")))
-                .child(div().px_2().py_0p5().rounded_full().text_xs().bg(bg).text_color(fg).child(label))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("plan-step-{}", s.key())))
+                        .px_2()
+                        .py_0p5()
+                        .rounded_full()
+                        .text_xs()
+                        .bg(bg)
+                        .text_color(fg)
+                        .border_1()
+                        .border_color(if s == shown && shown != stage { theme.selected } else { gpui::transparent_black() })
+                        .when(earlier || s == stage, |d| {
+                            d.cursor_pointer().on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.viewing = (s.index() < this.stage().index()).then_some(s);
+                                cx.notify();
+                            }))
+                        })
+                        .child(label),
+                )
         }));
 
         if let Some((view, _)) = &self.agree {
@@ -288,138 +337,56 @@ impl Render for PlanningPanel {
         }
 
         let body = match &self.state {
-            None => quiet("Claude keeps the plan in planning.json as the room answers; it shows here once it starts.".into()).into_any_element(),
+            None => div().flex_1().p_4().child(quiet("Claude keeps the plan in planning.json as the room answers; it shows here once it starts.".into())).into_any_element(),
             Some(state) => {
-                let field = |label: &str, text: &str| (!text.is_empty()).then(|| div().flex().flex_col().child(heading(label)).child(text.to_string()));
-                let list = |label: &str, items: &[String]| (!items.is_empty()).then(|| div().flex().flex_col().child(heading(label)).children(items.iter().map(|i| div().child(format!("• {i}")))));
-                let ided = |id: String, text: String, tint| div().flex().flex_row().gap_2().child(div().w(px(28.)).flex_none().text_color(tint).child(id)).child(div().flex_1().child(text));
-                let o = &state.outcome;
-                let r = &state.requirement;
-                let uncovered: Vec<String> = state.uncovered().iter().map(|c| c.id.clone()).collect();
-                let task_card = |i: usize, task: &planning::Task, nested: bool| {
-                    let meta = [
-                        Some(task.repo.clone()).filter(|r| !r.is_empty()),
-                        (!task.satisfies.is_empty()).then(|| format!("Satisfies {}", task.satisfies.join(", "))),
-                        (!task.estimate.is_empty()).then(|| format!("Size {}", task.estimate)),
-                        (!task.depends_on.is_empty()).then(|| format!("After {}", task.depends_on.join(", "))),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" · ");
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_0p5()
-                        .p_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.border)
-                        .when(nested, |d| d.ml(px(20.)))
-                        .when(task.is_epic(), |d| d.bg(theme.tile))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap_1p5()
-                                .when(task.is_epic(), |d| d.child(div().text_xs().px_1().rounded_sm().border_1().border_color(theme.border).text_color(theme.secondary).child("Epic")))
-                                .child(div().font_weight(FontWeight::MEDIUM).child(if task.title.is_empty() { "Untitled".to_string() } else { task.title.clone() })),
-                        )
-                        .when(!meta.is_empty(), |d| d.child(quiet(meta)))
-                        .when(!task.body.is_empty(), |d| d.child(markdown(&format!("plan-task-{i}"), &task.body, &theme)))
-                        .when(!task.test_plan.is_empty(), |d| d.child(quiet(format!("Checked by: {}", task.test_plan))))
+                // Left: the stage in hand, in full, with what's happening now.
+                let now: Option<gpui::AnyElement> = if shown != stage {
+                    Some(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .p_2()
+                            .rounded_md()
+                            .bg(theme.tile)
+                            .child(div().flex_1().text_xs().text_color(theme.secondary).child(format!("Looking back at {}. The room is on {}.", shown.title(), stage.title())))
+                            .child(button("plan-view-current", format!("Back to {}", stage.title()), false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.viewing = None;
+                                cx.notify();
+                            })))
+                            .into_any_element(),
+                    )
+                } else {
+                    now_box(self.question.as_ref(), state, self.preview, &theme)
                 };
-                // Epics with their issues under them, then issues under none.
-                let mut cards: Vec<gpui::AnyElement> = Vec::new();
-                for (i, epic) in state.tasks.iter().enumerate().filter(|(_, t)| t.is_epic()) {
-                    cards.push(task_card(i, epic, false).into_any_element());
-                    for (j, t) in state.tasks.iter().enumerate().filter(|(_, t)| !t.is_epic() && t.parent.trim().eq_ignore_ascii_case(epic.title.trim())) {
-                        cards.push(task_card(j, t, true).into_any_element());
-                    }
-                }
-                for (i, t) in state.tasks.iter().enumerate().filter(|(_, t)| !t.is_epic() && !state.epics().any(|e| e.title.trim().eq_ignore_ascii_case(t.parent.trim()))) {
-                    cards.push(task_card(i, t, false).into_any_element());
-                }
-                div()
+                let left = div()
+                    .id("plan-stage")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_y_scroll()
+                    .p_4()
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .when(!state.title.is_empty(), |d| d.child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(state.title.clone())))
-                    .when(!state.summary.is_empty(), |d| d.child(div().text_color(theme.secondary).child(state.summary.clone())))
-                    // The outcome: what changes and how we'll know.
-                    .children(field("What changes, for whom", &o.change))
-                    .when(!o.measures.is_empty(), |d| {
-                        d.child(heading("How we'll know")).children(o.measures.iter().map(|m| {
-                            ided(m.id.clone(), if m.target.is_empty() { m.text.clone() } else { format!("{} (target: {})", m.text, m.target) }, theme.selected)
-                        }))
-                    })
-                    .children(field("If we don't", &o.if_not))
-                    .children(field("The smallest version that proves it", &o.smallest))
-                    .children(list("If it fails, it'll be because", &o.premortem))
-                    // The requirement.
-                    .children(field("Problem", &r.problem))
-                    .children(field("Goal", &r.goal))
-                    .children(field("Who it's for", &r.users))
-                    .children(list("Scope", &r.scope))
-                    .children(list("Not doing", &r.non_goals))
-                    .when(!r.acceptance.is_empty(), |d| {
-                        d.child(heading("Acceptance criteria")).children(r.acceptance.iter().map(|c| {
-                            let tint = if !state.tasks.is_empty() && uncovered.contains(&c.id) { theme.orange() } else { theme.selected };
-                            ided(c.id.clone(), c.text.clone(), tint)
-                        }))
-                    })
-                    .children(list("Open questions", &r.open_questions))
-                    // The design, and what claude found in the code.
-                    .when(!state.approach.is_empty(), |d| d.child(heading("Design")).child(markdown("plan-design", &state.approach, &theme)))
-                    .when_some(state.scouting_now.as_ref(), |d, s| d.child(quiet(format!("Looking at the code: {}", s.why))))
-                    .when(!state.scouting.is_empty(), |d| {
-                        d.child(heading("In the code")).children(state.scouting.iter().enumerate().map(|(i, f)| {
-                            let url = f.url();
-                            let kind = match f.kind.to_lowercase().as_str() {
-                                "risk" => "Risk",
-                                "pattern" => "Pattern",
-                                _ => "Area",
-                            };
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap_2()
-                                .child(div().w(px(52.)).flex_none().text_xs().text_color(if kind == "Risk" { theme.orange() } else { theme.secondary }).child(kind))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .flex()
-                                        .flex_col()
-                                        .when(!f.path.is_empty(), |d| {
-                                            d.child(
-                                                div()
-                                                    .id(SharedString::from(format!("plan-finding-{i}")))
-                                                    .text_xs()
-                                                    .text_color(theme.selected)
-                                                    .cursor_pointer()
-                                                    .child(format!("{}:{}", f.repo.rsplit('/').next().unwrap_or(&f.repo), f.path))
-                                                    .when_some(url, |d, url| d.on_click(move |_, _, cx| cx.open_url(&url))),
-                                            )
-                                        })
-                                        .child(f.note.clone()),
-                                )
-                        }))
-                    })
-                    // The breakdown.
-                    .when(!state.tasks.is_empty(), |d| {
-                        let size = if state.size.is_empty() { String::new() } else { format!(" · {}{}", state.size[..1].to_uppercase(), &state.size[1..]) };
-                        d.child(heading(&format!("Breakdown{size}")))
-                            .when(!state.size_reason.is_empty(), |d| d.child(quiet(state.size_reason.clone())))
-                            .children(cards)
-                            .when(!uncovered.is_empty(), |d| d.child(div().text_xs().text_color(theme.orange()).child(format!("No issue satisfies {} yet.", uncovered.join(", ")))))
-                    })
-                    .when(!state.decisions.is_empty(), |d| {
-                        d.child(heading("Decisions")).children(state.decisions.iter().map(|decision| {
-                            div().flex().flex_col().child(div().text_color(theme.secondary).child(decision.question.clone())).child(decision.answer.clone())
-                        }))
-                    })
-                    .into_any_element()
+                    .gap_2()
+                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.selected).child(shown.title().to_uppercase()))
+                    .children(now)
+                    .child(stage_view(shown, state, &self.approvals, &theme))
+                    .children(decisions(state, shown, &theme));
+                // Right: what's been settled, compact, so the room keeps it in view.
+                let right = div()
+                    .id("plan-spec")
+                    .w(relative(0.38))
+                    .flex_none()
+                    .h_full()
+                    .overflow_y_scroll()
+                    .p_4()
+                    .border_l_1()
+                    .border_color(theme.border)
+                    .bg(theme.sidebar)
+                    .child(spec_view(state, shown, &self.approvals, &theme));
+                div().flex_1().min_h_0().flex().flex_row().child(left).child(right).into_any_element()
             }
         };
 
@@ -521,7 +488,7 @@ impl Render for PlanningPanel {
             .text_color(theme.fg)
             .child(div().flex_none().px_3().py_2().border_b_1().border_color(theme.border).child(stepper))
             .children(strip)
-            .child(div().id("plan-body").flex_1().min_h_0().overflow_y_scroll().p_4().child(body))
+            .child(body)
             .child(
                 div()
                     .flex_none()
@@ -561,4 +528,277 @@ impl Render for PlanningPanel {
             )
             .into_any_element()
     }
+}
+
+fn heading(text: &str, theme: &Theme) -> gpui::Div {
+    div().pt_3().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(text.to_string())
+}
+
+fn quiet(text: String, theme: &Theme) -> gpui::Div {
+    div().text_xs().text_color(theme.secondary).child(text)
+}
+
+fn field(label: &str, text: &str, theme: &Theme) -> Option<gpui::Div> {
+    (!text.is_empty()).then(|| div().flex().flex_col().child(heading(label, theme)).child(text.to_string()))
+}
+
+fn list(label: &str, items: &[String], theme: &Theme) -> Option<gpui::Div> {
+    (!items.is_empty()).then(|| div().flex().flex_col().child(heading(label, theme)).children(items.iter().map(|i| div().child(format!("• {i}")))))
+}
+
+fn ided(id: &str, text: &str, tint: gpui::Hsla) -> gpui::Div {
+    div().flex().flex_row().gap_2().child(div().w(px(28.)).flex_none().text_color(tint).child(id.to_string())).child(div().flex_1().child(text.to_string()))
+}
+
+/// What's happening now: the question waiting for the room, what claude's
+/// reading, or that it's the room's turn to say whether the stage is right.
+fn now_box(question: Option<&crate::work_panel::Question>, state: &State, preview: bool, theme: &Theme) -> Option<gpui::AnyElement> {
+    let boxed = || div().flex().flex_col().gap_1().p_3().rounded_md().border_1().border_color(theme.selected.opacity(0.5)).bg(theme.selected.opacity(0.06));
+    if let Some(q) = question {
+        return Some(
+            boxed()
+                .child(div().text_xs().text_color(theme.secondary).child(if q.header.is_empty() { "Claude asks the room".to_string() } else { format!("Claude asks the room · {}", q.header) }))
+                .child(div().text_base().font_weight(FontWeight::MEDIUM).child(q.question.clone()))
+                .children(q.options.iter().enumerate().map(|(i, (label, description, recommended))| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .child(div().w(px(18.)).flex_none().text_color(theme.selected).child(format!("{}", i + 1)))
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .child(div().child(format!("{label}{}", if *recommended { " (Recommended)" } else { "" })))
+                                .when(!description.is_empty(), |d| d.child(div().text_xs().text_color(theme.secondary).child(description.clone()))),
+                        )
+                }))
+                .child(div().text_xs().text_color(theme.tertiary).child("Answer in the terminal, or say something from the room below."))
+                .into_any_element(),
+        );
+    }
+    if let Some(s) = &state.scouting_now {
+        return Some(boxed().child(div().text_xs().text_color(theme.secondary).child("Claude is reading the code")).child(s.why.clone()).into_any_element());
+    }
+    if preview {
+        return None;
+    }
+    let stage = state.stage();
+    (stage != Stage::Agree && state.unmet(stage).is_empty())
+        .then(|| boxed().child(div().text_sm().child(format!("Is {} right? Say so below, or tell Claude what to change.", stage.title().to_lowercase()))).into_any_element())
+}
+
+/// A stage in full, as the room works on it.
+fn stage_view(stage: Stage, state: &State, _approvals: &Approvals, theme: &Theme) -> gpui::AnyElement {
+    let o = &state.outcome;
+    let r = &state.requirement;
+    let uncovered: Vec<String> = state.uncovered().iter().map(|c| c.id.clone()).collect();
+    let col = div().flex().flex_col().gap_1();
+    let nothing = |what: &str| quiet(format!("Nothing yet: Claude fills in {what} as the room answers."), theme);
+    match stage {
+        Stage::Outcome => col
+            .when(!state.title.is_empty(), |d| d.child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(state.title.clone())))
+            .when(!state.summary.is_empty(), |d| d.child(div().text_color(theme.secondary).child(state.summary.clone())))
+            .children(field("What changes, for whom", &o.change, theme))
+            .when(!o.measures.is_empty(), |d| {
+                d.child(heading("How we'll know", theme)).children(o.measures.iter().map(|m| {
+                    ided(&m.id, &if m.target.is_empty() { m.text.clone() } else { format!("{} (target: {})", m.text, m.target) }, theme.selected)
+                }))
+            })
+            .children(field("If we don't", &o.if_not, theme))
+            .children(field("The smallest version that proves it", &o.smallest, theme))
+            .children(list("If it fails, it'll be because", &o.premortem, theme))
+            .when(o.change.is_empty() && o.measures.is_empty(), |d| d.child(nothing("the outcome")))
+            .into_any_element(),
+        Stage::Requirements => col
+            .children(field("Problem", &r.problem, theme))
+            .children(field("Goal", &r.goal, theme))
+            .children(field("Who it's for", &r.users, theme))
+            .children(list("In scope", &r.scope, theme))
+            .children(list("Not doing", &r.non_goals, theme))
+            .when(!r.acceptance.is_empty(), |d| d.child(heading("Acceptance criteria", theme)).children(r.acceptance.iter().map(|c| ided(&c.id, &c.text, theme.selected))))
+            .children(list("Open questions", &r.open_questions, theme))
+            .when(r.problem.is_empty() && r.acceptance.is_empty(), |d| d.child(nothing("the requirement")))
+            .into_any_element(),
+        Stage::Design => col
+            .when(!state.approach.is_empty(), |d| d.child(markdown("plan-design", &state.approach, theme)))
+            .when(!state.scouting.is_empty(), |d| d.child(heading("In the code", theme)).children(state.scouting.iter().enumerate().map(|(i, f)| finding(i, f, theme))))
+            .when(state.approach.is_empty() && state.scouting.is_empty(), |d| d.child(nothing("the design")))
+            .into_any_element(),
+        Stage::Breakdown | Stage::Agree => {
+            let cards = breakdown_cards(state, theme);
+            col.when(!state.size.is_empty(), |d| {
+                let size = format!("{}{}", state.size[..1].to_uppercase(), &state.size[1..]);
+                d.child(div().flex().flex_row().items_center().gap_2().child(div().px_2().py_0p5().rounded_md().text_xs().bg(theme.tile).child(size)).child(quiet(state.size_reason.clone(), theme)))
+            })
+            .children(cards)
+            .when(!uncovered.is_empty() && !state.tasks.is_empty(), |d| d.child(div().text_xs().text_color(theme.orange()).child(format!("No issue satisfies {} yet.", uncovered.join(", ")))))
+            .when(state.tasks.is_empty(), |d| d.child(nothing("the breakdown")))
+            .into_any_element()
+        }
+    }
+}
+
+fn finding(i: usize, f: &planning::Finding, theme: &Theme) -> gpui::Div {
+    let url = f.url();
+    let kind = match f.kind.to_lowercase().as_str() {
+        "risk" => "Risk",
+        "pattern" => "Pattern",
+        _ => "Area",
+    };
+    div()
+        .flex()
+        .flex_row()
+        .gap_2()
+        .py_0p5()
+        .child(div().w(px(52.)).flex_none().text_xs().text_color(if kind == "Risk" { theme.orange() } else { theme.secondary }).child(kind))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .when(!f.path.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .id(SharedString::from(format!("plan-finding-{i}")))
+                            .text_xs()
+                            .text_color(theme.selected)
+                            .cursor_pointer()
+                            .child(format!("{}:{}", f.repo.rsplit('/').next().unwrap_or(&f.repo), f.path))
+                            .when_some(url, |d, url| d.on_click(move |_, _, cx| cx.open_url(&url))),
+                    )
+                })
+                .child(f.note.clone()),
+        )
+}
+
+/// Epics with their issues under them, then issues under none.
+fn breakdown_cards(state: &State, theme: &Theme) -> Vec<gpui::AnyElement> {
+    let card = |i: usize, task: &planning::Task, nested: bool| {
+        let meta = [
+            Some(task.repo.clone()).filter(|r| !r.is_empty()),
+            (!task.satisfies.is_empty()).then(|| format!("Satisfies {}", task.satisfies.join(", "))),
+            (!task.estimate.is_empty()).then(|| format!("Size {}", task.estimate)),
+            (!task.depends_on.is_empty()).then(|| format!("After {}", task.depends_on.join(", "))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+        div()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .when(nested, |d| d.ml(px(20.)))
+            .when(task.is_epic(), |d| d.bg(theme.tile))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1p5()
+                    .when(task.is_epic(), |d| d.child(div().text_xs().px_1().rounded_sm().border_1().border_color(theme.border).text_color(theme.secondary).child("Epic")))
+                    .child(div().font_weight(FontWeight::MEDIUM).child(if task.title.is_empty() { "Untitled".to_string() } else { task.title.clone() })),
+            )
+            .when(!meta.is_empty(), |d| d.child(quiet(meta, theme)))
+            .when(!task.body.is_empty(), |d| d.child(markdown(&format!("plan-task-{i}"), &task.body, theme)))
+            .when(!task.test_plan.is_empty(), |d| d.child(quiet(format!("Checked by: {}", task.test_plan), theme)))
+            .into_any_element()
+    };
+    let mut cards = Vec::new();
+    for (i, epic) in state.tasks.iter().enumerate().filter(|(_, t)| t.is_epic()) {
+        cards.push(card(i, epic, false));
+        for (j, t) in state.tasks.iter().enumerate().filter(|(_, t)| !t.is_epic() && t.parent.trim().eq_ignore_ascii_case(epic.title.trim())) {
+            cards.push(card(j, t, true));
+        }
+    }
+    for (i, t) in state.tasks.iter().enumerate().filter(|(_, t)| !t.is_epic() && !state.epics().any(|e| e.title.trim().eq_ignore_ascii_case(t.parent.trim()))) {
+        cards.push(card(i, t, false));
+    }
+    cards
+}
+
+/// The decisions settled in a stage.
+fn decisions(state: &State, stage: Stage, theme: &Theme) -> Option<gpui::Div> {
+    let here: Vec<&planning::Decision> = state.decisions.iter().filter(|d| Stage::parse(&d.stage) == Some(stage)).collect();
+    (!here.is_empty()).then(|| {
+        div().flex().flex_col().gap_1().child(heading("Decided", theme)).children(here.into_iter().map(|d| {
+            div().flex().flex_col().child(div().text_xs().text_color(theme.secondary).child(d.question.clone())).child(d.answer.clone())
+        }))
+    })
+}
+
+/// The spec so far, compact: each stage before the one in hand, with
+/// whether the room's approved it. It stays put while the left changes.
+fn spec_view(state: &State, shown: Stage, approvals: &Approvals, theme: &Theme) -> gpui::AnyElement {
+    let o = &state.outcome;
+    let r = &state.requirement;
+    let section = |s: Stage| {
+        let mark = match approvals.status(s, state) {
+            Status::Approved => ("✓ Approved", theme.selected),
+            Status::Recheck => ("Recheck", theme.orange()),
+            Status::Open => ("Not approved", theme.tertiary),
+        };
+        div()
+            .pt_3()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(s.title().to_uppercase()))
+            .child(div().text_xs().text_color(mark.1).child(mark.0))
+    };
+    let small = |text: String| div().text_sm().child(text);
+    let breakdown_started = !state.tasks.is_empty();
+    let shows = |s: Stage| s != shown && (s.index() < state.stage().index() || s.index() < shown.index());
+    let mut col = div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.tertiary).child("THE SPEC SO FAR"))
+        .when(!state.title.is_empty(), |d| d.child(div().pt_1().text_base().font_weight(FontWeight::SEMIBOLD).child(state.title.clone())));
+    let mut any = false;
+    if shows(Stage::Outcome) && (!o.change.is_empty() || !o.measures.is_empty()) {
+        any = true;
+        col = col
+            .child(section(Stage::Outcome))
+            .when(!o.change.is_empty(), |d| d.child(small(o.change.clone())))
+            .children(o.measures.iter().map(|m| ided(&m.id, &if m.target.is_empty() { m.text.clone() } else { format!("{} ({})", m.text, m.target) }, theme.selected).text_sm()));
+    }
+    if shows(Stage::Requirements) && (!r.problem.is_empty() || !r.acceptance.is_empty()) {
+        any = true;
+        let uncovered: Vec<String> = state.uncovered().iter().map(|c| c.id.clone()).collect();
+        col = col
+            .child(section(Stage::Requirements))
+            .when(!r.goal.is_empty(), |d| d.child(small(r.goal.clone())))
+            .children(r.acceptance.iter().map(|c| {
+                let tint = if breakdown_started && uncovered.contains(&c.id) { theme.orange() } else { theme.selected };
+                ided(&c.id, &c.text, tint).text_sm()
+            }))
+            .when(breakdown_started && !uncovered.is_empty(), |d| d.child(div().text_xs().text_color(theme.orange()).child(format!("Not yet satisfied: {}", uncovered.join(", ")))));
+    }
+    if shows(Stage::Design) && !state.approach.is_empty() {
+        any = true;
+        let first = state.approach.split("\n\n").next().unwrap_or_default().to_string();
+        let risks = state.scouting.iter().filter(|f| f.kind.eq_ignore_ascii_case("risk")).count();
+        col = col
+            .child(section(Stage::Design))
+            .child(small(first))
+            .when(risks > 0, |d| d.child(div().text_xs().text_color(theme.orange()).child(format!("{risks} risk{} found in the code", if risks == 1 { "" } else { "s" }))));
+    }
+    if shows(Stage::Breakdown) && breakdown_started {
+        any = true;
+        col = col.child(section(Stage::Breakdown)).children(state.tasks.iter().map(|t| {
+            div().text_sm().when(!t.is_epic() && !t.parent.is_empty(), |d| d.pl(px(14.))).child(format!("{}{}", if t.is_epic() { "Epic: " } else { "" }, t.title))
+        }));
+    }
+    if !any {
+        col = col.child(quiet("What the room settles shows here, so it stays in view while the next stage is worked out.".into(), theme));
+    }
+    col.into_any_element()
 }

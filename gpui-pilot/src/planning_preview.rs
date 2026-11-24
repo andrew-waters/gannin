@@ -123,3 +123,36 @@ mod tests {
         }
     }
 }
+
+/// The question claude would be waiting on while a stage is begun.
+pub fn question(stage: Stage) -> Option<crate::work_panel::Question> {
+    let (header, question, options): (&str, &str, [(&str, &str, bool); 3]) = match stage {
+        Stage::Outcome => ("Measure", "How will you know it worked?", [
+            ("Time to acknowledge a failure", "From the job failing to someone on call saying they've got it.", true),
+            ("Fewer customer reports", "Failures customers tell us about first.", false),
+            ("Alerts sent", "Counts activity, not whether anyone noticed: hard to call it working.", false),
+        ]),
+        Stage::Requirements => ("Repeats", "A flaky job fails five times in an hour. What should on call see?", [
+            ("One message, updated", "The first message counts the repeats.", true),
+            ("A message each time", "Simple, but noisy for flaky jobs.", false),
+            ("Nothing after the first", "Quiet, but hides that it's still failing.", false),
+        ]),
+        Stage::Design => ("Where", "Where should the alerting live?", [
+            ("A notifier in acme/notify", "Next to the Slack client the deploy notices already use.", true),
+            ("Inside the scheduler", "Fewer moving parts, but the scheduler gains Slack.", false),
+            ("A new service", "Clean, but one more thing to run.", false),
+        ]),
+        Stage::Breakdown => ("Size", "This touches three repos toward one outcome. File it as an epic?", [
+            ("An epic with three issues", "One per repo, each reviewable on its own.", true),
+            ("One issue", "Simpler to track, but one large PR across repos.", false),
+            ("An initiative", "More than this needs.", false),
+        ]),
+        Stage::Agree => return None,
+    };
+    Some(crate::work_panel::Question {
+        header: header.into(),
+        question: question.into(),
+        multi: false,
+        options: options.iter().map(|(l, d, r)| (l.to_string(), d.to_string(), *r)).collect(),
+    })
+}
