@@ -1143,7 +1143,7 @@ struct PullRequestReviewView: View {
 
     var body: some View {
         let transcript = sessions.transcripts[session.id]
-        let review = transcript?.review ?? session.reviewResult
+        let review = sessions.currentReview(of: session.id)
         let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
         let said = alreadySaid(review)
         let unsaid = (review?.findings ?? []).filter { !said.contains($0.key) }

@@ -22,6 +22,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - The work log no longer keeps its own copy of each issue's title, repo and author: it shares the one the rest of the app holds, and takes issue changes from the change feed. Existing work log caches carry over without refetching
 
 ### Fixed
+- A PR review run by a workflow with several agents now shows every agent's findings and the strictest verdict, in the review, the approval queue and the review record, instead of the lead agent's alone
 - A keychain access prompt no longer freezes Gannin, which could show it as "Not Responding" in the Dock: the GitHub token is read after the window opens, and starting a sandboxed session reads its credentials in the background
 - Finishing or removing a session no longer freezes Gannin while its folder is deleted and the session list is saved, which could show Gannin as "Not Responding" in the Dock
 - Saving fetched PRs and issues, and reading them back when an org's page first opens, no longer freezes Gannin while a large org's file is encoded or decoded. A save still waiting when Gannin is quit with SIGTERM, as the relaunch script does, is now written first

@@ -312,7 +312,7 @@ extension SessionStore {
     func recordReview(_ id: UUID, posting: Bool = false, automatically: Bool = false) async {
         guard Self.recordsReviews, let session = sessions[id], let pr = session.reviewOf, let repo = session.harnessRepo,
               let api = api(), let reviewer = viewerLogin() else { return }
-        let review = transcripts[id]?.review ?? session.reviewResult
+        let review = currentReview(of: id)
         guard review != nil || reviewDrafts[id]?.posted != nil else { return }
         let draft = reviewDrafts[id] ?? session.reviewDraft ?? ReviewDraft()
         let outcome = try? await chargingTo(.details) { try await api.reviewOutcome(pullRequest: pr.id) }
