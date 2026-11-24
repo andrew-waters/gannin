@@ -15,6 +15,8 @@ struct FieldView: Codable, Hashable, Identifiable {
     /// board's columns are the first, its swimlanes the second.
     var dimensions: [FieldKey]
     var filters: [FieldFilter] = []
+    /// Whether an issue must pass every filter (false) or just one (true).
+    var matchesAnyFilter = false
     var state: FieldViewState = .open
     var layout: FieldViewLayout = .outline
     var measure: FieldMeasure = .count
@@ -531,12 +533,27 @@ extension FieldView {
                 }
             }
             .filter { issue in projectNumber.map { issue.fields(onProject: $0) != nil } ?? true }
-            .filter { issue in
-                filters.allSatisfy { filter in
-                    filter.values.isEmpty || filter.key.values(of: issue, in: context).contains { filter.values.contains($0.name) }
-                }
-            }
+            .filter { passesFilters($0, context: context) }
         return sort.sorted(matching, context: context)
+    }
+
+    /// The filters that restrict anything: one with no values allows everything.
+    var activeFilters: [FieldFilter] { filters.filter { !$0.values.isEmpty } }
+
+    /// Whether `issue` passes all the filters, or at least one when
+    /// `matchesAnyFilter` is set. No active filters passes everything.
+    func passesFilters(_ issue: IssueRecord, context: FieldContext) -> Bool {
+        let active = activeFilters
+        let passes = { (filter: FieldFilter) in
+            filter.key.values(of: issue, in: context).contains { filter.values.contains($0.name) }
+        }
+        return matchesAnyFilter ? active.isEmpty || active.contains(where: passes) : active.allSatisfy(passes)
+    }
+
+    /// Drops the Any setting when fewer than two filters remain, so it can't
+    /// stay on where nothing in the UI shows it.
+    mutating func resetMatchIfSingleFilter() {
+        if activeFilters.count < 2 { matchesAnyFilter = false }
     }
 
     /// Every value `key` takes across `issues`, ordered, for filters, the
@@ -563,6 +580,7 @@ extension FieldView {
         projectNumber = try container.decodeIfPresent(Int.self, forKey: .projectNumber)
         dimensions = (try? container.decodeIfPresent([FieldKey].self, forKey: .dimensions)) ?? []
         filters = (try? container.decodeIfPresent([FieldFilter].self, forKey: .filters)) ?? []
+        matchesAnyFilter = (try? container.decodeIfPresent(Bool.self, forKey: .matchesAnyFilter)) ?? false
         state = (try? container.decodeIfPresent(FieldViewState.self, forKey: .state)) ?? .open
         layout = (try? container.decodeIfPresent(FieldViewLayout.self, forKey: .layout)) ?? .outline
         measure = (try? container.decodeIfPresent(FieldMeasure.self, forKey: .measure)) ?? .count

@@ -35,5 +35,5 @@ paths:
 - `MarkdownText` rewrites HTML tag names only, never inside code.
 
 ## Testing
-- Covered: `BoardTableModelTests` (the table's flattening, grouping and sort), `BoardTableColumnTests` (the table's columns, their widths and sort keys), `IssueHistoryOutsideRepoTests`, `OutsideRepo*Tests`, `UnreadableReposTests`, `IssueImagesTests`, `PrioritySchemeTests`.
-- Not covered: filters, FieldViews, board writes, `IssueWorkflow`; check by hand in the app.
+- Covered: `BoardTableModelTests` (the table's flattening, grouping and sort), `BoardTableColumnTests` (the table's columns, their widths and sort keys), `IssueHistoryOutsideRepoTests`, `OutsideRepo*Tests`, `UnreadableReposTests`, `IssueImagesTests`, `PrioritySchemeTests`, `FieldViewFiltersTests` (how a view's filters combine).
+- Not covered: the rest of FieldViews, board writes, `IssueWorkflow`; check by hand in the app.
