@@ -393,7 +393,7 @@ pub fn open_tasks(place: &str, doc: &Doc, theme: &Theme, cx: &mut gpui::App) -> 
         let key = format!("{place}:task:{}:{i}", doc.path);
         let opened = menu.as_deref() == Some(key.as_str());
         let control = match &todo {
-            Some(todo) => crate::note_editor::due_chip(todo, key.clone(), opened, None, theme),
+            Some(todo) => div().flex().flex_row().items_center().gap_1().child(crate::note_editor::due_chip(todo, key.clone(), opened, None, theme, cx)).child(crate::note_editor::open_todo_button(&todo.id, "open-task", theme)).into_any_element(),
             None => {
                 let toggle_key = key.clone();
                 let plan = crate::todos::PlanItem { harness: doc.harness.clone(), path: doc.path.clone(), title: doc.title.clone(), item: item.clone() };
@@ -411,18 +411,18 @@ pub fn open_tasks(place: &str, doc: &Doc, theme: &Theme, cx: &mut gpui::App) -> 
                             .hover(|s| s.bg(theme.row_selected).text_color(theme.fg))
                             .map(|d| if opened { d.bg(theme.row_selected) } else { d.invisible().group_hover("open-task", |s| s.visible()) })
                             .child("Remind Me")
-                            .on_click(move |_, _, cx| {
+                            .on_click(move |_, window, cx| {
                                 cx.stop_propagation();
                                 let store = crate::notes::NotesStore::get(cx);
-                                store.update(cx, |s, cx| s.toggle_due_menu(&toggle_key, cx));
+                                store.update(cx, |s, cx| s.toggle_due_menu(&toggle_key, None, window, cx));
                             }),
                     )
-                    .when(opened, |d| {
-                        d.child(crate::note_editor::due_menu(&key, None, theme, std::rc::Rc::new(move |due, cx| {
+                    .children(opened.then(|| {
+                        crate::note_editor::due_menu(&key, None, theme, cx, std::rc::Rc::new(move |due, cx| {
                             let store = crate::notes::NotesStore::get(cx);
                             store.update(cx, |s, cx| s.add_plan_todo(plan.clone(), due, links.clone(), cx));
-                        })))
-                    })
+                        }))
+                    }))
                     .into_any_element()
             }
         };
@@ -439,7 +439,11 @@ pub fn open_tasks(place: &str, doc: &Doc, theme: &Theme, cx: &mut gpui::App) -> 
                 .rounded_md()
                 .hover(|s| s.bg(theme.tile))
                 .child(div().flex_none().size(px(10.)).rounded(px(2.)).border_1().border_color(theme.tertiary))
-                .child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.secondary).child(item))
+                .child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.secondary).child(match todo.as_ref().filter(|t| t.text != item) {
+                    // Retitled: yours, with the plan's wording after it.
+                    Some(t) => format!("{} ({item})", t.text),
+                    None => item.clone(),
+                }))
                 .child(control),
         );
     }

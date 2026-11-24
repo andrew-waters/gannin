@@ -86,6 +86,7 @@ mod shortcuts;
 mod stars;
 mod state;
 mod sync;
+mod todo_editor;
 mod todos;
 mod work;
 mod zed;

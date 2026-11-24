@@ -289,6 +289,12 @@ pub struct NotesStore {
     pub folded: std::collections::HashSet<String>,
     /// The todo, or plan item, whose due menu is open; not kept.
     pub due_menu: Option<String>,
+    /// The open due menu's field, for a day and time typed, and the month
+    /// its calendar shows.
+    pub due_field: Option<Entity<editor::Editor>>,
+    pub due_month: chrono::NaiveDate,
+    /// What was typed couldn't be read as a day.
+    pub due_error: bool,
     /// The menu last closed by a click outside it, and when: that click
     /// landing on its own chip shouldn't open it again.
     due_closed: Option<(String, std::time::Instant)>,
@@ -339,7 +345,11 @@ impl NotesStore {
                 cx.background_executor().timer(std::time::Duration::from_secs(10)).await;
                 let Ok(due) = this.update(cx, |store: &mut NotesStore, cx| {
                     let due = crate::todos::remind(&mut store.todos, Local::now());
-                    if !due.is_empty() {
+                    // Redrawn each minute while one has a time today, so
+                    // "Due in 25m" counts down and turns red.
+                    let today = Local::now().date_naive();
+                    let ticking = store.todos.iter().any(|t| t.done.is_none() && t.due_time.is_some() && t.due.is_some_and(|d| d <= today));
+                    if !due.is_empty() || ticking {
                         cx.notify();
                     }
                     due
@@ -354,7 +364,7 @@ impl NotesStore {
                 }
                 cx.background_executor().timer(std::time::Duration::from_secs(50)).await;
             });
-            NotesStore { notes: load_all(), categories: load_categories(), todos: crate::todos::load(), shared: Vec::new(), expanded: Default::default(), folded: Default::default(), due_menu: None, due_closed: None, _refresh: refresh, _remind: remind }
+            NotesStore { notes: load_all(), categories: load_categories(), todos: crate::todos::load(), shared: Vec::new(), expanded: Default::default(), folded: Default::default(), due_menu: None, due_field: None, due_month: Local::now().date_naive(), due_error: false, due_closed: None, _refresh: refresh, _remind: remind }
         });
         cx.set_global(NotesGlobal(entity.clone()));
         entity
@@ -568,24 +578,58 @@ impl NotesStore {
     }
 
     /// A todo for a plan's checklist item, linked to what the plan is about.
-    pub fn add_plan_todo(&mut self, plan: crate::todos::PlanItem, due: Option<chrono::NaiveDate>, links: Vec<Link>, cx: &mut Context<Self>) {
+    pub fn add_plan_todo(&mut self, plan: crate::todos::PlanItem, due: Option<crate::todos::When>, links: Vec<Link>, cx: &mut Context<Self>) {
         crate::todos::add_plan(&mut self.todos, plan, due, links.iter().map(Link::to_string).collect());
         self.due_menu = None;
         cx.notify();
     }
 
-    pub fn set_due(&mut self, id: &str, due: Option<chrono::NaiveDate>, cx: &mut Context<Self>) {
+    pub fn edit_todo(&mut self, id: &str, text: &str, notes: &str, cx: &mut Context<Self>) {
+        crate::todos::edit(&mut self.todos, id, text, notes);
+        cx.notify();
+    }
+
+    pub fn todo(&self, id: &str) -> Option<&Todo> {
+        self.todos.iter().find(|t| t.id == id)
+    }
+
+    pub fn set_due(&mut self, id: &str, due: Option<crate::todos::When>, cx: &mut Context<Self>) {
         crate::todos::set_due(&mut self.todos, id, due);
         self.due_menu = None;
         cx.notify();
     }
 
-    /// Opens a due menu, or closes it when it's the one open.
-    pub fn toggle_due_menu(&mut self, key: &str, cx: &mut Context<Self>) {
+    /// Opens a due menu on the month of `current` (or this one), with its
+    /// field empty and focused; or closes it when it's the one open.
+    pub fn toggle_due_menu(&mut self, key: &str, current: Option<chrono::NaiveDate>, window: &mut gpui::Window, cx: &mut Context<Self>) {
         if self.due_closed.take().is_some_and(|(closed, at)| closed == key && at.elapsed() < std::time::Duration::from_millis(400)) {
             return;
         }
-        self.due_menu = if self.due_menu.as_deref() == Some(key) { None } else { Some(key.to_string()) };
+        if self.due_menu.as_deref() == Some(key) {
+            self.due_menu = None;
+            cx.notify();
+            return;
+        }
+        self.due_menu = Some(key.to_string());
+        self.due_month = current.unwrap_or_else(|| Local::now().date_naive());
+        self.due_error = false;
+        let field = cx.new(|cx| {
+            let mut editor = editor::Editor::single_line(window, cx);
+            editor.set_placeholder_text("29 Nov 14:00, fri 9am, in 3 days", window, cx);
+            editor
+        });
+        window.focus(&gpui::Focusable::focus_handle(field.read(cx), cx), cx);
+        self.due_field = Some(field);
+        cx.notify();
+    }
+
+    pub fn shift_due_month(&mut self, by: i32, cx: &mut Context<Self>) {
+        self.due_month = crate::todos::shift_month(self.due_month, by);
+        cx.notify();
+    }
+
+    pub fn set_due_error(&mut self, error: bool, cx: &mut Context<Self>) {
+        self.due_error = error;
         cx.notify();
     }
 

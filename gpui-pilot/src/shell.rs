@@ -5010,7 +5010,8 @@ impl Workspace {
         let (count, overdue, first) = {
             let s = store.read(cx);
             let due = crate::todos::due_now(&s.todos, today);
-            (due.len(), due.iter().any(|t| t.due.is_some_and(|d| d < today)), due.first().map(|t| t.text.clone()))
+            let now = chrono::Local::now().naive_local();
+            (due.len(), due.iter().any(|t| t.overdue(now) || t.when().is_some_and(|(d, time)| crate::todos::due_label(d, time, now).1 == crate::todos::Urgency::Imminent)), due.first().map(|t| t.text.clone()))
         };
         let first = first?;
         let colour = crate::note_editor::due_colour(if overdue { crate::todos::Urgency::Overdue } else { crate::todos::Urgency::Today }, theme);

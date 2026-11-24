@@ -405,10 +405,12 @@ impl NoteEditor {
         section = section.child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(if todos.is_empty() { "Todos".to_string() } else { format!("Todos · {}", todos.iter().filter(|t| t.done.is_none()).count()) }));
         let due_open = self.store.read(cx).due_menu.clone();
         for todo in todos {
-            section = section.child(todo_row(&todo, due_open.as_deref() == Some(todo.id.as_str()), theme, cx.listener({
+            let listener = cx.listener({
                 let id = todo.id.clone();
                 move |this, _: &ClickEvent, _, cx| this.store.update(cx, |store, cx| store.toggle_todo(&id, cx))
-            })));
+            });
+            let open = due_open.as_deref() == Some(todo.id.as_str());
+            section = section.child(todo_row(&todo, open, theme, cx, listener));
         }
         if mine {
             section = section.child(
@@ -455,8 +457,9 @@ pub fn chip(id: impl Into<SharedString>, icon: Option<&'static str>, label: impl
         .child(div().max_w(px(220.)).truncate().child(label.into()))
 }
 
-/// A todo with its tick box, ticked or not by `on_toggle`, and when it's due.
-pub fn todo_row(todo: &Todo, due_open: bool, theme: &Theme, on_toggle: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static) -> gpui::Stateful<gpui::Div> {
+/// A todo with its tick box, ticked or not by `on_toggle`, when it's due,
+/// and (on hover) a way to open it in Marra to retitle it or add notes.
+pub fn todo_row(todo: &Todo, due_open: bool, theme: &Theme, cx: &mut gpui::App, on_toggle: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static) -> gpui::Stateful<gpui::Div> {
     let done = todo.done.is_some();
     div()
         .id(SharedString::from(format!("linked-todo-{}", todo.id)))
@@ -480,13 +483,38 @@ pub fn todo_row(todo: &Todo, due_open: bool, theme: &Theme, on_toggle: impl Fn(&
                 .map(|d| if done { d.bg(theme.selected).border_color(theme.selected).text_color(theme.on_selected).text_xs().child("✓") } else { d.border_color(theme.secondary) }),
         )
         .child(div().flex_1().min_w_0().truncate().text_sm().text_color(if done { theme.secondary } else { theme.fg }).when(done, |d| d.line_through()).child(todo.text.clone()))
-        .child(due_chip(todo, todo.id.clone(), due_open, Some("linked-todo"), theme))
+        .when(!todo.notes.is_empty(), |d| d.child(gpui::svg().flex_none().path(crate::icons::NOTE).size(px(11.)).text_color(theme.tertiary)))
+        .child(due_chip(todo, todo.id.clone(), due_open, Some("linked-todo"), theme, cx))
+        .child(open_todo_button(&todo.id, "linked-todo", theme))
 }
 
-/// A due date's colour: red once overdue, orange on the day.
+/// Opens the todo in Marra, where its title and notes can be edited;
+/// shown while `group` is hovered.
+pub fn open_todo_button(id: &str, group: &'static str, theme: &Theme) -> AnyElement {
+    let thread = format!("t:{id}");
+    div()
+        .id(SharedString::from(format!("open-todo-{group}-{id}")))
+        .flex_none()
+        .px_0p5()
+        .rounded_sm()
+        .invisible()
+        .group_hover(group, |s| s.visible())
+        .hover(|s| s.bg(theme.row_selected))
+        .child(gpui::svg().path("icons/arrow_up_right.svg").size(px(12.)).text_color(theme.secondary))
+        .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("Open to edit it and add notes".into())).into())
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            let thread = thread.clone();
+            cx.defer(move |cx| crate::marra_view::show_thread(Some(thread), cx));
+        })
+        .into_any_element()
+}
+
+/// A due date's colour: red once overdue or within the hour, orange on the
+/// day.
 pub fn due_colour(urgency: crate::todos::Urgency, theme: &Theme) -> gpui::Hsla {
     match urgency {
-        crate::todos::Urgency::Overdue => theme.critical(),
+        crate::todos::Urgency::Overdue | crate::todos::Urgency::Imminent => theme.critical(),
         crate::todos::Urgency::Today => gpui::rgb(0xFF9F0A).into(),
         crate::todos::Urgency::Soon => theme.fg,
         crate::todos::Urgency::Later => theme.secondary,
@@ -495,13 +523,13 @@ pub fn due_colour(urgency: crate::todos::Urgency, theme: &Theme) -> gpui::Hsla {
 
 /// When a todo's due, opening a menu to change it. With none, it's "Due
 /// Date", shown only while `group` is hovered when there's one; a done
-/// todo just shows the day it was due.
-pub fn due_chip(todo: &Todo, key: String, open: bool, group: Option<&'static str>, theme: &Theme) -> AnyElement {
-    let today = chrono::Local::now().date_naive();
+/// todo just shows when it was due. `key` names its menu.
+pub fn due_chip(todo: &Todo, key: String, open: bool, group: Option<&'static str>, theme: &Theme, cx: &mut gpui::App) -> AnyElement {
+    let now = chrono::Local::now().naive_local();
     let (label, colour) = match todo.due {
-        Some(due) if todo.done.is_some() => (crate::todos::due_label(due, today).0, theme.tertiary),
+        Some(due) if todo.done.is_some() => (crate::todos::due_label(due, todo.due_time, now).0, theme.tertiary),
         Some(due) => {
-            let (label, urgency) = crate::todos::due_label(due, today);
+            let (label, urgency) = crate::todos::due_label(due, todo.due_time, now);
             (label, due_colour(urgency, theme))
         }
         None if todo.done.is_some() => return div().into_any_element(),
@@ -510,6 +538,7 @@ pub fn due_chip(todo: &Todo, key: String, open: bool, group: Option<&'static str
     let id = key.clone();
     let pick_id = todo.id.clone();
     let unset = todo.due.is_none();
+    let current = todo.due;
     let chip = div()
         .id(SharedString::from(format!("todo-due-{key}")))
         .flex_none()
@@ -524,70 +553,173 @@ pub fn due_chip(todo: &Todo, key: String, open: bool, group: Option<&'static str
         })
         .child(label)
         .when(todo.done.is_none(), |d| {
-            d.cursor_pointer().on_click(move |_, _, cx| {
+            d.cursor_pointer().on_click(move |_, window, cx| {
                 cx.stop_propagation();
                 let store = NotesStore::get(cx);
-                store.update(cx, |s, cx| s.toggle_due_menu(&id, cx));
+                store.update(cx, |s, cx| s.toggle_due_menu(&id, current, window, cx));
             })
         });
-    div()
-        .flex_none()
-        .child(chip)
-        .when(open, |d| {
-            d.child(due_menu(&key, todo.due, theme, std::rc::Rc::new(move |due, cx| {
-                let store = NotesStore::get(cx);
-                store.update(cx, |s, cx| s.set_due(&pick_id, due, cx));
-            })))
-        })
-        .into_any_element()
+    let menu = open.then(|| {
+        due_menu(&key, todo.when(), theme, cx, std::rc::Rc::new(move |due, cx| {
+            let store = NotesStore::get(cx);
+            store.update(cx, |s, cx| s.set_due(&pick_id, due, cx));
+        }))
+    });
+    div().flex_none().child(chip).children(menu).into_any_element()
 }
 
-/// The days a todo can be due on, and No Due Date when it has one.
-pub fn due_menu(key: &str, current: Option<chrono::NaiveDate>, theme: &Theme, on_pick: std::rc::Rc<dyn Fn(Option<chrono::NaiveDate>, &mut gpui::App)>) -> AnyElement {
-    let today = chrono::Local::now().date_naive();
-    let row = |id: String, label: String, detail: Option<String>, on: bool, pick: Option<chrono::NaiveDate>| {
-        let on_pick = on_pick.clone();
-        div()
-            .id(SharedString::from(id))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_3()
-            .px_3()
-            .py_1()
-            .text_sm()
-            .cursor_pointer()
-            .hover(|s| s.bg(theme.row_selected))
-            .on_click(move |_, _, cx| {
-                cx.stop_propagation();
-                on_pick(pick, cx);
-            })
-            .child(div().flex_1().text_color(if on { theme.selected } else { theme.fg }).child(label))
-            .when_some(detail, |d, detail| d.child(div().text_xs().text_color(theme.secondary).child(detail)))
+/// Where a due date is picked: typed as a day and maybe a time ("29 Nov
+/// 14:00", "fri 9am", or a time alone for the day already set), a day on a
+/// month's calendar, or a quick choice; and taken off. A day picked keeps
+/// the time already set.
+pub fn due_menu(key: &str, current: Option<crate::todos::When>, theme: &Theme, cx: &mut gpui::App, on_pick: std::rc::Rc<dyn Fn(Option<crate::todos::When>, &mut gpui::App)>) -> AnyElement {
+    let now = chrono::Local::now().naive_local();
+    let today = now.date();
+    let store = NotesStore::get(cx);
+    let (field, month, error) = {
+        let s = store.read(cx);
+        (s.due_field.clone(), s.due_month, s.due_error)
+    };
+    let time = current.and_then(|c| c.1);
+    let close = |cx: &mut gpui::App| {
+        let store = NotesStore::get(cx);
+        store.update(cx, |s, cx| s.close_due_menu(cx));
     };
     let mut panel = div()
         .id(SharedString::from(format!("due-menu-{key}")))
         .mt_1()
-        .w(px(230.))
+        .w(px(252.))
         .flex()
         .flex_col()
-        .py_1()
+        .gap_2()
+        .p_2()
         .bg(theme.popover)
         .border_1()
         .border_color(theme.border)
         .rounded_lg()
         .shadow_lg()
         .occlude()
-        .on_mouse_down_out(|_, _, cx| {
-            let store = NotesStore::get(cx);
-            store.update(cx, |s, cx| s.close_due_menu(cx));
-        });
-    for (i, (label, date)) in crate::todos::due_choices(today).into_iter().enumerate() {
-        panel = panel.child(row(format!("due-{key}-{i}"), label.to_string(), Some(date.format("%a %-d %b").to_string()), current == Some(date), Some(date)));
+        .on_mouse_down_out(move |_, _, cx| close(cx));
+    // Typed: Return sets it, Escape closes.
+    if let Some(field) = field {
+        let (typed, pick) = (field.clone(), on_pick.clone());
+        let base = current.map(|c| c.0);
+        panel = panel.child(
+            div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(if error { theme.critical() } else { theme.border })
+                .bg(theme.bg)
+                .text_sm()
+                .capture_key_down(move |event: &KeyDownEvent, _, cx| match event.keystroke.key.as_str() {
+                    "enter" => {
+                        cx.stop_propagation();
+                        let text = typed.read(cx).text(cx);
+                        match crate::todos::parse_when(&text, chrono::Local::now().naive_local(), base) {
+                            Some(when) => pick(Some(when), cx),
+                            None => {
+                                let store = NotesStore::get(cx);
+                                store.update(cx, |s, cx| s.set_due_error(true, cx));
+                            }
+                        }
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        let store = NotesStore::get(cx);
+                        store.update(cx, |s, cx| s.close_due_menu(cx));
+                    }
+                    _ => {}
+                })
+                .child(field),
+        );
+        if error {
+            panel = panel.child(div().text_xs().text_color(theme.critical()).child("Try 29 Nov, fri 9am, 14:00 or in 3 days"));
+        }
+    }
+    // The month: a day clicked is the day, at the time already set.
+    let shift = |by: i32, label: &'static str, id: String| {
+        div()
+            .id(SharedString::from(id))
+            .px_1p5()
+            .rounded_sm()
+            .cursor_pointer()
+            .text_color(theme.secondary)
+            .hover(|s| s.bg(theme.row_selected).text_color(theme.fg))
+            .child(label)
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                let store = NotesStore::get(cx);
+                store.update(cx, |s, cx| s.shift_due_month(by, cx));
+            })
+    };
+    let mut calendar = div().flex().flex_col().gap_0p5().child(
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .text_sm()
+            .child(div().flex_1().pl_1().font_weight(FontWeight::SEMIBOLD).child(month.format("%B %Y").to_string()))
+            .child(shift(-1, "‹", format!("due-prev-{key}")))
+            .child(shift(1, "›", format!("due-next-{key}"))),
+    );
+    let cell = || div().w(px(32.)).h(px(24.)).flex().items_center().justify_center().text_xs();
+    calendar = calendar.child(div().flex().flex_row().children(["M", "T", "W", "T", "F", "S", "S"].into_iter().map(|d| cell().text_color(theme.tertiary).child(d))));
+    for (w, week) in crate::todos::month_grid(month).into_iter().enumerate() {
+        let mut row = div().flex().flex_row();
+        for (d, (date, in_month)) in week.into_iter().enumerate() {
+            let chosen = current.is_some_and(|c| c.0 == date);
+            let pick = on_pick.clone();
+            row = row.child(
+                cell()
+                    .id(SharedString::from(format!("due-day-{key}-{w}-{d}")))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(if chosen { theme.on_selected } else if !in_month || date < today { theme.tertiary } else { theme.fg })
+                    .when(chosen, |c| c.bg(theme.selected))
+                    .when(date == today && !chosen, |c| c.border_1().border_color(theme.selected))
+                    .when(!chosen, |c| c.hover(|s| s.bg(theme.row_selected)))
+                    .child(date.format("%-d").to_string())
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        pick(Some((date, time)), cx);
+                    }),
+            );
+        }
+        calendar = calendar.child(row);
+    }
+    panel = panel.child(calendar);
+    // Quick choices, and taking the time or the date off.
+    let quick = |id: String, label: String, when: Option<crate::todos::When>| {
+        let pick = on_pick.clone();
+        div()
+            .id(SharedString::from(id))
+            .px_1p5()
+            .py_0p5()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .text_xs()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.row_selected))
+            .child(label)
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                pick(when, cx);
+            })
+    };
+    let mut chips = div().flex().flex_row().flex_wrap().gap_1();
+    for (i, (label, date)) in crate::todos::due_choices(today).into_iter().enumerate().filter(|(i, _)| *i != 0) {
+        chips = chips.child(quick(format!("due-{key}-{i}"), label.to_string(), Some((date, time))));
+    }
+    if let Some((date, Some(_))) = current {
+        chips = chips.child(quick(format!("due-{key}-no-time"), "No Time".into(), Some((date, None))));
     }
     if current.is_some() {
-        panel = panel.child(div().my_1().h(px(1.)).bg(theme.border)).child(row(format!("due-{key}-none"), "No Due Date".into(), None, false, None));
+        chips = chips.child(quick(format!("due-{key}-none"), "No Due Date".into(), None));
     }
+    panel = panel.child(chips);
     gpui::deferred(gpui::anchored().snap_to_window_with_margin(px(8.)).child(panel)).with_priority(3).into_any_element()
 }
 
@@ -864,7 +996,7 @@ pub fn linked_section(link: &Link, field: Option<&Entity<Editor>>, theme: &Theme
     for todo in todos {
         let (store, id) = (store.clone(), todo.id.clone());
         let open = due_open.as_deref() == Some(todo.id.as_str());
-        section = section.child(todo_row(&todo, open, theme, move |_, _, cx| store.update(cx, |s, cx| s.toggle_todo(&id, cx))).px_1());
+        section = section.child(todo_row(&todo, open, theme, cx, move |_, _, cx| store.update(cx, |s, cx| s.toggle_todo(&id, cx))).px_1());
     }
     if let Some(field) = field {
         let (store, link, field_entity) = (store.clone(), link.clone(), field.clone());

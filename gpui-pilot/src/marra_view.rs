@@ -96,6 +96,8 @@ pub struct MarraView {
     todo_placeholder: &'static str,
     /// The note open (thread `n:<id>`), and its events.
     note_editor: Option<(Entity<crate::note_editor::NoteEditor>, Subscription)>,
+    /// The open todo's editor, made as its thread ("t:<id>") opens.
+    todo_editor: Option<(Entity<crate::todo_editor::TodoEditor>, Subscription)>,
     /// Notes narrowed to one category.
     notes_category: Option<String>,
     notes_search: Entity<editor::Editor>,
@@ -224,6 +226,7 @@ impl MarraView {
             notes,
             todo_placeholder: "Message Marra",
             note_editor: None,
+            todo_editor: None,
             notes_category: None,
             notes_search,
             row_menu: None,
@@ -376,9 +379,13 @@ impl MarraView {
     }
 
     fn back(&mut self, cx: &mut Context<Self>) {
-        // From a note, back to the notes.
+        // From a note, back to the notes; from a todo, to the todos.
         if self.open.as_deref().is_some_and(|o| o.starts_with("n:")) {
             self.open_thread("notes".into(), cx);
+            return;
+        }
+        if self.open.as_deref().is_some_and(|o| o.starts_with("t:")) {
+            self.open_thread("todos".into(), cx);
             return;
         }
         if let Some(open) = self.open.take() {
@@ -1940,6 +1947,12 @@ impl MarraView {
         if let Some(note) = id.strip_prefix("n:") {
             return self.note_view(note, theme, cx);
         }
+        if let Some(todo) = id.strip_prefix("t:") {
+            let title = self.notes.read(cx).todo(todo).map(|t| t.text.clone()).unwrap_or_else(|| "Todo".into());
+            let nav = self.notes_nav(title, Some("‹ Todos"), theme, cx);
+            let editor = self.todo_editor.as_ref().filter(|(e, _)| e.read(cx).id == todo).map(|(e, _)| e.clone());
+            return div().flex_1().min_h_0().flex().flex_col().child(nav).children(editor.map(|e| div().flex_1().min_h_0().flex().flex_col().child(e))).into_any_element();
+        }
         let marra = self.marra.read(cx);
         let Some(thread) = marra.threads().into_iter().find(|t| t.id == id) else {
             return div().flex_1().p_4().text_color(theme.secondary).child(div().id("gone").cursor_pointer().text_color(theme.selected).child("‹ Threads").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)))).child("This thread has closed.").into_any_element();
@@ -2070,7 +2083,7 @@ impl MarraView {
                         .into_any_element(),
                 );
             }
-            let due = crate::note_editor::due_chip(&todo, todo.id.clone(), due_open.as_deref() == Some(todo.id.as_str()), Some("marra-todo"), theme);
+            let due = crate::note_editor::due_chip(&todo, todo.id.clone(), due_open.as_deref() == Some(todo.id.as_str()), Some("marra-todo"), theme, cx);
             let times = match (todo.done, crate::todos::took(&todo)) {
                 (Some(at), Some(took)) => format!("Added {} · done {} · {took}", crate::todos::when(todo.added), crate::todos::when(at)),
                 _ => format!("Added {}", crate::todos::when(todo.added)),
@@ -2108,7 +2121,19 @@ impl MarraView {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .child(div().text_sm().text_color(if is_done { theme.secondary } else { theme.fg }).when(is_done, |d| d.line_through()).child(todo.text.clone()))
+                        .child({
+                            let thread = format!("t:{}", todo.id);
+                            div()
+                                .id(SharedString::from(format!("todo-text-{}", todo.id)))
+                                .text_sm()
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(theme.selected))
+                                .text_color(if is_done { theme.secondary } else { theme.fg })
+                                .when(is_done, |d| d.line_through())
+                                .child(todo.text.clone())
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(thread.clone(), cx)))
+                        })
+                        .when(!todo.notes.trim().is_empty(), |d| d.child(div().truncate().text_xs().text_color(theme.secondary).child(todo.notes.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string())))
                         .child(div().flex().flex_row().items_center().gap_1().child(div().text_xs().text_color(theme.tertiary).child(times)).child(due))
                         .when(!links.is_empty(), |d| d.child(div().flex().flex_row().flex_wrap().gap_1().pt_1().children(links))),
                 )
@@ -2165,6 +2190,27 @@ impl MarraView {
                 crate::note_editor::NoteEvent::Deleted => this.open_thread("notes".into(), cx),
             });
             self.note_editor = Some((editor, events));
+        }
+    }
+
+    /// The open todo's editor, made as its thread opens and saved as it
+    /// closes.
+    fn sync_todo_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let wanted = self.open.as_deref().and_then(|o| o.strip_prefix("t:")).map(str::to_string);
+        let current = self.todo_editor.as_ref().map(|(e, _)| e.read(cx).id.clone());
+        if wanted == current {
+            return;
+        }
+        if let Some((editor, _)) = self.todo_editor.take() {
+            editor.update(cx, |e, cx| e.save(cx));
+        }
+        if let Some(id) = wanted {
+            let editor = cx.new(|cx| crate::todo_editor::TodoEditor::new(id, window, cx));
+            let events = cx.subscribe(&editor, |this: &mut Self, _, event: &crate::todo_editor::TodoEvent, cx| match event {
+                crate::todo_editor::TodoEvent::Open(link) => this.open_link(link.clone(), cx),
+                crate::todo_editor::TodoEvent::Removed => this.open_thread("todos".into(), cx),
+            });
+            self.todo_editor = Some((editor, events));
         }
     }
 
@@ -2920,8 +2966,9 @@ impl Render for MarraView {
             self.composer.update(cx, |editor, cx| editor.set_placeholder_text(placeholder, window, cx));
         }
         self.sync_note_editor(window, cx);
-        // A note has its own editor, so no composer under it.
-        let composing = !self.open.as_deref().is_some_and(|o| o.starts_with("n:"));
+        self.sync_todo_editor(window, cx);
+        // A note or todo has its own editor, so no composer under it.
+        let composing = !self.open.as_deref().is_some_and(|o| o.starts_with("n:") || o.starts_with("t:"));
         let menus = self.menus(&theme, cx);
         let row_menu = self.row_menu_view(&theme, cx);
         let panel = if self.split() {

@@ -4,11 +4,12 @@
 //! only, and nothing sends them to Marra's claude or anywhere else.
 //! `NotesStore` (`notes.rs`) holds them for every window.
 //!
-//! A todo can be due on a day, and can stand for an unticked item in a
-//! harness plan's checklist; it reminds once on its day, and ticks itself
-//! off when the plan's item is ticked.
+//! A todo can be due on a day, at a time if it's given one, and can stand
+//! for an unticked item in a harness plan's checklist; it reminds once when
+//! it's due, and ticks itself off when the plan's item is ticked. Its own
+//! title and notes are yours: the plan's wording stays in `PlanItem`.
 
-use chrono::{DateTime, Datelike, Duration, Local, Months, NaiveDate, Timelike, Weekday};
+use chrono::{DateTime, Datelike, Duration, Local, Months, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -24,6 +25,12 @@ pub struct Todo {
     pub links: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due: Option<NaiveDate>,
+    /// The time on the due day, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_time: Option<NaiveTime>,
+    /// Your own notes on it, kept here only.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub notes: String,
     /// The due day it last reminded for, so it reminds once a day it's set to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reminded: Option<NaiveDate>,
@@ -71,47 +78,87 @@ pub fn save(todos: &[Todo]) {
     }
 }
 
-/// Adds one; a due phrase at the end ("in a week", "by fri", "on 29 Nov")
-/// becomes its due date and leaves the text.
+/// A due day, and the time on it when there is one.
+pub type When = (NaiveDate, Option<NaiveTime>);
+
+/// Adds one; a due phrase at the end ("in a week", "by fri at 3pm", "on 29
+/// Nov 14:00") becomes when it's due and leaves the text.
 pub fn add(todos: &mut Vec<Todo>, text: &str, links: Vec<String>) {
-    let (text, due) = split_due(text.trim(), Local::now().date_naive());
+    let (text, due) = split_due(text.trim(), Local::now().naive_local());
     if text.is_empty() {
         return;
     }
-    todos.push(Todo { id: new_id(), text, added: Local::now(), done: None, links, due, reminded: None, plan: None });
+    todos.push(Todo { id: new_id(), text, added: Local::now(), done: None, links, due: due.map(|d| d.0), due_time: due.and_then(|d| d.1), notes: String::new(), reminded: None, plan: None });
     save(todos);
 }
 
-/// A todo for a plan's checklist item, due when chosen.
-pub fn add_plan(todos: &mut Vec<Todo>, plan: PlanItem, due: Option<NaiveDate>, links: Vec<String>) {
-    todos.push(Todo { id: new_id(), text: plan.item.clone(), added: Local::now(), done: None, links, due, reminded: None, plan: Some(plan) });
+/// A todo for a plan's checklist item, due when chosen. Its title starts as
+/// the item's wording, and can change without changing the plan.
+pub fn add_plan(todos: &mut Vec<Todo>, plan: PlanItem, due: Option<When>, links: Vec<String>) {
+    todos.push(Todo { id: new_id(), text: plan.item.clone(), added: Local::now(), done: None, links, due: due.map(|d| d.0), due_time: due.and_then(|d| d.1), notes: String::new(), reminded: None, plan: Some(plan) });
     save(todos);
+}
+
+/// Its title and notes, as typed; an empty title is left as it was.
+pub fn edit(todos: &mut [Todo], id: &str, text: &str, notes: &str) {
+    let Some(todo) = todos.iter_mut().find(|t| t.id == id) else { return };
+    let text = text.trim();
+    let changed = (!text.is_empty() && todo.text != text) || todo.notes != notes;
+    if !text.is_empty() {
+        todo.text = text.to_string();
+    }
+    todo.notes = notes.to_string();
+    if changed {
+        save(todos);
+    }
 }
 
 fn new_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
-pub fn set_due(todos: &mut [Todo], id: &str, due: Option<NaiveDate>) {
+/// A new due day and time, or none; it reminds again for the new one.
+pub fn set_due(todos: &mut [Todo], id: &str, due: Option<When>) {
     if let Some(todo) = todos.iter_mut().find(|t| t.id == id) {
-        todo.due = due;
+        todo.due = due.map(|d| d.0);
+        todo.due_time = due.and_then(|d| d.1);
+        todo.reminded = None;
         save(todos);
     }
 }
 
-/// Open ones due today or before, the most overdue first.
+impl Todo {
+    pub fn when(&self) -> Option<When> {
+        self.due.map(|d| (d, self.due_time))
+    }
+
+    /// When it's due as a moment: its time, or the end of a day without one.
+    fn due_at(&self) -> Option<NaiveDateTime> {
+        self.due.map(|d| d.and_time(self.due_time.unwrap_or(NaiveTime::from_hms_opt(23, 59, 59).unwrap_or_default())))
+    }
+
+    /// Past when it was due.
+    pub fn overdue(&self, now: NaiveDateTime) -> bool {
+        self.done.is_none() && self.due_at().is_some_and(|at| at < now)
+    }
+}
+
+/// Open ones due today or before, the soonest due first.
 pub fn due_now(todos: &[Todo], today: NaiveDate) -> Vec<&Todo> {
     let mut due: Vec<&Todo> = todos.iter().filter(|t| t.done.is_none() && t.due.is_some_and(|d| d <= today)).collect();
-    due.sort_by_key(|t| (t.due, t.added));
+    due.sort_by_key(|t| (t.due, t.due_time, t.added));
     due
 }
 
-/// Whether to remind about it now: open and due before today, or due today
-/// once it's 9am, and not yet reminded for that day.
+/// Whether to remind about it now, once for when it's due: at its time when
+/// it has one, else from 9am on its day; straight away once past.
 pub fn should_remind(todo: &Todo, now: DateTime<Local>) -> bool {
-    let today = now.date_naive();
+    let (today, at) = (now.date_naive(), now.naive_local());
     match todo.due {
-        Some(due) if todo.done.is_none() && todo.reminded != Some(due) => due < today || (due == today && now.hour() >= 9),
+        Some(due) if todo.done.is_none() && todo.reminded != Some(due) => match todo.due_time {
+            Some(time) => due.and_time(time) <= at,
+            None => due < today || (due == today && now.hour() >= 9),
+        },
         _ => false,
     }
 }
@@ -167,22 +214,99 @@ pub fn item_ticked(text: &str, item: &str) -> Option<bool> {
     checklist(text).into_iter().find(|(_, t)| t == item).map(|(ticked, _)| ticked)
 }
 
-/// The text without a due phrase at its end, and the day it names.
-pub fn split_due(text: &str, today: NaiveDate) -> (String, Option<NaiveDate>) {
+/// The text without a due phrase at its end, and when it names: a day
+/// ("by fri"), a day and time ("tomorrow 14:00", "on 29 Nov at 3pm"), or a
+/// time with "at" ("at 3pm": today, or tomorrow once it's passed).
+pub fn split_due(text: &str, now: NaiveDateTime) -> (String, Option<When>) {
+    let today = now.date();
     let words: Vec<&str> = text.split_whitespace().collect();
+    let lower: Vec<String> = words.iter().map(|w| w.trim_end_matches(['.', ',', '!', ';']).to_lowercase()).collect();
+    let lower: Vec<&str> = lower.iter().map(String::as_str).collect();
+    let rest = |end: usize| words[..end].join(" ").trim_end_matches([',', '-', ':']).trim_end().to_string();
+    let (end, time) = match trailing_time(&lower) {
+        Some((time, n, _)) => (lower.len() - n, Some(time)),
+        None => (lower.len(), None),
+    };
     for n in (1..=4).rev() {
-        if words.len() <= n {
+        if end <= n {
             continue;
         }
-        let tail: Vec<String> = words[words.len() - n..].iter().map(|w| w.trim_end_matches(['.', ',', '!', ';']).to_lowercase()).collect();
-        let tail: Vec<&str> = tail.iter().map(String::as_str).collect();
-        if let Some(due) = phrase(&tail, today) {
-            let rest = words[..words.len() - n].join(" ");
-            let rest = rest.trim_end_matches([',', '-', ':']).trim_end().to_string();
-            return (rest, Some(due));
+        if let Some(day) = phrase(&lower[end - n..end], today) {
+            return (rest(end - n), Some((day, time)));
+        }
+    }
+    if let Some((time, n, true)) = trailing_time(&lower) {
+        if lower.len() > n {
+            return (rest(lower.len() - n), Some((next_at(now, time), Some(time))));
         }
     }
     (text.to_string(), None)
+}
+
+/// Today at that time, or tomorrow once it's passed.
+fn next_at(now: NaiveDateTime, time: NaiveTime) -> NaiveDate {
+    if now.time() < time { now.date() } else { now.date() + Duration::days(1) }
+}
+
+/// What's typed in a due menu: a day ("29 Nov", "fri", "in 3 days",
+/// "2026-12-01"), a day and a time ("tomorrow 9:30", "29/11 at 3pm"), or a
+/// time alone, on `base`'s day when there is one, else the next one.
+pub fn parse_when(text: &str, now: NaiveDateTime, base: Option<NaiveDate>) -> Option<When> {
+    let lower: Vec<String> = text.split_whitespace().map(|w| w.trim_end_matches(['.', ',', '!', ';']).to_lowercase()).collect();
+    let lower: Vec<&str> = lower.iter().map(String::as_str).collect();
+    if lower.is_empty() {
+        return None;
+    }
+    let (end, time) = match trailing_time(&lower) {
+        Some((time, n, _)) => (lower.len() - n, Some(time)),
+        None => (lower.len(), None),
+    };
+    let words = &lower[..end];
+    if words.is_empty() {
+        let time = time?;
+        return Some((base.unwrap_or_else(|| next_at(now, time)), Some(time)));
+    }
+    let day = phrase(words, now.date()).or_else(|| day(words, now.date())).or_else(|| span(words, now.date()))?;
+    Some((day, time))
+}
+
+/// A time at the end: "14:00", "9:30", "3pm", "3:30 pm", "noon", with an
+/// "at" ahead of it or not; as (time, words taken, whether "at" was there).
+fn trailing_time(words: &[&str]) -> Option<(NaiveTime, usize, bool)> {
+    let n = words.len();
+    let (time, taken) = match words {
+        [.., hour, meridiem @ ("am" | "pm")] => (clock(&format!("{hour}{meridiem}"))?, 2),
+        [.., last] => (clock(last)?, 1),
+        [] => return None,
+    };
+    let at = n > taken && words[n - taken - 1] == "at";
+    Some((time, taken + usize::from(at), at))
+}
+
+fn clock(word: &str) -> Option<NaiveTime> {
+    match word {
+        "noon" | "midday" => return NaiveTime::from_hms_opt(12, 0, 0),
+        "midnight" => return NaiveTime::from_hms_opt(0, 0, 0),
+        _ => {}
+    }
+    let (digits, pm) = match (word.strip_suffix("pm"), word.strip_suffix("am")) {
+        (Some(d), _) => (d, Some(true)),
+        (_, Some(d)) => (d, Some(false)),
+        _ => (word, None),
+    };
+    let (hour, minute) = match digits.split_once([':', '.']) {
+        Some((h, m)) if m.len() == 2 => (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?),
+        // A bare number is a time only with am or pm.
+        None if pm.is_some() => (digits.parse::<u32>().ok()?, 0),
+        _ => return None,
+    };
+    let hour = match pm {
+        Some(true) if (1..12).contains(&hour) => hour + 12,
+        Some(false) if hour == 12 => 0,
+        Some(_) if !(1..=12).contains(&hour) => return None,
+        _ => hour,
+    };
+    NaiveTime::from_hms_opt(hour, minute, 0)
 }
 
 fn phrase(words: &[&str], today: NaiveDate) -> Option<NaiveDate> {
@@ -274,27 +398,63 @@ fn next_weekday(today: NaiveDate, day: Weekday) -> NaiveDate {
     today + Duration::days(if ahead == 0 { 7 } else { ahead })
 }
 
-/// How soon, and how much it matters.
+/// How soon, and how much it matters: overdue, and a time within the hour,
+/// are both red.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Urgency {
     Overdue,
+    Imminent,
     Today,
     Soon,
     Later,
 }
 
-/// "Overdue 3d", "Due today", "Due tomorrow", "Due Fri", "Due 29 Nov".
-pub fn due_label(due: NaiveDate, today: NaiveDate) -> (String, Urgency) {
+/// "Overdue 3d", "Overdue 20m", "Due in 25m", "Due today 14:00", "Due
+/// tomorrow", "Due Fri 9:30", "Due 29 Nov".
+pub fn due_label(due: NaiveDate, time: Option<NaiveTime>, now: NaiveDateTime) -> (String, Urgency) {
+    let today = now.date();
     let days = (due - today).num_days();
+    let at = time.map(|t| format!(" {}", t.format("%H:%M"))).unwrap_or_default();
+    if let Some(time) = time {
+        let minutes = (due.and_time(time) - now).num_minutes();
+        match minutes {
+            m if m < -60 * 24 => return (format!("Overdue {}d", -m / 60 / 24), Urgency::Overdue),
+            m if m < -60 => return (format!("Overdue {}h", -m / 60), Urgency::Overdue),
+            m if m < 0 => return (format!("Overdue {}m", -m), Urgency::Overdue),
+            m if m <= 60 => return (format!("Due in {m}m"), Urgency::Imminent),
+            _ => {}
+        }
+    }
     match days {
         d if d < -1 => (format!("Overdue {}d", -d), Urgency::Overdue),
         -1 => ("Due yesterday".into(), Urgency::Overdue),
-        0 => ("Due today".into(), Urgency::Today),
-        1 => ("Due tomorrow".into(), Urgency::Soon),
-        d if d < 7 => (format!("Due {}", due.format("%a")), Urgency::Soon),
-        _ if due.year() == today.year() => (format!("Due {}", due.format("%-d %b")), Urgency::Later),
-        _ => (format!("Due {}", due.format("%-d %b %Y")), Urgency::Later),
+        0 => (format!("Due today{at}"), Urgency::Today),
+        1 => (format!("Due tomorrow{at}"), Urgency::Soon),
+        d if d < 7 => (format!("Due {}{at}", due.format("%a")), Urgency::Soon),
+        _ if due.year() == today.year() => (format!("Due {}{at}", due.format("%-d %b")), Urgency::Later),
+        _ => (format!("Due {}{at}", due.format("%-d %b %Y")), Urgency::Later),
     }
+}
+
+/// The weeks a calendar shows for a month, Monday first; each day with
+/// whether it's in that month.
+pub fn month_grid(month: NaiveDate) -> Vec<Vec<(NaiveDate, bool)>> {
+    let first = month.with_day(1).unwrap_or(month);
+    let start = first - Duration::days(first.weekday().num_days_from_monday() as i64);
+    let mut weeks = Vec::new();
+    let mut day = start;
+    while weeks.len() < 6 && (weeks.is_empty() || day.month() == first.month() || day < first) {
+        let week: Vec<(NaiveDate, bool)> = (0..7).map(|i| day + Duration::days(i)).map(|d| (d, d.month() == first.month())).collect();
+        day += Duration::days(7);
+        weeks.push(week);
+    }
+    weeks
+}
+
+/// The first of the month before or after.
+pub fn shift_month(month: NaiveDate, by: i32) -> NaiveDate {
+    let first = month.with_day(1).unwrap_or(month);
+    if by >= 0 { first.checked_add_months(Months::new(by as u32)) } else { first.checked_sub_months(Months::new((-by) as u32)) }.unwrap_or(first)
 }
 
 /// The choices a due menu offers, as (label, day).
@@ -360,7 +520,7 @@ mod tests {
     #[test]
     fn took_reads_as_a_duration() {
         let added = Local::now() - chrono::Duration::minutes(185);
-        let todo = Todo { id: "a".into(), text: "x".into(), added, done: Some(added + chrono::Duration::minutes(185)), links: Vec::new(), due: None, reminded: None, plan: None };
+        let todo = Todo { id: "a".into(), text: "x".into(), added, done: Some(added + chrono::Duration::minutes(185)), links: Vec::new(), due: None, due_time: None, notes: String::new(), reminded: None, plan: None };
         assert_eq!(took(&todo).as_deref(), Some("3h 5m"));
         assert_eq!(took(&Todo { done: None, ..todo }), None);
     }
@@ -380,16 +540,27 @@ mod tests {
     fn due_phrases_leave_the_text() {
         // A Sunday.
         let today = day("2026-11-22");
-        let split = |t: &str| split_due(t, today);
-        assert_eq!(split("Run the numbers report in a week"), ("Run the numbers report".into(), Some(day("2026-11-29"))));
-        assert_eq!(split("Run it in 3d"), ("Run it".into(), Some(day("2026-11-25"))));
-        assert_eq!(split("Run it in 2 weeks"), ("Run it".into(), Some(day("2026-12-06"))));
-        assert_eq!(split("Send it by fri"), ("Send it".into(), Some(day("2026-11-27"))));
-        assert_eq!(split("Send it on 29th Nov."), ("Send it".into(), Some(day("2026-11-29"))));
-        assert_eq!(split("Send it due 3 Jan"), ("Send it".into(), Some(day("2027-01-03"))));
-        assert_eq!(split("Send it tomorrow"), ("Send it".into(), Some(day("2026-11-23"))));
-        assert_eq!(split("Send it next week"), ("Send it".into(), Some(day("2026-11-23"))));
-        assert_eq!(split("Send it on sun"), ("Send it".into(), Some(day("2026-11-29"))));
+        let now = today.and_hms_opt(10, 0, 0).unwrap();
+        let split = |t: &str| split_due(t, now);
+        let on = |d: &str| Some((day(d), None));
+        let at = |d: &str, h: u32, m: u32| Some((day(d), NaiveTime::from_hms_opt(h, m, 0)));
+        assert_eq!(split("Run the numbers report in a week"), ("Run the numbers report".into(), on("2026-11-29")));
+        assert_eq!(split("Run it in 3d"), ("Run it".into(), on("2026-11-25")));
+        assert_eq!(split("Run it in 2 weeks"), ("Run it".into(), on("2026-12-06")));
+        assert_eq!(split("Send it by fri"), ("Send it".into(), on("2026-11-27")));
+        assert_eq!(split("Send it on 29th Nov."), ("Send it".into(), on("2026-11-29")));
+        assert_eq!(split("Send it due 3 Jan"), ("Send it".into(), on("2027-01-03")));
+        assert_eq!(split("Send it tomorrow"), ("Send it".into(), on("2026-11-23")));
+        assert_eq!(split("Send it next week"), ("Send it".into(), on("2026-11-23")));
+        assert_eq!(split("Send it on sun"), ("Send it".into(), on("2026-11-29")));
+        assert_eq!(split("Send it tomorrow 14:00"), ("Send it".into(), at("2026-11-23", 14, 0)));
+        assert_eq!(split("Send it on 29 Nov at 3:30pm"), ("Send it".into(), at("2026-11-29", 15, 30)));
+        assert_eq!(split("Send it by fri at 9 am"), ("Send it".into(), at("2026-11-27", 9, 0)));
+        assert_eq!(split("Call them at 3pm"), ("Call them".into(), at("2026-11-22", 15, 0)));
+        assert_eq!(split("Call them at 9:00"), ("Call them".into(), at("2026-11-23", 9, 0)));
+        // A time needs "at" or a day with it.
+        assert_eq!(split("Bump to 1.20"), ("Bump to 1.20".into(), None));
+        assert_eq!(split("Read chapter 3pm"), ("Read chapter 3pm".into(), None));
         // Nothing that reads as a day is taken.
         assert_eq!(split("Look in the monthly report"), ("Look in the monthly report".into(), None));
         assert_eq!(split("Ping Fri team"), ("Ping Fri team".into(), None));
@@ -397,10 +568,35 @@ mod tests {
     }
 
     #[test]
+    fn typed_whens() {
+        let now = day("2026-11-22").and_hms_opt(10, 0, 0).unwrap();
+        let parse = |t: &str| parse_when(t, now, None);
+        assert_eq!(parse("29 Nov"), Some((day("2026-11-29"), None)));
+        assert_eq!(parse("29/11 14:30"), Some((day("2026-11-29"), NaiveTime::from_hms_opt(14, 30, 0))));
+        assert_eq!(parse("fri 9am"), Some((day("2026-11-27"), NaiveTime::from_hms_opt(9, 0, 0))));
+        assert_eq!(parse("in 3 days"), Some((day("2026-11-25"), None)));
+        assert_eq!(parse("3 days"), Some((day("2026-11-25"), None)));
+        assert_eq!(parse("2026-12-01 noon"), Some((day("2026-12-01"), NaiveTime::from_hms_opt(12, 0, 0))));
+        assert_eq!(parse("9:00"), Some((day("2026-11-23"), NaiveTime::from_hms_opt(9, 0, 0))));
+        assert_eq!(parse_when("9:00", now, Some(day("2026-12-25"))), Some((day("2026-12-25"), NaiveTime::from_hms_opt(9, 0, 0))));
+        assert_eq!(parse("whenever"), None);
+    }
+
+    #[test]
+    fn a_calendar_month() {
+        let weeks = month_grid(day("2026-11-10"));
+        // November 2026 starts on a Sunday: six weeks, from 26 October.
+        assert_eq!(weeks.len(), 6);
+        assert_eq!(weeks[0][0], (day("2026-10-26"), false));
+        assert_eq!(weeks[0][6], (day("2026-11-01"), true));
+        assert_eq!(shift_month(day("2026-01-31"), -1), day("2025-12-01"));
+    }
+
+    #[test]
     fn reminds_once_from_nine_on_its_day() {
         let today = day("2026-11-22");
         let at = |d: NaiveDate, h: u32| d.and_hms_opt(h, 0, 0).unwrap().and_local_timezone(Local).unwrap();
-        let todo = Todo { id: "a".into(), text: "x".into(), added: at(today, 8), done: None, links: Vec::new(), due: Some(today), reminded: None, plan: None };
+        let todo = Todo { id: "a".into(), text: "x".into(), added: at(today, 8), done: None, links: Vec::new(), due: Some(today), due_time: None, notes: String::new(), reminded: None, plan: None };
         assert!(!should_remind(&todo, at(today, 8)));
         assert!(should_remind(&todo, at(today, 9)));
         assert!(!should_remind(&Todo { reminded: Some(today), ..todo.clone() }, at(today, 10)));
@@ -408,7 +604,11 @@ mod tests {
         let tomorrow = today + Duration::days(1);
         assert!(should_remind(&todo, at(tomorrow, 7)));
         assert!(should_remind(&Todo { reminded: Some(today), due: Some(tomorrow), ..todo.clone() }, at(tomorrow, 9)));
-        assert!(!should_remind(&Todo { done: Some(at(today, 8)), ..todo }, at(today, 10)));
+        assert!(!should_remind(&Todo { done: Some(at(today, 8)), ..todo.clone() }, at(today, 10)));
+        // With a time, at that time.
+        let timed = Todo { due_time: NaiveTime::from_hms_opt(14, 30, 0), ..todo };
+        assert!(!should_remind(&timed, at(today, 14)));
+        assert!(should_remind(&timed, at(today, 15)));
     }
 
     #[test]
@@ -422,9 +622,15 @@ mod tests {
     #[test]
     fn due_labels() {
         let today = day("2026-11-22");
-        assert_eq!(due_label(day("2026-11-19"), today), ("Overdue 3d".into(), Urgency::Overdue));
-        assert_eq!(due_label(today, today).1, Urgency::Today);
-        assert_eq!(due_label(day("2026-11-27"), today).0, "Due Fri");
-        assert_eq!(due_label(day("2026-12-25"), today).0, "Due 25 Dec");
+        let now = today.and_hms_opt(10, 0, 0).unwrap();
+        let t = |h: u32, m: u32| NaiveTime::from_hms_opt(h, m, 0);
+        assert_eq!(due_label(day("2026-11-19"), None, now), ("Overdue 3d".into(), Urgency::Overdue));
+        assert_eq!(due_label(today, None, now).1, Urgency::Today);
+        assert_eq!(due_label(day("2026-11-27"), None, now).0, "Due Fri");
+        assert_eq!(due_label(day("2026-12-25"), None, now).0, "Due 25 Dec");
+        assert_eq!(due_label(today, t(14, 0), now), ("Due today 14:00".into(), Urgency::Today));
+        assert_eq!(due_label(today, t(10, 40), now), ("Due in 40m".into(), Urgency::Imminent));
+        assert_eq!(due_label(today, t(9, 30), now), ("Overdue 30m".into(), Urgency::Overdue));
+        assert_eq!(due_label(day("2026-11-27"), t(9, 30), now).0, "Due Fri 09:30");
     }
 }
