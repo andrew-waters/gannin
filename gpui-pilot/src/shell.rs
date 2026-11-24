@@ -2797,7 +2797,22 @@ impl Workspace {
                 if let Some(issue) = &started.issue {
                     brief.push_str(&format!("Planning {}#{}: {}\n", issue.repo, issue.number, issue.title));
                 }
-                let mut prompt = launch::planning_prompt(&topic, &branch, reference.as_ref().map(|(r, n, repo)| (r.as_str(), *n, repo.as_str())));
+                // The documents shared: copied beside the session, and into
+                // its docs/ folder by the start script.
+                let mut docs: Vec<crate::planning::Doc> = Vec::new();
+                if !started.docs.is_empty() {
+                    let folder = launch.dir().join("docs");
+                    let _ = std::fs::create_dir_all(&folder);
+                    for (path, commit) in &started.docs {
+                        let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_string()) else { continue };
+                        if std::fs::copy(path, folder.join(&name)).is_ok() {
+                            docs.push(crate::planning::Doc { name, commit: *commit });
+                        }
+                    }
+                    crate::planning::save_docs(&launch.dir(), &docs);
+                    brief.push_str(&format!("\nShared with the room: {}\n", docs.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", ")));
+                }
+                let mut prompt = launch::planning_prompt(&topic, &branch, reference.as_ref().map(|(r, n, repo)| (r.as_str(), *n, repo.as_str())), started.size, &docs);
                 if !started.extra.is_empty() {
                     prompt.push_str("\n\n");
                     prompt.push_str(&started.extra);
@@ -5741,7 +5756,7 @@ impl Workspace {
                                 .child(item("new-menu-quick", "Quick Change", None, |this, window, cx| {
                                     this.open_form(crate::launch::Flow::QuickChange, None, window, cx)
                                 }))
-                                .child(item("new-menu-plan", "New Plan", None, |this, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
+                                .child(item("new-menu-plan", "New Initiative, Epic or Issue", None, |this, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
                                 .child(item("new-menu-issue", "New Issue", None, |this, window, cx| this.open_new_issue(None, window, cx)))
                                 .child(div().my_1().h(px(1.)).bg(theme.border))
                                 .child(item("new-menu-review", "Review a Pull Request", None, |this, window, cx| this.open_pr_picker(window, cx)))

@@ -182,7 +182,7 @@ impl Launch {
             copies.push_str("if [ -d \"$session/attachments\" ]; then mkdir -p \"$folder/.gannin/attachments\" && cp -R \"$session/attachments/.\" \"$folder/.gannin/attachments/\"; fi\n");
         }
         if self.flow == Flow::Plan {
-            copies.push_str("mkdir -p \"$folder/docs\"\n");
+            copies.push_str("mkdir -p \"$folder/docs\"\nif [ -d \"$session/docs\" ]; then cp -R \"$session/docs/.\" \"$folder/docs/\"; fi\n");
         }
         format!(
             r#"# Written by the Gannin pilot for {about}. Run in the session's terminal.
@@ -525,13 +525,23 @@ pub fn quick_change_prompt(repo: &str, title: &str, branch: &str, screenshots: b
 
 /// The planning session's prompt: the default guidance, then the state
 /// file's instructions, as `planningPrompt` puts them together.
-pub fn planning_prompt(topic: &str, branch: &str, issue: Option<(&str, i64, &str)>) -> String {
+/// `size` is what the room expects it to be (initiative, epic or issue),
+/// when it said; `docs` the documents shared at the start, and whether
+/// each may be committed.
+pub fn planning_prompt(topic: &str, branch: &str, issue: Option<(&str, i64, &str)>, size: Option<&str>, docs: &[crate::planning::Doc]) -> String {
     let today = Utc::now().format("%Y-%m-%d");
     let slug = slug(topic, 40);
-    let starting = match issue {
+    let mut starting = match issue {
         Some((reference, number, repo)) => format!(" We're planning {reference}: read it first with `gh issue view {number} --repo {repo} --comments`."),
         None => String::new(),
     };
+    if let Some(size) = size {
+        starting.push_str(&format!(" The room expects this to be {} {size}; say so if the outcome turns out bigger or smaller.", if size.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" }));
+    }
+    if !docs.is_empty() {
+        let list: Vec<String> = docs.iter().map(|d| format!("{} ({})", d.name, if d.commit { "may be committed" } else { "don't commit" })).collect();
+        starting.push_str(&format!(" The room has shared {}, in .worktrees/{branch}/docs/.", list.join(", ")));
+    }
     let guidance = format!(
         "Let's plan \"{topic}\" together, here in the team's harness. Read STANDARDS.md and plans/_template.md first.{starting}\n\nI may share documents (specs, notes, emails, exports). They'll be in .worktrees/{branch}/docs/, and I'll tell you each time, with which ones may be committed. Only those may go into the harness, in plans/assets/{slug}/, linked from the plan. Never commit, copy into the harness, or quote at length a document I haven't marked for committing: it may hold sensitive details. Summarise what you need from it in your own words.\n\nAsk what you need to know, one question at a time. When we agree, Gannin writes the plan as plans/{today}-{slug}.md, following the standard, from what you've kept. Commit only the assets marked for committing, and only when I say so."
     );
@@ -543,7 +553,7 @@ pub fn planning_prompt(topic: &str, branch: &str, issue: Option<(&str, i64, &str
 /// The planning prompt's suggested facilitator guidance.
 pub fn suggested_planning_guidance(title: &str) -> String {
     format!(
-        "Run this like a good refinement session for {title}.\n\n- Start from the problem, not the solution: who has it, how often, and what it costs them today.\n- Push on scope: suggest the smallest version worth shipping, and name what's deliberately left out.\n- Before proposing an approach, look at how similar things are already done in the code, and follow those patterns.\n- Call out risks, dependencies, and anything that needs someone who isn't in the room.\n- Group the work into a few larger tasks, by repository where it makes sense, each with its steps as a checklist and a line on how it'll be checked."
+        "Run this like a good refinement session for {title}.\n\n- Start from the outcome, not the solution: who it's for, what changes for them, and how we'll know it worked.\n- Start from the problem as people have it today: how often, and what it costs them.\n- Push on scope: suggest the smallest version worth shipping, and name what's deliberately left out.\n- Before proposing an approach, look at how similar things are already done in the code, and follow those patterns.\n- Call out risks, dependencies, and anything that needs someone who isn't in the room.\n- Group the work into a few larger issues, by repository where it makes sense, each with its steps as a checklist and a line on how it'll be checked."
     )
 }
 

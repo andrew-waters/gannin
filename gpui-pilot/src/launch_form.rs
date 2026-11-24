@@ -21,7 +21,15 @@ pub struct Started {
     pub repo: Option<String>,
     /// The issue a plan is for.
     pub issue: Option<IssueItem>,
+    /// What the room expects a plan to be: initiative, epic or issue. None
+    /// leaves it to the plan to propose.
+    pub size: Option<&'static str>,
+    /// Documents shared with a plan, and whether each may be committed.
+    pub docs: Vec<(std::path::PathBuf, bool)>,
 }
+
+/// What a plan can be expected to become, as the form offers it.
+const SIZES: [(Option<&str>, &str); 4] = [(None, "Let the Plan Say"), (Some("initiative"), "Initiative"), (Some("epic"), "Epic"), (Some("issue"), "Issue")];
 
 pub enum FormEvent {
     Start(Started),
@@ -39,6 +47,8 @@ pub struct LaunchForm {
     text: Entity<editor::Editor>,
     extra: Entity<editor::Editor>,
     error: Option<String>,
+    size: Option<&'static str>,
+    docs: Vec<(std::path::PathBuf, bool)>,
 }
 
 impl LaunchForm {
@@ -76,7 +86,25 @@ impl LaunchForm {
         let repo = projects.get(project).and_then(|p| p.repos.first().cloned());
         let focus = text.focus_handle(cx);
         window.focus(&focus, cx);
-        Self { flow, projects, project, repo, issue, text, extra, error: None }
+        Self { flow, projects, project, repo, issue, text, extra, error: None, size: None, docs: Vec::new() }
+    }
+
+    /// Documents for a plan: picked, each not committed until ticked.
+    fn add_docs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions { files: true, directories: false, multiple: true, prompt: Some("Share".into()) });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else { return };
+            this.update(cx, |form, cx| {
+                for path in paths {
+                    if !form.docs.iter().any(|(p, _)| *p == path) {
+                        form.docs.push((path, false));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
@@ -105,6 +133,8 @@ impl LaunchForm {
             extra,
             repo: self.repo.clone(),
             issue: self.issue.clone(),
+            size: self.size,
+            docs: self.docs.clone(),
         }));
     }
 }
@@ -130,9 +160,9 @@ impl Render for LaunchForm {
         };
         let (title, start, footer) = match self.flow {
             Flow::Plan => (
-                "New Plan",
+                if self.issue.is_some() { "Plan This" } else { "New Initiative, Epic or Issue" },
                 "Start Planning",
-                "Claude runs the session in the project's harness, asks the room one question at a time, and keeps the plan in planning.json, shown beside the terminal.".to_string(),
+                "Claude runs the session in the project's harness and asks the room one question at a time, starting from the outcome: what changes, for whom, and how you'll know. The room approves each stage; at Agree, Gannin writes the plan and files the issues.".to_string(),
             ),
             Flow::Ask => (
                 "New Ask",
@@ -200,6 +230,49 @@ impl Render for LaunchForm {
                 _ => "What to change",
             }))
             .child(field(&self.text))
+            .when(self.flow == Flow::Plan && self.issue.is_none(), |d| {
+                d.child(label("What it'll become")).child(div().flex().flex_row().flex_wrap().gap_1().children(SIZES.iter().enumerate().map(|(i, (size, title))| {
+                    let size = *size;
+                    chip(("form-size", i), title.to_string(), self.size == size).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.size = size;
+                        cx.notify();
+                    }))
+                })))
+            })
+            .when(self.flow == Flow::Plan, |d| {
+                let docs = self.docs.clone();
+                d.child(label("Documents for the room"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .children(docs.into_iter().enumerate().map(|(i, (path, commit))| {
+                                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_2()
+                                    .text_sm()
+                                    .child(div().flex_1().truncate().child(name))
+                                    .child(chip(("form-doc-commit", i), "Commit with the Plan".into(), commit).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        if let Some(doc) = this.docs.get_mut(i) {
+                                            doc.1 = !doc.1;
+                                        }
+                                        cx.notify();
+                                    })))
+                                    .child(chip(("form-doc-remove", i), "Remove".into(), false).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        if i < this.docs.len() {
+                                            this.docs.remove(i);
+                                        }
+                                        cx.notify();
+                                    })))
+                            }))
+                            .child(div().flex().flex_row().child(chip(("form-doc-add", 0), "Add Documents".into(), false).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.add_docs(window, cx))))),
+                    )
+                    .child(div().text_xs().text_color(theme.tertiary).child("Claude reads them in the session. Only those ticked go into the harness with the plan, where git keeps them: leave anything sensitive unticked."))
+            })
             .when(self.flow != Flow::Ask, |d| {
                 d.child(label(if self.flow == Flow::Plan { "Prompt" } else { "Title" })).child(field(&self.extra))
             })
