@@ -798,6 +798,7 @@ impl Render for AgreeView {
             return div()
                 .id("agree")
                 .size_full()
+                .text_color(theme.fg)
                 .overflow_y_scroll()
                 .p_4()
                 .flex()
@@ -808,7 +809,7 @@ impl Render for AgreeView {
                 .child(div().flex().flex_row().child(button("agree-preview-done", "Done", true, &theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(AgreeEvent::Agreed(agreed.clone()))))))
                 .child(crate::markdown::markdown("agree-written", written, &theme));
         }
-        div().id("agree").size_full().overflow_y_scroll().p_4().child(body)
+        div().id("agree").size_full().text_color(theme.fg).overflow_y_scroll().p_4().child(body)
     }
 }
 

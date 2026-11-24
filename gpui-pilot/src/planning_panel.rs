@@ -281,6 +281,7 @@ impl Render for PlanningPanel {
                 .flex()
                 .flex_col()
                 .bg(theme.bg)
+                .text_color(theme.fg)
                 .child(div().flex_none().px_3().py_2().border_b_1().border_color(theme.border).child(stepper))
                 .child(div().flex_1().min_h_0().child(view.clone()))
                 .into_any_element();
@@ -517,6 +518,7 @@ impl Render for PlanningPanel {
             .flex()
             .flex_col()
             .bg(theme.bg)
+            .text_color(theme.fg)
             .child(div().flex_none().px_3().py_2().border_b_1().border_color(theme.border).child(stepper))
             .children(strip)
             .child(div().id("plan-body").flex_1().min_h_0().overflow_y_scroll().p_4().child(body))
