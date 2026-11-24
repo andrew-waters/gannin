@@ -91,7 +91,7 @@ struct FieldViewEditor: View {
                                 .help("Remove this filter")
                         }
                     }
-                    if draft.filters.count > 1 {
+                    if draft.activeFilters.count > 1 {
                         Picker("Match", selection: $draft.matchesAnyFilter) {
                             Text("All filters").tag(false)
                             Text("Any filter").tag(true)
@@ -130,6 +130,7 @@ struct FieldViewEditor: View {
         var view = draft
         view.name = view.name.trimmingCharacters(in: .whitespaces)
         view.filters.removeAll { $0.values.isEmpty }
+        view.resetMatchIfSingleFilter()
         return view
     }
 

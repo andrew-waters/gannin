@@ -489,8 +489,14 @@ struct FieldViewPage: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(.quaternary.opacity(0.7), in: Capsule())
-            ForEach(Self.quickKeys, id: \.self) { key in
-                quickFilter(key, view: view, context: context)
+            // Under Any, a quick filter would widen the results and its counts
+            // would be wrong, so every filter is a chip until Edit View changes the mode.
+            if view.matchesAnyFilter {
+                Text("Matching any of").foregroundStyle(.secondary)
+            } else {
+                ForEach(Self.quickKeys, id: \.self) { key in
+                    quickFilter(key, view: view, context: context)
+                }
             }
             filterChips(view)
             Spacer(minLength: 0)
@@ -498,6 +504,7 @@ struct FieldViewPage: View {
                 Button("Clear All") {
                     var changed = view
                     changed.filters = []
+                    changed.resetMatchIfSingleFilter()
                     configs.saveFieldView(changed, in: org)
                 }
                 .linkButton()
@@ -580,7 +587,7 @@ struct FieldViewPage: View {
 
     /// Other filters, from Edit View, as chips: click to edit, × to drop.
     private func filterChips(_ view: FieldView) -> some View {
-        ForEach(view.filters.filter { !Self.quickKeys.contains($0.key) }) { filter in
+        ForEach(view.filters.filter { view.matchesAnyFilter || !Self.quickKeys.contains($0.key) }) { filter in
             let values = filter.values.map { $0 ?? "No value" }.sorted().joined(separator: ", ")
             HStack(spacing: 4) {
                 Button {
@@ -596,6 +603,7 @@ struct FieldViewPage: View {
                 Button {
                     var changed = view
                     changed.filters.removeAll { $0.id == filter.id }
+                    changed.resetMatchIfSingleFilter()
                     configs.saveFieldView(changed, in: org)
                 } label: {
                     Image(systemName: "xmark").font(.caption2.weight(.semibold))

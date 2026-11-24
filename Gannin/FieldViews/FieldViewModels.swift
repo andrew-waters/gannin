@@ -533,15 +533,27 @@ extension FieldView {
                 }
             }
             .filter { issue in projectNumber.map { issue.fields(onProject: $0) != nil } ?? true }
-            .filter { issue in
-                // Empty filters allow everything, so they don't count towards "any".
-                let active = filters.filter { !$0.values.isEmpty }
-                let passes = { (filter: FieldFilter) in
-                    filter.key.values(of: issue, in: context).contains { filter.values.contains($0.name) }
-                }
-                return matchesAnyFilter ? active.isEmpty || active.contains(where: passes) : active.allSatisfy(passes)
-            }
+            .filter { passesFilters($0, context: context) }
         return sort.sorted(matching, context: context)
+    }
+
+    /// The filters that restrict anything: one with no values allows everything.
+    var activeFilters: [FieldFilter] { filters.filter { !$0.values.isEmpty } }
+
+    /// Whether `issue` passes all the filters, or at least one when
+    /// `matchesAnyFilter` is set. No active filters passes everything.
+    func passesFilters(_ issue: IssueRecord, context: FieldContext) -> Bool {
+        let active = activeFilters
+        let passes = { (filter: FieldFilter) in
+            filter.key.values(of: issue, in: context).contains { filter.values.contains($0.name) }
+        }
+        return matchesAnyFilter ? active.isEmpty || active.contains(where: passes) : active.allSatisfy(passes)
+    }
+
+    /// Drops the Any setting when fewer than two filters remain, so it can't
+    /// stay on where nothing in the UI shows it.
+    mutating func resetMatchIfSingleFilter() {
+        if activeFilters.count < 2 { matchesAnyFilter = false }
     }
 
     /// Every value `key` takes across `issues`, ordered, for filters, the
