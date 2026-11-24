@@ -599,7 +599,7 @@ struct FieldViewPage: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help("Only issues where \(filter.key.title) is \(values). Click to change.")
+                .help("\(view.matchesAnyFilter ? "Or issues" : "Only issues") where \(filter.key.title) is \(values). Click to change.")
                 Button {
                     var changed = view
                     changed.filters.removeAll { $0.id == filter.id }

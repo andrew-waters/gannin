@@ -11,7 +11,7 @@ Views is Gannin's own way of looking at issues, not a copy of GitHub's project v
 
 A view looks at one board's issues (or every issue Gannin has stored) and has:
 
-- A state: Open, Closed or All, plus filters. Under **Only issues where**, a filter with several values keeps issues with any of them. With two or more filters, **Match** chooses whether an issue must pass All filters (the default) or just Any filter, such as assigned to you or labelled urgent.
+- A state: Open, Closed or All, plus filters. Under **Only issues where**, a filter with several values keeps issues with any of them. With two or more filters, **Match** chooses whether an issue must pass All filters (the default) or just Any filter, such as assigned to you or labelled urgent. In an Any view the filter bar shows every filter as a chip under "Matching any of" instead of the Assignee, Repository, Type and Label menus, which come back when Match is set to All.
 - Any number of dimensions to Group by: board fields by name, issue attributes such as repository or parent issue, and the worked-out Attention and Time in status.
 - A **Layout**: Outline, Board, Table, Grid or Aging.
 - A **Measure**: Count, Time in status or Time in progress.
