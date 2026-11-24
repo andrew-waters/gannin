@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- A view with two or more filters can match Any filter instead of All, so it can say "assigned to me or labelled urgent"
 - PR reviews rate their merge risk (Low, Medium or High), shown on the Overview beside Effort and kept in the review record
 - ⇧⌘F finishes a PR review, asking first as the Finish button does
 - Review History, from the menu of the sidebar's Reviews heading or a finished review, lists finished PR reviews with search and removes several at once

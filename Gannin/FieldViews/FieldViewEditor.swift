@@ -91,6 +91,14 @@ struct FieldViewEditor: View {
                                 .help("Remove this filter")
                         }
                     }
+                    if draft.filters.count > 1 {
+                        Picker("Match", selection: $draft.matchesAnyFilter) {
+                            Text("All filters").tag(false)
+                            Text("Any filter").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .help("All keeps issues passing every filter; Any keeps issues passing at least one")
+                    }
                     Menu("Add Filter") {
                         keyMenu(excluding: []) { draft.filters.append(FieldFilter(key: $0, values: [])) }
                     }
