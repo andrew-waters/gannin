@@ -298,19 +298,22 @@ struct Broadcast {
 pub enum TabKind {
     Pages,
     Work,
-    Reviews,
+    /// Pull requests open as pages, and their reviews: one tab per PR,
+    /// as a review takes over its PR's page.
+    #[serde(alias = "Reviews")]
+    Prs,
     Plans,
     Asks,
 }
 
 impl TabKind {
-    const ALL: [TabKind; 5] = [TabKind::Pages, TabKind::Work, TabKind::Reviews, TabKind::Plans, TabKind::Asks];
+    const ALL: [TabKind; 5] = [TabKind::Pages, TabKind::Prs, TabKind::Work, TabKind::Plans, TabKind::Asks];
 
     fn title(self) -> &'static str {
         match self {
             TabKind::Pages => "Pages",
             TabKind::Work => "Work",
-            TabKind::Reviews => "Reviews",
+            TabKind::Prs => "PRs",
             TabKind::Plans => "Plans",
             TabKind::Asks => "Asks",
         }
@@ -319,8 +322,8 @@ impl TabKind {
     fn icon(self) -> &'static str {
         match self {
             TabKind::Pages => "icons/file.svg",
-            TabKind::Work => "icons/pull_request.svg",
-            TabKind::Reviews => "icons/eye.svg",
+            TabKind::Work => "icons/git_branch.svg",
+            TabKind::Prs => "icons/pull_request.svg",
             TabKind::Plans => "icons/list_todo.svg",
             TabKind::Asks => "icons/chat.svg",
         }
@@ -1569,6 +1572,25 @@ impl Workspace {
                 // A name it was given before a relaunch comes back with it.
                 let name = this.session(id, cx).and_then(|p| p.read(cx).saved_key()).and_then(|key| this.session_names.remove(&key));
                 let tab = Tab { id: this.next_tab, nav: Nav::Session(id), name, page: Page::None };
+                // A review takes over its PR's page tab, where it stood, so
+                // the PR has one tab: the review's shows the PR as well.
+                let subject = this.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().filter(|l| l.flow == crate::launch::Flow::Review).and_then(|l| l.subject.clone()));
+                let pull_tab = subject.and_then(|s| this.tabs.iter().position(|t| matches!(&t.page, Page::Pull(p) if p.read(cx).pr_id() == s.id || p.read(cx).key() == crate::issues::related_key(&s.repo, s.number))));
+                if let Some(at) = pull_tab {
+                    let was_showing = this.active == at;
+                    let name = tab.name.clone().or_else(|| this.tabs[at].name.clone());
+                    this.tabs[at] = Tab { name, ..tab };
+                    let reopened = this.reopening > 0;
+                    if reopened {
+                        this.reopening -= 1;
+                        this.seen.insert(id, chrono::Local::now());
+                    }
+                    if !reopened || was_showing {
+                        this.activate(at, window, cx);
+                    }
+                    cx.notify();
+                    return;
+                }
                 this.tabs.push(tab);
                 // Sessions reopened at launch don't take the tab that was showing.
                 if this.reopening > 0 {
@@ -6171,11 +6193,12 @@ impl Workspace {
         use crate::launch::Flow;
         match tab.nav {
             Nav::Session(id) => match self.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().map(|l| l.flow)) {
-                Some(Flow::Review) => TabKind::Reviews,
+                Some(Flow::Review) => TabKind::Prs,
                 Some(Flow::Work) | Some(Flow::QuickChange) => TabKind::Work,
                 Some(Flow::Plan) => TabKind::Plans,
                 _ => TabKind::Asks,
             },
+            Nav::Pull(_) => TabKind::Prs,
             _ => TabKind::Pages,
         }
     }
@@ -6184,6 +6207,8 @@ impl Workspace {
     fn tab_icon(&self, tab: &Tab, cx: &App) -> &'static str {
         match tab.nav {
             Nav::Session(id) => match self.session(id, cx).map(|p| p.read(cx)) {
+                // A review shows as its PR does, with the eye for claude reading it.
+                Some(page) if page.launch.as_ref().is_some_and(|l| l.flow == crate::launch::Flow::Review) => "icons/eye.svg",
                 Some(page) if page.launch.is_some() => self.tab_kind(tab, cx).icon(),
                 Some(page) if page.kind == Kind::Shell => "icons/terminal.svg",
                 _ => "icons/sparkle.svg",
