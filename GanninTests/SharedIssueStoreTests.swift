@@ -317,6 +317,9 @@ struct SharedIssueStoreTests {
         try writeOldHistory([record("a")], to: directory)
         issueStore(shared, directory).loadCached("acme")
         shared.clear()
+        // The second store has its own writer, so it can't see that `shared` is still
+        // resetting and would read the file the migration saved.
+        shared.flush()
 
         let store = issueStore(SharedIssueStore(folder: folder), directory)
         store.loadCached("acme")
