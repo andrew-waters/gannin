@@ -7,8 +7,10 @@
 //! we can tell it works). The grade is exposure, moved by confidence only
 //! at the edges: worked out here with fixed weights so it's stable and can
 //! be explained. Two floors claude can't argue past: a change touching a
-//! path the team marks sensitive is at least medium impact, and a missing
-//! acceptance criterion makes verification poor.
+//! path the team marks sensitive is at least medium impact, as is one
+//! changing what coding agents load (`AGENT_CONTEXT`: it changes how every
+//! later session behaves, so a person reviews it and it's never approved
+//! by itself), and a missing acceptance criterion makes verification poor.
 //!
 //! The team marks sensitive paths in `.gannin/review.json`: a `sensitive`
 //! list in the harness's `defaults` and `repos["owner/name"]`, and at the
@@ -153,6 +155,32 @@ pub struct Risk {
     pub criteria: Vec<Criterion>,
     /// Changed files in the team's sensitive areas, with why when given.
     pub sensitive: Vec<(String, Option<String>)>,
+    /// Changed files coding agents load as instructions or context.
+    pub agent_context: Vec<String>,
+}
+
+/// What coding agents load as instructions or context, wherever it sits
+/// in a repo: a change to one is a person's to review, whatever its size.
+pub const AGENT_CONTEXT: [&str; 14] = [
+    "**/AGENTS.md",
+    "**/AGENT.md",
+    "**/CLAUDE.md",
+    "**/CLAUDE.local.md",
+    "**/GEMINI.md",
+    "**/.claude/**",
+    "**/.cursorrules",
+    "**/.cursor/rules/**",
+    "**/.github/copilot-instructions.md",
+    "**/.github/instructions/**",
+    "**/.windsurfrules",
+    "**/SKILL.md",
+    "**/.mcp.json",
+    "**/.gannin/**",
+];
+
+/// Whether coding agents load `path` (`AGENT_CONTEXT`).
+pub fn is_agent_context(path: &str) -> bool {
+    AGENT_CONTEXT.iter().any(|p| matches(p, path))
 }
 
 /// The `risk` and `criteria` parts of the review JSON, read leniently: a
@@ -188,7 +216,7 @@ pub fn parse(value: &Value) -> Option<Risk> {
         })
         .collect();
     let gaps = risk["gaps"].as_array().map(|a| a.iter().filter_map(text).collect()).unwrap_or_default();
-    Some(Risk { signals, gaps, criteria, sensitive: Vec::new() })
+    Some(Risk { signals, gaps, criteria, sensitive: Vec::new(), agent_context: Vec::new() })
 }
 
 impl Risk {
@@ -202,6 +230,14 @@ impl Risk {
         if !self.sensitive.is_empty() {
             let n = self.sensitive.len();
             let why = format!("Touches {} the team marks sensitive", if n == 1 { "a path".to_string() } else { format!("{n} paths") });
+            if let Some(impact) = self.signals.iter_mut().find(|s| s.key == "impact") {
+                impact.floor(2, why);
+            }
+        }
+        self.agent_context = changed.iter().filter(|p| is_agent_context(p)).cloned().collect();
+        if !self.agent_context.is_empty() {
+            let n = self.agent_context.len();
+            let why = format!("Changes {} coding agents load, which a person reviews", if n == 1 { "a file".to_string() } else { format!("{n} files") });
             if let Some(impact) = self.signals.iter_mut().find(|s| s.key == "impact") {
                 impact.floor(2, why);
             }
@@ -315,7 +351,7 @@ impl Risk {
             "- High exposure: medium with good confidence, otherwise high. Never low, however well tested.".to_string(),
             "- Medium exposure: medium, or high with poor confidence.".to_string(),
             "- Low exposure: low, or medium with poor confidence.".to_string(),
-            "A path the team marks sensitive makes impact at least medium, and an acceptance criterion not met makes verification at least decent (poor when missing).".to_string(),
+            "A path the team marks sensitive, or a file coding agents load (AGENTS.md, CLAUDE.md, rules, skills), makes impact at least medium, and an acceptance criterion not met makes verification at least decent (poor when missing).".to_string(),
         ];
         if let (Some(e), Some(c), Some(level)) = (self.group_score(Group::Exposure), self.group_score(Group::Confidence), self.level()) {
             lines.push(format!("Here exposure is {} and confidence {}, so {}.", Group::Exposure.word(e), Group::Confidence.word(c), level.title()));
@@ -391,6 +427,14 @@ impl Risk {
             out.push("**Touches paths the team marks sensitive**".into());
             for (path, why) in &self.sensitive {
                 out.push(format!("- {path}{}", why.as_ref().map(|w| format!(": {w}")).unwrap_or_default()));
+            }
+        }
+        if !self.agent_context.is_empty() {
+            out.push(String::new());
+            out.push("**Changes what coding agents load**".into());
+            out.push("A person should review these: they change how every later session behaves.".into());
+            for path in &self.agent_context {
+                out.push(format!("- {path}"));
             }
         }
         // The gaps stay out of the body: a list there can't be resolved
@@ -648,10 +692,12 @@ pub fn matches(pattern: &str, path: &str) -> bool {
     glob(pattern.as_bytes(), path.as_bytes())
 }
 
-/// The sensitive paths as the review prompt names them; empty when none.
+/// The sensitive paths as the review prompt names them, after what
+/// always counts: files coding agents load.
 pub fn prompt_part(sensitive: &[Sensitive]) -> String {
+    let agents = "\n\nA change to what coding agents load as instructions or context (AGENTS.md, CLAUDE.md, GEMINI.md, `.claude/`, Cursor and Copilot rules, skills, `.mcp.json`) is at least medium impact, however small and even with nothing changing at run time: it changes how every later session behaves and what each must read, so a person reviews it. Grade impact by that, and say in its reason which files and whether they add to what's loaded.";
     if sensitive.is_empty() {
-        return String::new();
+        return agents.to_string();
     }
     let lines: Vec<String> = sensitive
         .iter()
@@ -660,7 +706,7 @@ pub fn prompt_part(sensitive: &[Sensitive]) -> String {
             None => format!("- `{}`", s.path),
         })
         .collect();
-    format!("\n\nThe team marks these paths as sensitive. A change touching one is at least medium impact, whatever its size:\n{}", lines.join("\n"))
+    format!("{agents}\n\nThe team marks these paths as sensitive. A change touching one is at least medium impact, whatever its size:\n{}", lines.join("\n"))
 }
 
 // MARK: - The grades reviews reached
@@ -803,5 +849,22 @@ mod tests {
         let verification = risk.signals.iter().find(|s| s.key == "verification").unwrap();
         assert_eq!(verification.verdict.as_deref(), Some("good"));
         assert_eq!(risk.level(), Some(Level::Low));
+    }
+
+    #[test]
+    fn what_agents_load_is_never_low() {
+        let value = serde_json::json!({ "risk": { "alignment": "good", "impact": "small", "verification": "good", "rollback": "low" } });
+        assert_eq!(parse(&value).unwrap().assessed(&["src/a.ts".into()], &[]).level(), Some(Level::Low));
+        // ctrl-hub/clients#2565: docs only, nothing at run time, still a person's.
+        let risk = parse(&value).unwrap().assessed(&["base/ui/AGENTS.md".into(), ".claude/rules/storybook-a11y.md".into()], &[]);
+        assert_eq!(risk.agent_context.len(), 2);
+        assert_eq!(risk.level(), Some(Level::Medium));
+        assert!(risk.markdown().unwrap().contains("**Changes what coding agents load**"));
+        for path in ["AGENTS.md", "CLAUDE.md", "apps/web/CLAUDE.md", ".claude/skills/x/SKILL.md", ".github/copilot-instructions.md", ".cursor/rules/a.mdc"] {
+            assert!(is_agent_context(path), "{path}");
+        }
+        for path in ["README.md", "docs/agents.md", "src/claude.rs"] {
+            assert!(!is_agent_context(path), "{path}");
+        }
     }
 }
