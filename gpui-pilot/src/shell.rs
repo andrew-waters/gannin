@@ -113,6 +113,8 @@ pub enum Nav {
     SchedulePreview,
     /// The workflow editor.
     WorkflowsPreview,
+    /// Planning from a made-up plan, with no Claude or GitHub calls.
+    PlanningPreview,
 }
 
 impl Nav {
@@ -155,6 +157,7 @@ impl Nav {
             Nav::ReviewPreview => "Review Preview",
             Nav::SchedulePreview => "Schedule",
             Nav::WorkflowsPreview => "Workflows",
+            Nav::PlanningPreview => "Planning Preview",
         }
     }
 }
@@ -228,7 +231,7 @@ fn sections() -> Vec<Section> {
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
         // Claude Code's agents: the workflows sessions run through.
-        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview)] },
+        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview), Item(PlanningPreview)] },
     ]
 }
 
@@ -427,6 +430,7 @@ enum Page {
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
+    PlanningPreview(Entity<crate::planning_panel::PlanningPanel>),
     AgentMetrics(Entity<crate::agent_metrics::AgentMetricsPage>),
     Releases(Entity<crate::releases::ReleasesPage>),
     Settings(Entity<crate::settings_page::SettingsPage>),
@@ -1128,6 +1132,7 @@ impl Workspace {
             Nav::ReviewPreview => Page::ReviewPreview(cx.new(|cx| crate::review_preview::ReviewPreview::new(window, cx))),
             Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_page::SchedulePage::new(org.clone(), window, cx))),
             Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
+            Nav::PlanningPreview => Page::PlanningPreview(cx.new(|cx| crate::planning_panel::PlanningPanel::preview(window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             Nav::AgentMetrics => Page::AgentMetrics(cx.new(|cx| crate::agent_metrics::AgentMetricsPage::new(org.clone(), cx))),
             Nav::Releases => Page::Releases(cx.new(|cx| crate::releases::ReleasesPage::new(org.clone(), window, cx))),
@@ -6440,6 +6445,7 @@ impl Workspace {
                 Page::ReviewPreview(page) => page.into_any_element(),
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
+                Page::PlanningPreview(page) => page.into_any_element(),
                 Page::AgentMetrics(page) => page.into_any_element(),
                 Page::Releases(page) => page.into_any_element(),
                 Page::Settings(page) => page.into_any_element(),
@@ -7588,6 +7594,7 @@ fn nav_icon(nav: Nav) -> &'static str {
         Nav::ReviewPreview => "icons/eye.svg",
         Nav::SchedulePreview => "icons/clock.svg",
         Nav::WorkflowsPreview => "icons/git_graph.svg",
+        Nav::PlanningPreview => "icons/list_todo.svg",
         Nav::Settings => "icons/settings.svg",
         Nav::AgentMetrics => "icons/sparkle.svg",
         Nav::Releases => "icons/box.svg",
