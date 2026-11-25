@@ -99,7 +99,11 @@ nonisolated final class AsyncFileWriter: Sendable {
         let (stream, continuation) = AsyncStream.makeStream(of: Operation.self)
         self.core = core
         self.continuation = continuation
-        Task.detached {
+        // `flush()` blocks the main thread, which runs at user-interactive QoS,
+        // until this task answers. A lower-priority task there is a priority
+        // inversion. 0x21 is QOS_CLASS_USER_INTERACTIVE; `.userInteractive` is
+        // deprecated.
+        Task.detached(priority: TaskPriority(rawValue: 0x21)) {
             for await operation in stream { core.perform(operation) }
         }
     }
