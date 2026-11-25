@@ -95,6 +95,8 @@ pub struct SessionPage {
     pub new_commits: usize,
     /// When `new_commits` last changed, for how long it's waited.
     pub new_commits_since: chrono::DateTime<chrono::Local>,
+    /// A review's PR is merged: its tab's icon says so.
+    pub merged: bool,
     /// When the state last changed, for "waiting since".
     pub since: chrono::DateTime<chrono::Local>,
     /// When the tab opened: a plain session's state file from before then
@@ -338,6 +340,11 @@ impl SessionPage {
             subscriptions.push(cx.observe(review, |this: &mut Self, review, cx| {
                 let outcome = review.read(cx).outcome();
                 this.set_outcome(outcome, cx);
+                let merged = review.read(cx).merged();
+                if this.merged != merged {
+                    this.merged = merged;
+                    cx.emit(Changed);
+                }
                 let commits = review.read(cx).new_commits();
                 if this.new_commits != commits {
                     this.new_commits = commits;
@@ -365,6 +372,7 @@ impl SessionPage {
             terminal::Event::CloseTerminal => this.set_state(State::Ended, cx),
             _ => {}
         }));
+        let merged = review.as_ref().is_some_and(|r| r.read(cx).merged());
         let outcome = match (&review, &work) {
             (Some(review), _) => review.read(cx).outcome(),
             (_, Some(work)) => work.read(cx).outcome(),
@@ -396,6 +404,7 @@ impl SessionPage {
             outcome,
             new_commits: 0,
             new_commits_since: chrono::Local::now(),
+            merged,
             since: chrono::Local::now(),
             opened: std::time::SystemTime::now(),
             server,

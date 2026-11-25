@@ -184,6 +184,10 @@ pub struct ReviewPanel {
     /// The watch's last look at the PR's commits (`check_commits`), for the
     /// review it was made against: cleared with each new result.
     watched: Option<(chrono::DateTime<chrono::Utc>, review::Changes)>,
+    /// The PR's state (OPEN, MERGED, CLOSED) at the last look by Check for
+    /// Changes or the watch, result or not. Merged is kept in the session's
+    /// folder, so its tab shows it from the start.
+    pr_state: Option<String>,
     /// Something to say about the review's record in the harness (a pull
     /// request left open, or a failure).
     record_note: Option<String>,
@@ -431,6 +435,7 @@ impl ReviewPanel {
             .detach();
         }
         let shortcuts = Self::shortcut_bar(Some((&launch.org, &launch.harness_repo)), window, cx);
+        let pr_state = launch.dir().join("merged").exists().then(|| "MERGED".to_string());
         Self {
             focus: cx.focus_handle(),
             posted,
@@ -438,6 +443,7 @@ impl ReviewPanel {
             checked: None,
             checking: false,
             watched: None,
+            pr_state,
             record_note: None,
             resolve_note: None,
             seen_state: None,
@@ -499,6 +505,7 @@ impl ReviewPanel {
             checked: None,
             checking: false,
             watched: None,
+            pr_state: None,
             record_note: None,
             resolve_note: None,
             seen_state: None,
@@ -914,6 +921,9 @@ impl ReviewPanel {
                     }
                 }
                 let ended = matches!(&found, Ok(c) if c.state != "OPEN");
+                if let Ok(changes) = &found {
+                    this.set_pr_state(&changes.state);
+                }
                 this.checked = Some((chrono::Utc::now(), found));
                 this.checking = false;
                 this.hold_to_comment();
@@ -992,32 +1002,49 @@ impl ReviewPanel {
         if self.result.is_some() { self.commits_since() } else { 0 }
     }
 
-    /// Once a minute, while the review has a result and its PR is open,
-    /// looks for new commits (`review::check_commits`): read only, quiet
-    /// (no Checking… state), and holding off while GitHub's budget is low.
+    /// Whether the PR's merged, for the tab's icon.
+    pub fn merged(&self) -> bool {
+        self.pr_state.as_deref() == Some("MERGED")
+    }
+
+    /// The PR's state from a look at GitHub; merged is kept in the
+    /// session's folder (a merged PR stays merged). Whether it changed.
+    fn set_pr_state(&mut self, state: &str) -> bool {
+        if self.pr_state.as_deref() == Some(state) {
+            return false;
+        }
+        if state == "MERGED" {
+            if let Source::Live { launch, .. } = &self.source {
+                let _ = std::fs::write(launch.dir().join("merged"), "");
+            }
+        }
+        self.pr_state = Some(state.to_string());
+        true
+    }
+
+    /// Once a minute, while its PR is open, looks at it
+    /// (`review::check_commits`): read only, quiet (no Checking… state), and
+    /// holding off while GitHub's budget is low. Without a result it only
+    /// notes the PR's state, for the tab; with one, its new commits too.
     /// It stops once the PR's merged or closed; it doesn't record that in
     /// the harness, which Check for Changes still does.
     fn watch(cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(WATCH_EVERY).await;
             let Ok(ask) = this.update(cx, |this, _| {
-                let ended = [this.checked.as_ref().and_then(|(_, c)| c.as_ref().ok()), this.watched.as_ref().map(|(_, c)| c)]
-                    .into_iter()
-                    .flatten()
-                    .any(|c| c.state != "OPEN");
-                if ended {
+                if this.pr_state.as_deref().is_some_and(|s| s != "OPEN") {
                     return Err(());
                 }
-                if this.result.is_none() || this.checking || crate::github::should_hold_off() {
+                if this.checking || crate::github::should_hold_off() {
                     return Ok(None);
                 }
                 let (repo, number) = this.subject();
                 let since = this.result.as_ref().and_then(|r| r.at);
-                Ok((!repo.is_empty()).then(|| (repo, number, since, this.reviewed_head().map(str::to_string))))
+                Ok((!repo.is_empty()).then(|| (repo, number, this.result.is_some(), since, this.reviewed_head().map(str::to_string))))
             }) else {
                 return;
             };
-            let Some((repo, number, since, reviewed)) = (match ask {
+            let Some((repo, number, had_result, since, reviewed)) = (match ask {
                 Err(()) => return,
                 Ok(ask) => ask,
             }) else {
@@ -1034,8 +1061,12 @@ impl ReviewPanel {
             let Ok(changes) = found else { continue };
             if this
                 .update(cx, |this, cx| {
-                    // The result may have moved on while it looked.
-                    if this.result.as_ref().and_then(|r| r.at) != since {
+                    if this.set_pr_state(&changes.state) {
+                        cx.notify();
+                    }
+                    // The result may have moved on while it looked, and
+                    // without one there are no commits to count from.
+                    if !had_result || this.result.as_ref().and_then(|r| r.at) != since {
                         return;
                     }
                     if let Some((state, at, url)) = &changes.mine {
