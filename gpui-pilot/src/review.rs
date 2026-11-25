@@ -64,6 +64,35 @@ pub struct ReviewResult {
     pub risk: Option<crate::risk::Risk>,
 }
 
+impl ReviewResult {
+    /// Whether posting `other` would say what posting this one did: the same
+    /// summary and verdict, and the same findings in any order, each equal in
+    /// every field (severity and suggestion are posted too). The walkthrough,
+    /// flow, resolved threads, learnings and the rest are only shown in
+    /// Gannin, so a re-run that differs only there isn't news to the PR's
+    /// author.
+    pub fn posts_same(&self, other: &Self) -> bool {
+        self.summary == other.summary
+            && self.verdict == other.verdict
+            && self.findings.len() == other.findings.len()
+            && self.findings.iter().all(|f| other.findings.contains(f))
+            && other.findings.iter().all(|f| self.findings.contains(f))
+    }
+}
+
+/// When the review's posted content was last new: `since` carried over to a
+/// `new` result that posts what `previous` did (`previous`'s own time when
+/// there's no `since`, as for a panel opened with a result already read),
+/// else the new result's own time. A post counts as of the latest result when
+/// it's at or after this, so a re-run that says the same doesn't turn a posted
+/// review back into one not posted.
+pub fn content_since(previous: Option<&ReviewResult>, since: Option<chrono::DateTime<chrono::Utc>>, new: &ReviewResult) -> Option<chrono::DateTime<chrono::Utc>> {
+    match previous {
+        Some(previous) if previous.posts_same(new) => since.or(previous.at),
+        _ => new.at,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Area {
     pub title: String,
@@ -780,6 +809,70 @@ mod tests {
 
     fn commits(oids: &[(&str, &str)]) -> Vec<Value> {
         oids.iter().map(|(oid, at)| json!({ "commit": { "oid": oid, "committedDate": at } })).collect()
+    }
+
+    fn finding(comment: &str) -> Finding {
+        Finding { path: "a.rs".into(), line: Some(3), comment: comment.into(), severity: None, category: None, suggestion: None }
+    }
+
+    fn result(summary: &str, verdict: Option<&str>, findings: Vec<Finding>) -> ReviewResult {
+        ReviewResult { summary: summary.into(), verdict: verdict.map(Into::into), findings, ..Default::default() }
+    }
+
+    fn time(s: &str) -> chrono::DateTime<chrono::Utc> {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn a_rerun_differing_only_in_what_gannin_shows_posts_the_same() {
+        let first = result("Fine", Some("comment"), vec![finding("one")]);
+        let mut other = result("Fine", Some("comment"), vec![finding("one")]);
+        other.headline = Some("Another headline".into());
+        other.flow = vec!["step".into()];
+        other.resolved = vec!["thread".into()];
+        assert!(first.posts_same(&other));
+    }
+
+    #[test]
+    fn a_changed_summary_or_verdict_posts_something_new() {
+        let first = result("Fine", Some("comment"), vec![finding("one")]);
+        assert!(!first.posts_same(&result("Issues", Some("comment"), vec![finding("one")])));
+        assert!(!first.posts_same(&result("Fine", Some("approve"), vec![finding("one")])));
+        assert!(!first.posts_same(&result("Fine", None, vec![finding("one")])));
+    }
+
+    #[test]
+    fn findings_are_compared_as_a_set_in_every_field() {
+        let (one, two) = (finding("one"), finding("two"));
+        let first = result("Fine", None, vec![one.clone(), two.clone()]);
+        assert!(first.posts_same(&result("Fine", None, vec![two.clone(), one.clone()])));
+        assert!(!first.posts_same(&result("Fine", None, vec![one.clone()])));
+        assert!(!result("Fine", None, vec![one.clone()]).posts_same(&first));
+        let mut graver = one.clone();
+        graver.severity = Some("blocker".into());
+        assert!(!result("Fine", None, vec![one.clone()]).posts_same(&result("Fine", None, vec![graver])));
+        let mut suggested = one.clone();
+        suggested.suggestion = Some("let x = 1;".into());
+        assert!(!result("Fine", None, vec![one]).posts_same(&result("Fine", None, vec![suggested])));
+    }
+
+    #[test]
+    fn content_since_is_kept_for_a_result_that_posts_the_same() {
+        let mut first = result("Fine", None, vec![finding("one")]);
+        first.at = Some(time("2026-11-01T00:00:00Z"));
+        let mut again = first.clone();
+        again.at = Some(time("2026-11-02T00:00:00Z"));
+        let mut changed = result("Fine", None, vec![finding("two")]);
+        changed.at = Some(time("2026-11-03T00:00:00Z"));
+        // The first result: its own time.
+        assert_eq!(content_since(None, None, &first), first.at);
+        // The same again: still the first's.
+        assert_eq!(content_since(Some(&first), first.at, &again), first.at);
+        // Something new: its own time.
+        assert_eq!(content_since(Some(&again), first.at, &changed), changed.at);
+        // Nothing carried over yet (a panel opened with a result read): the
+        // previous result's time, not the new one's.
+        assert_eq!(content_since(Some(&first), None, &again), first.at);
     }
 
     fn after(since: &str) -> impl Fn(&Value) -> bool {

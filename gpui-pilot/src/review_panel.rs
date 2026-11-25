@@ -174,6 +174,10 @@ pub struct ReviewPanel {
     shortcuts: Entity<crate::shortcuts::ShortcutBar>,
     post: Option<Post>,
     posted: Option<Posted>,
+    /// When the result's posted content was last new (`review::content_since`).
+    /// A post at or after it is of the latest result; unset, the result's own
+    /// time counts.
+    content_since: Option<chrono::DateTime<chrono::Utc>>,
     /// The last Check for Changes: when, and what it found or why it failed.
     checked: Option<(chrono::DateTime<chrono::Utc>, Result<review::Changes, String>)>,
     checking: bool,
@@ -349,7 +353,8 @@ impl ReviewPanel {
                 .await;
             if this
                 .update(cx, |this, cx| {
-                    if result.is_some() && this.result != result {
+                    if let Some(new) = result.as_ref().filter(|new| this.result.as_ref() != Some(*new)) {
+                        this.content_since = review::content_since(this.result.as_ref(), this.content_since, new);
                         this.result = result;
                         // The watch counts from the new review.
                         this.watched = None;
@@ -429,6 +434,7 @@ impl ReviewPanel {
         Self {
             focus: cx.focus_handle(),
             posted,
+            content_since: None,
             checked: None,
             checking: false,
             watched: None,
@@ -489,6 +495,7 @@ impl ReviewPanel {
         Self {
             focus: cx.focus_handle(),
             posted,
+            content_since: None,
             checked: None,
             checking: false,
             watched: None,
@@ -857,7 +864,8 @@ impl ReviewPanel {
     /// The posted review, if it's for the latest result: a newer result
     /// isn't posted yet.
     fn posted_latest(&self) -> Option<&Posted> {
-        self.posted.as_ref().filter(|p| self.result.as_ref().and_then(|r| r.at).is_none_or(|at| p.at >= at))
+        let since = self.content_since.or_else(|| self.result.as_ref().and_then(|r| r.at));
+        self.posted.as_ref().filter(|p| since.is_none_or(|at| p.at >= at))
     }
 
     /// Checks GitHub for what's changed since the review (read only). A
