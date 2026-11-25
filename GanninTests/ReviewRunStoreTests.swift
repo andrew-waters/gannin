@@ -126,6 +126,39 @@ struct ReviewRunStoreTests {
         #expect(sessions.sessions[made.id]?.reviewResult == again)
     }
 
+    @Test func theReviewShownForAFinishedRunIsTheMergedOneUntilLookAgain() throws {
+        defer { clean() }
+        let sessions = store()
+        let round = result("Lead.", finding: "From the lead.")
+        let made = lead { id in
+            var first = step("lead", session: id, state: .done)
+            first.results = [round]
+            var second = step("other", session: UUID(), state: .done)
+            second.results = [result("Other.", finding: "From the other.", line: 9)]
+            return [first, second]
+        }
+        sessions.add(made)
+        sessions.advanceRun(made.id)
+        let merged = try #require(sessions.sessions[made.id]?.reviewResult)
+
+        func transcript(replying review: SessionTranscript.ReviewResult) throws -> SessionTranscript {
+            var transcript = SessionTranscript()
+            transcript.lastReply = "```json\n" + String(decoding: try JSONEncoder().encode(review), as: UTF8.self) + "\n```"
+            return transcript
+        }
+
+        // The lead's transcript still ends with its own round.
+        sessions.transcripts[made.id] = try transcript(replying: round)
+        #expect(sessions.transcripts[made.id]?.review == round)
+        #expect(sessions.currentReview(of: made.id) == merged)
+        #expect(sessions.currentReview(of: made.id)?.findings.count == 2)
+
+        // A review from Look Again isn't a round of the run.
+        let again = result("Again.", verdict: "approve")
+        sessions.transcripts[made.id] = try transcript(replying: again)
+        #expect(sessions.currentReview(of: made.id) == again)
+    }
+
     @Test func aLeadsSecondRoundAddsToTheFirstAndNeitherReplacesTheMergedResult() throws {
         defer { clean() }
         let sessions = store()

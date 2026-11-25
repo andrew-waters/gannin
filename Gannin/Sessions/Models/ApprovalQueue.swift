@@ -15,7 +15,7 @@ extension SessionStore {
         guard let session = review(of: pullRequestID),
               // Finish Review ends the review, so it stops asking for the approval.
               session.archivedAt == nil,
-              let result = transcripts[session.id]?.review ?? session.reviewResult,
+              let result = currentReview(of: session.id),
               result.verdict == "approve",
               // New commits since: not ready until it's looked again.
               session.watch?.hasNewCommits != true,
@@ -125,7 +125,7 @@ extension SessionStore {
     /// "Claude would approve", with how many findings it's holding for you.
     /// Findings: Post Review may leave out some already on the PR.
     func approvalState(_ session: CodeSession) -> String {
-        guard let result = transcripts[session.id]?.review ?? session.reviewResult else { return "Claude would approve" }
+        guard let result = currentReview(of: session.id) else { return "Claude would approve" }
         let held = Self.heldFindings(result, draft: reviewDrafts[session.id] ?? session.reviewDraft ?? ReviewDraft())
         return held == 0 ? "Claude would approve" : "Claude would approve · \(held) finding\(held == 1 ? "" : "s")"
     }

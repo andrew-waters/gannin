@@ -1264,7 +1264,7 @@ final class SessionStore {
                 let counts = sessions[id].map { session in
                     !session.isPullRequestReview
                         || (session.archivedAt == nil && !awaitsAuthor(session)
-                            && (transcripts[id]?.review ?? session.reviewResult) != nil)
+                            && currentReview(of: id) != nil)
                 } ?? false
                 flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false, counts: counts)
             }
@@ -1607,6 +1607,18 @@ final class SessionStore {
         }
         if !moreToRead, let review = reader.summary.review { keepReview(review, for: id) }
         pairRoundRead(id)
+    }
+
+    /// The review to show and act on: the transcript's latest, else the kept
+    /// one. A finished workflow run's lead transcript still holds the lead's
+    /// own round, which would hide the merged result the run kept, so the
+    /// kept result stands for it; a later review (Look Again) is not a round
+    /// and wins.
+    func currentReview(of id: UUID) -> SessionTranscript.ReviewResult? {
+        let kept = sessions[id]?.reviewResult
+        guard let live = transcripts[id]?.review else { return kept }
+        if kept != nil, ReviewRunMerge.isRound(live, ofFinishedRunLedBy: id, in: sessions[id]?.reviewRun) { return kept }
+        return live
     }
 
     /// A review's result is kept with it, for the history. A finished
