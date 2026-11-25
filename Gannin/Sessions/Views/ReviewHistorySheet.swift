@@ -9,6 +9,7 @@ import SwiftUI
 struct ReviewHistorySheet: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     let org: String
     @State private var search = ""
     @State private var selection: Set<UUID> = []
@@ -40,6 +41,14 @@ struct ReviewHistorySheet: View {
                 List(shown, selection: $selection) { session in
                     row(session)
                 }
+                .contextMenu(forSelectionType: UUID.self) { ids in
+                    if let pullRequest = pullRequest(of: ids, in: shown) {
+                        Button("Open Pull Request") { openWindow(value: pullRequest) }
+                    }
+                } primaryAction: { ids in
+                    // Double-click or Return.
+                    if let pullRequest = pullRequest(of: ids, in: shown) { openWindow(value: pullRequest) }
+                }
             }
             Divider()
             HStack {
@@ -56,7 +65,10 @@ struct ReviewHistorySheet: View {
             }
             .padding(12)
         }
-        .frame(minWidth: 520, minHeight: 420)
+        .frame(minWidth: 520, idealWidth: 680, maxWidth: .infinity, minHeight: 420, idealHeight: 560, maxHeight: .infinity)
+        // On macOS the default sizing fits the sheet's height to the content's ideal height,
+        // which stops the user dragging it taller or shorter.
+        .presentationSizing(.form.fitted(horizontal: false, vertical: false))
         .confirmationDialog("Remove \(chosen.count) finished \(chosen.count == 1 ? "review" : "reviews")?", isPresented: $confirming) {
             Button("Remove from History", role: .destructive) {
                 for session in chosen { sessions.remove(session.id) }
@@ -65,6 +77,12 @@ struct ReviewHistorySheet: View {
         } message: {
             Text("Gannin forgets them. A review's findings already committed to a harness stay there, and the pull requests are untouched.")
         }
+    }
+
+    /// The pull request of the single review in `ids`, if it has one.
+    private func pullRequest(of ids: Set<UUID>, in sessions: [CodeSession]) -> PullRequestReference? {
+        guard ids.count == 1, let id = ids.first else { return nil }
+        return sessions.first { $0.id == id }?.reviewOf
     }
 
     private func row(_ session: CodeSession) -> some View {
