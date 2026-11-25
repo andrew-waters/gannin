@@ -5837,6 +5837,10 @@ impl Workspace {
                 let tab = &self.tabs[index];
                 let (icon, tint) = (self.tab_icon(tab, cx), self.tab_tint(tab, theme, cx));
                 let working = self.tab_signal(tab, cx) == TabSignal::Working;
+                // A review whose PR is merged: GitHub's merge mark, in its
+                // purple, in place of the eye (a working one still glows).
+                let merged = matches!(tab.nav, Nav::Session(session) if self.session(session, cx).is_some_and(|p| p.read(cx).merged));
+                let (icon, icon_tint) = if merged { (crate::icons::MERGE, theme.slot(6)) } else { (icon, tint) };
                 // Filtered to one kind, the tabs need no icon to tell them
                 // apart; a session's state still colours its name.
                 let filtered = self.tab_filter.is_some();
@@ -5932,13 +5936,13 @@ impl Workspace {
                         },
                     )
                     .when(!filtered, |d| {
-                        let svg = gpui::svg().path(icon).size(px(14.)).flex_none().text_color(tint);
+                        let svg = gpui::svg().path(icon).size(px(14.)).flex_none().text_color(icon_tint);
                         if working {
                             // Working: glows slowly from grey to white and back.
                             use gpui::{Animation, AnimationExt};
                             d.child(svg.with_animation(SharedString::from(format!("tab-working-{id}")), Animation::new(std::time::Duration::from_millis(1800)).repeat(), move |svg, delta| {
                                 let glow = (1. - (delta * std::f32::consts::TAU).cos()) / 2.;
-                                svg.text_color(tint.opacity(0.35 + 0.65 * glow))
+                                svg.text_color(icon_tint.opacity(0.35 + 0.65 * glow))
                             }))
                         } else {
                             d.child(svg)
