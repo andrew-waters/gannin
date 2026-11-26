@@ -52,7 +52,7 @@ extension ClaudeCodeProvider {
               elif type == "array" then (.[] | objs)
               elif type == "object" then ., ((.content? | objs), (.text? | objs))
               else empty end;
-            def bashout: if type == "object" then (.stdout // "") elif type == "string" then . else "" end;
+            def bashout: [.. | strings] | join("\n");
             def posts($c):
               [$c | match("gh api [^&;|`\"\n]*"; "g").string
                 | select(test("/pulls( |$)"))

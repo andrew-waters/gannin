@@ -1098,7 +1098,8 @@ final class SessionStore {
             // A sandbox's statusLine can't run the user's own command, which is on the Mac.
             try? Data(session.agent.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed, concise: session.isReviewer, remoteControl: !session.isReviewer).utf8).write(to: directory.appending(path: "settings.json"))
             for (name, text) in session.agent.hookScripts {
-                try? Data(text.utf8).write(to: directory.appending(path: name))
+                // Atomic, so a hook never runs a half-written script.
+                try? Data(text.utf8).write(to: directory.appending(path: name), options: .atomic)
             }
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)

@@ -14,17 +14,16 @@ struct SessionPullRequestHookTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let script = folder.appending(path: ClaudeCodeProvider.pullRequestHookFile)
         try Data(ClaudeCodeProvider.pullRequestHookScript.utf8).write(to: script)
+        // A PATH of only what the script uses, so whether jq is there is
+        // decided by `withoutJQ`, not by the machine running the tests.
         var environment = ProcessInfo.processInfo.environment
-        if withoutJQ {
-            // A PATH with what the script's fallback uses, and no jq.
-            let bin = folder.appending(path: "bin")
-            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-            for tool in ["sed", "grep", "cat", "dirname"] {
-                let real = ["/usr/bin/\(tool)", "/bin/\(tool)"].first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/\(tool)"
-                try FileManager.default.createSymbolicLink(at: bin.appending(path: tool), withDestinationURL: URL(filePath: real))
-            }
-            environment["PATH"] = bin.path
+        let bin = folder.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for tool in ["sed", "grep", "cat", "dirname"] + (withoutJQ ? [] : ["jq"]) {
+            let real = Self.find(tool) ?? "/usr/bin/\(tool)"
+            try FileManager.default.createSymbolicLink(at: bin.appending(path: tool), withDestinationURL: URL(filePath: real))
         }
+        environment["PATH"] = bin.path
         for input in inputs {
             let process = Process()
             process.executableURL = URL(filePath: "/bin/sh")
@@ -44,10 +43,20 @@ struct SessionPullRequestHookTests {
         return text.split(separator: "\n").map(String.init)
     }
 
+    /// Where a tool is on this Mac, nil if it isn't installed.
+    private nonisolated static func find(_ tool: String) -> String? {
+        ["/usr/bin/\(tool)", "/bin/\(tool)", "/opt/homebrew/bin/\(tool)", "/usr/local/bin/\(tool)"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    fileprivate nonisolated static let hasJQ = find("jq") != nil
+
+    /// What the hook records with `jq`, checked against what it records
+    /// without. Without jq on the machine, only the fallback runs.
     private func recorded(_ inputs: String...) throws -> [String] {
-        let parsed = try run(inputs, withoutJQ: false)
-        #expect(try run(inputs, withoutJQ: true) == parsed)
-        return parsed
+        let fallback = try run(inputs, withoutJQ: true)
+        if Self.hasJQ { #expect(try run(inputs, withoutJQ: false) == fallback) }
+        return fallback
     }
 
     private func call(_ tool: String, input: String, response: String) -> String {
@@ -146,6 +155,14 @@ struct SessionPullRequestHookTests {
         #expect(try recorded(bash("gh pr create --fill; gh pr create --fill", stdout: "\(mine)\\n\(second)")) == [mine, second])
     }
 
+    /// A result with no `stdout`, or the URL on stderr, still holds it.
+    @Test func createIsRecordedFromAnyFieldOfItsResult() throws {
+        let command = #"{"command":"gh pr create --fill"}"#
+        #expect(try recorded(call("Bash", input: command, response: #"{"output":"\#(mine)"}"#)) == [mine])
+        #expect(try recorded(call("Bash", input: command, response: #"{"stdout":"","stderr":"\#(mine)"}"#)) == [mine])
+        #expect(try recorded(call("Bash", input: command, response: #""\#(mine)""#)) == [mine])
+    }
+
     @Test func aRepeatedURLIsRecordedOnce() throws {
         let create = bash("gh pr create --fill", stdout: mine)
         #expect(try recorded(create, create) == [mine])
@@ -178,7 +195,7 @@ struct SessionPullRequestHookTests {
     }
 
     /// With jq the JSON is parsed, so the order of the keys doesn't matter.
-    @Test func theOrderOfTheKeysDoesNotMatterWithJQ() throws {
+    @Test(.enabled(if: SessionPullRequestHookTests.hasJQ)) func theOrderOfTheKeysDoesNotMatterWithJQ() throws {
         let reordered = #"{"tool_response":{"html_url":"\#(mine)","id":"1"},"tool_use_id":"t","tool_name":"mcp__claude_ai_Github_MCP__create_pull_request","tool_input":{}}"#
         #expect(try run([reordered], withoutJQ: false) == [mine])
     }
