@@ -111,57 +111,6 @@ struct ClaudeCodeProvider: InteractiveProvider, AskingProvider {
 
     // MARK: Settings and hooks
 
-    /// The PostToolUse command that records a PR the session opens in `dir`'s
-    /// `pr` file. A new PR's URL is in the result of a call that creates one;
-    /// only those results are read, since any other call that mentions a PR
-    /// (viewing or listing them, a file naming one) would otherwise be
-    /// recorded as the session's own. A creating call is a Bash command that
-    /// runs, at the start of a command (after `&&`, `;`, `|`, `(`, `$(`, a
-    /// backtick or a newline, and any `VAR=value` words):
-    /// - `gh pr create`: its result is the new PR's URL, so every URL in it is
-    ///   kept.
-    /// - `gh api` to a path ending in `/pulls` with `-X POST`, `--method POST`,
-    ///   or a `-f`, `-F`, `--field`, `--raw-field` or `--input` (which make gh
-    ///   POST), and no `-X GET`, all in that one `gh api` command (up to the
-    ///   next `&&`, `;`, `|`, unescaped quote or newline), not elsewhere in
-    ///   the call. Its result is the whole PR, body included, so only its
-    ///   `html_url` or `url` is kept (a REST object's `url` is on
-    ///   api.github.com, so it never matches).
-    /// A PR-creating MCP tool (`create_pull_request`) is read the same way: the
-    ///   GitHub MCP server's result is a short `{id, url}` object.
-    /// Left out, so the session records no PR: a wrapper script, a `gh`
-    /// reached through `xargs`, `env` or `then`, a quoted `VAR="a b"` prefix,
-    /// and `gh api` with its method or path in a variable.
-    ///
-    /// Claude Code writes tool_name and tool_input before tool_response, and
-    /// the command relies on that order: `SessionPullRequestHookTests` runs it
-    /// against JSON in that order and is what would show it change. A tool
-    /// call can open more than one PR (one per repo in one command), so every
-    /// URL seen is kept, one per line, not just the last.
-    static func pullRequestHook(directory dir: String) -> String {
-        let signalCode = SessionScript.signalCode
-        return #"""
-        input=$(cat)
-        call=$(printf '%s' "$input" | sed 's/"tool_response".*//')
-        has() { printf '%s' "$call" | grep -Eq -- "$1"; }
-        # Each `gh api` command on its own line, ending at a separator, an
-        # unescaped quote or a newline, so a flag on another command in the same
-        # call isn't taken as this one's.
-        creates() { printf '%s' "$call" | grep -Eo 'gh api ([^&;|`"\\]|\\[^n])*' | grep -E '/pulls([ ]|\\|$)' | grep -Ei '(-X ?|--method[ =])POST| (-[fF]|--field|--raw-field|--input)[ =]' | grep -Eiv '(-X ?|--method[ =])GET' | grep -q .; }
-        start='"tool_name": ?"Bash".*"command": ?"(.*(&&|;|\||\\n|\(|`))? *([A-Za-z_][A-Za-z0-9_]*=[^ ]+ +)*'
-        url='https://github\.com/[^"\\ ]+/pull/[0-9]+'
-        if has "$start"'gh pr create'; then
-          re=$url
-        elif has '"tool_name": ?"[^"]*create_pull_request"' || { has "$start"'gh api ' && creates; }; then
-          re='"(html_)?url\\*": ?\\*"'"$url"
-        else
-          exit 0
-        fi
-        printf '%s' "$input" | sed 's/.*"tool_response"//' | grep -Eo "$re" | grep -Eo "$url" | while IFS= read -r found; do grep -qxF "$found" \#(dir)/pr 2>/dev/null || { printf '%s\n' "$found" >> \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$found" > /dev/tty 2>/dev/null; }; done
-        exit 0
-        """#
-    }
-
     /// Claude Code settings for the session: hooks that write its state to
     /// the session's folder and send it through the terminal, the PR it
     /// opens, and a statusLine command that saves Claude Code's own
@@ -188,7 +137,7 @@ struct ClaudeCodeProvider: InteractiveProvider, AskingProvider {
         func write(_ state: SessionState) -> [String: Any] {
             ["type": "command", "command": "printf \(state.rawValue) > \(dir)/state 2>/dev/null; \(signal("state:" + state.rawValue)); exit 0"] as [String: Any]
         }
-        let pullRequest = Self.pullRequestHook(directory: dir)
+        let pullRequest = "sh \(dir)/\(Self.pullRequestHookFile)"
         func command(_ command: String) -> [String: Any] { ["type": "command", "command": command] }
         func group(_ hooks: [[String: Any]], matcher: String? = nil) -> [String: Any] {
             var group: [String: Any] = ["hooks": hooks]

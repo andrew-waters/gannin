@@ -1073,7 +1073,7 @@ final class SessionStore {
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
                 settings: session.agent.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: remoteDirectory, branch: session.branch), sandboxed: session.isSandboxed, concise: session.isReviewer, remoteControl: !session.isReviewer),
-                files: session.isSandboxed ? ["inner.sh": SandboxLaunch.innerScript(session)] : [:]
+                files: session.agent.hookScripts.merging(session.isSandboxed ? ["inner.sh": SandboxLaunch.innerScript(session)] : [:]) { $1 }
             )
             command = SessionScript.connecting(connect, to: remote)
             if let names = session.quickChange?.attachments, !names.isEmpty, let arguments = Shell.sshArguments(connect) {
@@ -1097,6 +1097,9 @@ final class SessionStore {
             }
             // A sandbox's statusLine can't run the user's own command, which is on the Mac.
             try? Data(session.agent.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed, concise: session.isReviewer, remoteControl: !session.isReviewer).utf8).write(to: directory.appending(path: "settings.json"))
+            for (name, text) in session.agent.hookScripts {
+                try? Data(text.utf8).write(to: directory.appending(path: name))
+            }
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"

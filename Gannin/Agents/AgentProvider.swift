@@ -94,6 +94,11 @@ protocol InteractiveProvider: AgentProvider {
     /// for every session.
     func settings(directory: String, isRemote: Bool, allowing: [String], rules: String?, sandboxed: Bool, concise: Bool, remoteControl: Bool) -> String
 
+    /// The scripts the settings' hooks run, by file name. Written beside the
+    /// settings file, wherever it is written, so `settings` can name them in
+    /// `directory`.
+    var hookScripts: [String: String] { get }
+
     /// The session's transcript on this Mac; `home` is a sandbox's config
     /// folder for it, nil for the user's own.
     func transcript(for session: CodeSession, home: URL?) -> URL?
