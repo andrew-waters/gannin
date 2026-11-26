@@ -47,6 +47,7 @@ mod planning_agree;
 mod planning_docs;
 mod planning_panel;
 mod planning_preview;
+mod planning_security;
 mod paths;
 mod projects;
 #[cfg(target_os = "macos")]

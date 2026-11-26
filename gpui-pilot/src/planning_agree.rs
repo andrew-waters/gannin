@@ -210,6 +210,10 @@ impl AgreeView {
                 self.error = Some(format!("{missing} isn't in the session's folder yet. Ask Claude to write it there, or to drop it from the design."));
                 return cx.notify();
             }
+            if let Some(missing) = self.state.shape.screens.iter().filter_map(|s| s.image_path()).find(|p| !folder.join(p).is_file()) {
+                self.error = Some(format!("The screen {missing} isn't in the session's folder. Ask Claude to draw it again, or to drop its image."));
+                return cx.notify();
+            }
         }
         let shared = planning::docs(&self.dir);
         let mut committed: Vec<String> = shared.iter().filter(|d| d.commit).map(|d| d.name.clone()).collect();
@@ -257,7 +261,7 @@ impl AgreeView {
             by,
             owner: crate::auth::saved_viewer().map(|v| v.login).unwrap_or_default(),
             shared,
-            folder: self.launch.folder(),
+            folder: if self.preview { self.dir.clone() } else { self.launch.folder() },
             stub_missing: self.preview,
         };
         let rehearse = self.preview;
@@ -500,6 +504,7 @@ impl Job {
         agreed.by = self.by.clone();
         agreed.save(&self.dir);
         let plan_url = docs::harness_url(&self.harness, &agreed.plan_path);
+        let screens_url = docs::harness_url(&self.harness, &format!("{}/screens", docs::assets_dir(&self.slug)));
         let title = if self.state.title.is_empty() { "the plan".to_string() } else { self.state.title.clone() };
 
         // 1. The top issue: the one being planned, or a new one.
@@ -540,7 +545,7 @@ impl Job {
         if one && !big {
             let draft = included.iter().find(|d| !d.task.is_epic()).ok_or("No issue.")?;
             if agreed.made(&draft.key).is_none() {
-                let work = docs::issue_body(&draft.task, &self.state, &[], (&title, &plan_url));
+                let work = docs::issue_body(&draft.task, &self.state, &[], (&title, &plan_url), &screens_url);
                 w.update(&parent.id, &parent.reference(), &docs::merge_into(&parent_body, &agreed.plan_path, &work))?;
                 agreed.merged_into_parent = true;
                 agreed.made.push(Made { key: draft.key.clone(), ..parent.clone() });
@@ -559,7 +564,7 @@ impl Job {
                             .filter_map(|dep| included.iter().find(|d| d.task.title.eq_ignore_ascii_case(dep.trim())))
                             .filter_map(|d| agreed.made(&d.key).map(|m| m.reference()))
                             .collect();
-                        let body = docs::issue_body(task, &self.state, &depends, (&title, &plan_url));
+                        let body = docs::issue_body(task, &self.state, &depends, (&title, &plan_url), &screens_url);
                         let type_id = if task.is_epic() { epic_type.as_ref() } else { None };
                         let (id, number, url) = w.create(&task.repo, &task.title, &body, &task.labels, type_id)?;
                         let made = Made { key: draft.key.clone(), id, repo: task.repo.clone(), number, url };
@@ -589,6 +594,7 @@ impl Job {
             let issues: Vec<(String, Made)> = included.iter().filter_map(|d| agreed.made(&d.key).map(|m| (d.task.title.clone(), m.clone()))).collect();
             let assets: Vec<String> = self.shared.iter().filter(|d| d.commit).map(|d| d.name.clone()).collect();
             let comments = planning::comments(&self.dir);
+            let review = crate::planning_security::Review::load(&self.dir);
             let started = self.subject.as_ref().map(|s| format!("{}#{}", s.repo, s.number));
             let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
             let ctx = docs::Context {
@@ -603,6 +609,7 @@ impl Job {
                 requirement_path: agreed.requirement_path.as_deref(),
                 assets: &assets,
                 comments: &comments,
+                security: review.as_ref(),
             };
             let mut files = vec![(agreed.plan_path.clone(), docs::plan(&edited, &ctx).into_bytes())];
             if let Some(path) = &agreed.requirement_path {
@@ -612,6 +619,16 @@ impl Job {
             for name in &assets {
                 let bytes = std::fs::read(self.dir.join("docs").join(name)).map_err(|e| format!("Couldn't read {name}: {e}"))?;
                 files.push((format!("{}/{name}", docs::assets_dir(&self.slug)), bytes));
+            }
+            // The screens, beside the plan's other assets.
+            for screen in &self.state.shape.screens {
+                let (Some(from), Some(to)) = (screen.image_path(), docs::screen_path(&self.slug, screen)) else { continue };
+                let bytes = match std::fs::read(self.folder.join(from)) {
+                    Ok(bytes) => bytes,
+                    Err(_) if self.stub_missing => format!("(the preview's {from})").into_bytes(),
+                    Err(e) => return Err(format!("Couldn't read the screen {from} from the session's folder: {e}")),
+                };
+                files.push((to, bytes));
             }
             // The architecture the design changes, its planned parts traced
             // to the plan.
@@ -886,6 +903,9 @@ mod tests {
         assert!(record.contains("Puts acme/scheduler#104 under #102."));
         assert!(record.contains("Commits plans/") && record.contains("Commits requirements/failed-job-alerts.md"));
         assert!(record.contains("Commits architecture/job-runs.md") && record.contains("planned_by:\n  - plans/"));
+        // The screens go with the plan, and each issue links its own.
+        assert!(record.contains("Commits plans/assets/failed-job-alerts/screens/S2.svg") && record.contains("## Shape") && record.contains("![S1 The alert in Slack](assets/failed-job-alerts/screens/S1.svg)"));
+        assert!(record.contains("[S2 After Rerun](https://github.com/acme/harness/blob/HEAD/plans/assets/failed-job-alerts/screens/S2.svg)"));
         // Trying again files nothing twice.
         let mut again = Agreed::load(&dir);
         again.at = None;

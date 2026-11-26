@@ -24,6 +24,8 @@ pub struct Context<'a> {
     /// Documents committed with it, by file name.
     pub assets: &'a [String],
     pub comments: &'a [Comment],
+    /// The security review of the shape and the design, when it ran.
+    pub security: Option<&'a crate::planning_security::Review>,
 }
 
 pub fn plan_path(date: &str, slug: &str) -> String {
@@ -36,6 +38,12 @@ pub fn requirement_path(slug: &str) -> String {
 
 pub fn assets_dir(slug: &str) -> String {
     format!("plans/assets/{slug}")
+}
+
+/// Where a screen's image is committed, beside the plan's other assets.
+pub fn screen_path(slug: &str, screen: &crate::planning::Screen) -> Option<String> {
+    let name = screen.image_path()?.rsplit('/').next()?.to_string();
+    Some(format!("{}/screens/{name}", assets_dir(slug)))
 }
 
 /// A link to a file in the harness, on its default branch.
@@ -181,6 +189,40 @@ pub fn plan(state: &State, ctx: &Context) -> String {
         out.pop();
     }
 
+    let shape = &state.shape;
+    if !shape.is_empty() {
+        section(&mut out, "## Shape");
+        if shape.mock.kind.eq_ignore_ascii_case("running") && !shape.mock.branch.is_empty() {
+            out.push(format!("The screens are from a running mock of {} on the throwaway branch `{}`, which isn't merged.", if shape.mock.repo.is_empty() { "the app" } else { shape.mock.repo.as_str() }, shape.mock.branch));
+            out.push(String::new());
+        }
+        for f in &shape.flows {
+            let kind = if f.kind.eq_ignore_ascii_case("process") { "system process" } else { "user journey" };
+            let shows = if f.criteria.is_empty() { String::new() } else { format!(", shows {}", f.criteria.join(", ")) };
+            out.push(format!("**{} {}** ({kind}{shows})", f.id, f.title));
+            out.push(String::new());
+            if !f.diagram.trim().is_empty() {
+                out.push("```mermaid".into());
+                out.push(f.diagram.trim().to_string());
+                out.push("```".into());
+                out.push(String::new());
+            }
+        }
+        for screen in &shape.screens {
+            let shows = if screen.criteria.is_empty() { String::new() } else { format!(" ({})", screen.criteria.join(", ")) };
+            out.push(format!("**{} {}**{shows}", screen.id, screen.title));
+            out.push(String::new());
+            match screen_path(ctx.slug, screen) {
+                Some(path) => out.push(format!("![{} {}]({})", screen.id, screen.title, path.trim_start_matches("plans/"))),
+                None => out.push(screen.wireframe.trim().to_string()),
+            }
+            out.push(String::new());
+        }
+        if out.last().is_some_and(|l| l.is_empty()) {
+            out.pop();
+        }
+    }
+
     section(&mut out, "## Design");
     out.push(if state.approach.is_empty() { "No approach written.".to_string() } else { state.approach.clone() });
     for (kind, heading) in [("area", "Areas it touches"), ("pattern", "Patterns to follow"), ("risk", "Risks")] {
@@ -207,6 +249,18 @@ pub fn plan(state: &State, ctx: &Context) -> String {
         out.push("**Architecture it changes** (marked planned until the work ships)".to_string());
         out.push(String::new());
         bullets(&mut out, &changes);
+    }
+    if let Some(review) = ctx.security.filter(|r| r.done()) {
+        out.push(String::new());
+        out.push(format!("**Security review** ({}{})", crate::planning_security::model_name(&review.model), review.at.map(|a| format!(", {}", a.format("%Y-%m-%d"))).unwrap_or_default()));
+        out.push(String::new());
+        if review.findings.is_empty() {
+            out.push("Nothing found in the shape or the design.".to_string());
+        }
+        for f in &review.findings {
+            let answer = state.security.iter().find(|a| a.id.eq_ignore_ascii_case(&f.id)).map(|a| format!(" Answer: {}", a.response.trim())).unwrap_or_else(|| " Not answered.".to_string());
+            out.push(format!("- **{}** ({}) {}.{answer}", f.id, f.severity.to_lowercase(), f.title.trim_end_matches('.')));
+        }
     }
 
     section(&mut out, "## Breakdown");
@@ -308,7 +362,9 @@ pub fn requirement(state: &State, plan_path: &str, issues: &[String]) -> String 
 /// An issue's body: the work, what it satisfies, how it'll be checked,
 /// what it needs first (as lines the PR dependency view reads), and the
 /// plan it came from.
-pub fn issue_body(task: &Task, state: &State, depends_on: &[String], plan: (&str, &str)) -> String {
+/// `screens` is where the plan's screens are on GitHub, linked for the
+/// criteria the issue satisfies.
+pub fn issue_body(task: &Task, state: &State, depends_on: &[String], plan: (&str, &str), screens: &str) -> String {
     let mut out = Vec::new();
     if !task.body.trim().is_empty() {
         out.push(task.body.trim().to_string());
@@ -324,6 +380,16 @@ pub fn issue_body(task: &Task, state: &State, depends_on: &[String], plan: (&str
     if !satisfied.is_empty() {
         section(&mut out, "**Satisfies**");
         out.extend(satisfied);
+    }
+    let shown = state.screens_for(&task.satisfies);
+    if !shown.is_empty() {
+        section(&mut out, "**Screens**");
+        for screen in shown {
+            match screen.image_path().and_then(|p| p.rsplit('/').next()) {
+                Some(name) => out.push(format!("- [{} {}]({screens}/{name})", screen.id, screen.title)),
+                None => out.push(format!("- {} {}", screen.id, screen.title)),
+            }
+        }
     }
     if !task.test_plan.trim().is_empty() {
         section(&mut out, "**How it'll be checked**");
@@ -443,6 +509,7 @@ mod tests {
             requirement_path: Some("requirements/failure-alerts.md"),
             assets: &["notes.pdf".to_string()],
             comments: &[],
+            security: None,
         };
         let md = plan(&s, &ctx);
         assert!(md.starts_with("---\ntype: plan\nstatus: agreed\nsummary: \"Ops see failed jobs: fast\"\nissues: [o/r#10, o/r#11]\ntouches: [o/r]"));
@@ -472,7 +539,7 @@ mod tests {
     #[test]
     fn an_issue_body_and_merging() {
         let s = state();
-        let body = issue_body(&s.tasks[1], &s, &["o/api#4".into()], ("Failure alerts", "https://x/plan.md"));
+        let body = issue_body(&s.tasks[1], &s, &["o/api#4".into()], ("Failure alerts", "https://x/plan.md"), "https://x/screens");
         assert!(body.starts_with("- [ ] Hook\n\n**Satisfies**\n\n- **R1** When a job fails"));
         assert!(body.contains("**How it'll be checked**\n\nA failing job in staging"));
         assert!(body.contains("\nDepends on: o/api#4\nSize: M\n"));

@@ -20,18 +20,21 @@ use std::path::Path;
 pub enum Stage {
     Outcome,
     Requirements,
+    /// What it looks like and how it moves: flows, then screens.
+    Shape,
     Design,
     Breakdown,
     Agree,
 }
 
 impl Stage {
-    pub const ALL: [Stage; 5] = [Stage::Outcome, Stage::Requirements, Stage::Design, Stage::Breakdown, Stage::Agree];
+    pub const ALL: [Stage; 6] = [Stage::Outcome, Stage::Requirements, Stage::Shape, Stage::Design, Stage::Breakdown, Stage::Agree];
 
     pub fn key(self) -> &'static str {
         match self {
             Stage::Outcome => "outcome",
             Stage::Requirements => "requirements",
+            Stage::Shape => "shape",
             Stage::Design => "design",
             Stage::Breakdown => "breakdown",
             Stage::Agree => "ready",
@@ -42,6 +45,7 @@ impl Stage {
         match self {
             Stage::Outcome => "Outcome",
             Stage::Requirements => "Requirements",
+            Stage::Shape => "Shape",
             Stage::Design => "Design",
             Stage::Breakdown => "Breakdown",
             Stage::Agree => "Agree",
@@ -54,6 +58,7 @@ impl Stage {
         match key.trim().to_lowercase().as_str() {
             "outcome" | "context" => Some(Stage::Outcome),
             "requirements" => Some(Stage::Requirements),
+            "shape" => Some(Stage::Shape),
             "design" => Some(Stage::Design),
             "breakdown" | "tasks" => Some(Stage::Breakdown),
             "ready" | "agree" => Some(Stage::Agree),
@@ -162,6 +167,95 @@ pub struct Decision {
     pub stage: String,
 }
 
+/// What the machine running the session can do, as claude found it:
+/// None until it's looked.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tools {
+    pub node: Option<bool>,
+    pub browser: Option<bool>,
+    /// What's missing and how to add it.
+    pub note: String,
+}
+
+impl Tools {
+    pub fn checked(&self) -> bool {
+        self.node.is_some() || self.browser.is_some()
+    }
+}
+
+/// A flow, as Mermaid: a user journey, or a system process.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FlowDiagram {
+    pub id: String,
+    pub title: String,
+    /// journey or process.
+    pub kind: String,
+    pub diagram: String,
+    /// The acceptance criteria it shows.
+    pub criteria: Vec<String>,
+}
+
+/// A screen, for a step people see: an image claude made (a wireframe
+/// SVG, or a screenshot of the running mock), or a text wireframe.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Screen {
+    pub id: String,
+    pub title: String,
+    /// The flow it's a step of.
+    pub flow: String,
+    pub criteria: Vec<String>,
+    /// Relative to the session's folder: `shape/S1.svg`.
+    pub image: String,
+    /// Markdown, when there's no image.
+    pub wireframe: String,
+}
+
+impl Screen {
+    /// Only a file inside the session's folder.
+    pub fn image_path(&self) -> Option<&str> {
+        let path = self.image.trim();
+        (!path.is_empty() && !path.starts_with('/') && !path.split('/').any(|p| p == "..")).then_some(path)
+    }
+}
+
+/// The mock behind the screens: wireframes, or a running app on a
+/// throwaway branch that's never pushed.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Mock {
+    /// wireframes or running.
+    pub kind: String,
+    pub repo: String,
+    pub branch: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShapeOf {
+    pub tools: Tools,
+    pub flows: Vec<FlowDiagram>,
+    pub screens: Vec<Screen>,
+    pub mock: Mock,
+}
+
+impl ShapeOf {
+    pub fn is_empty(&self) -> bool {
+        self.flows.is_empty() && self.screens.is_empty()
+    }
+}
+
+/// Claude's answer to a security review finding, by its id.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SecurityAnswer {
+    pub id: String,
+    pub response: String,
+}
+
 /// An architecture document the design changes: claude writes the whole
 /// document, with the change marked planned, in the session's folder at
 /// `path`, and Agree commits it beside the plan.
@@ -206,6 +300,9 @@ pub struct State {
     pub scouting: Vec<Finding>,
     /// The architecture documents the design changes.
     pub architecture: Vec<ArchChange>,
+    /// Claude's answers to the security review.
+    pub security: Vec<SecurityAnswer>,
+    pub shape: ShapeOf,
     /// initiative, epic or issue: what claude proposes the whole is.
     pub size: String,
     pub size_reason: String,
@@ -284,6 +381,13 @@ impl State {
             scouting_now: serde_json::from_value::<Scouting>(v["scouting_now"].clone()).ok().filter(|s| !s.why.is_empty()),
             scouting: list(&v["scouting"]),
             architecture: list::<ArchChange>(&v["design"]["architecture"]).into_iter().filter(|a| !a.path.trim().is_empty()).collect(),
+            security: list::<SecurityAnswer>(&v["design"]["security"]).into_iter().filter(|a| !a.id.trim().is_empty() && !a.response.trim().is_empty()).collect(),
+            shape: ShapeOf {
+                tools: serde_json::from_value(v["shape"]["tools"].clone()).unwrap_or_default(),
+                flows: list::<FlowDiagram>(&v["shape"]["flows"]).into_iter().filter(|f| !f.diagram.trim().is_empty() || !f.title.trim().is_empty()).collect(),
+                screens: list::<Screen>(&v["shape"]["screens"]).into_iter().filter(|s| !s.title.trim().is_empty() || !s.image.trim().is_empty()).collect(),
+                mock: serde_json::from_value(v["shape"]["mock"].clone()).unwrap_or_default(),
+            },
             size: text(&v["size"]).to_lowercase(),
             size_reason: text(&v["size_reason"]),
             tasks: list::<Task>(&v["tasks"]).into_iter().filter(|t| !t.title.trim().is_empty() || !t.body.trim().is_empty()).collect(),
@@ -308,6 +412,17 @@ impl State {
 
     pub fn epics(&self) -> impl Iterator<Item = &Task> {
         self.tasks.iter().filter(|t| t.is_epic())
+    }
+
+    /// Acceptance criteria no flow or screen shows.
+    pub fn unshaped(&self) -> Vec<&Criterion> {
+        let shown = |id: &str| self.shape.flows.iter().any(|f| f.criteria.iter().any(|c| c.eq_ignore_ascii_case(id))) || self.shape.screens.iter().any(|s| s.criteria.iter().any(|c| c.eq_ignore_ascii_case(id)));
+        self.requirement.acceptance.iter().filter(|c| !shown(&c.id)).collect()
+    }
+
+    /// The screens that show any of `criteria`, in order.
+    pub fn screens_for(&self, criteria: &[String]) -> Vec<&Screen> {
+        self.shape.screens.iter().filter(|s| s.criteria.iter().any(|c| criteria.iter().any(|w| w.eq_ignore_ascii_case(c)))).collect()
     }
 
     /// Acceptance criteria no issue satisfies.
@@ -336,6 +451,21 @@ impl State {
                 }
                 if self.requirement.acceptance.is_empty() {
                     out.push("Add an acceptance criterion.".to_string());
+                }
+            }
+            Stage::Shape => {
+                if !self.shape.tools.checked() {
+                    out.push("Check what this machine can run for mocks (Node, a headless browser).".to_string());
+                }
+                if self.shape.flows.is_empty() {
+                    out.push("Draw at least one flow.".to_string());
+                }
+                let missing: Vec<String> = self.unshaped().iter().map(|c| c.id.clone()).collect();
+                if !missing.is_empty() {
+                    out.push(format!("{} isn't in any flow or screen yet.", missing.join(", ")));
+                }
+                for screen in self.shape.screens.iter().filter(|s| s.image_path().is_none() && s.wireframe.trim().is_empty()) {
+                    out.push(format!("Screen {} has nothing to show yet.", if screen.id.is_empty() { &screen.title } else { &screen.id }));
                 }
             }
             Stage::Design => {
@@ -379,10 +509,11 @@ impl State {
         let fields = match stage {
             Stage::Outcome => serde_json::to_string(&self.outcome),
             Stage::Requirements => serde_json::to_string(&self.requirement),
+            Stage::Shape => serde_json::to_string(&(&self.shape.flows, &self.shape.screens)),
             // Without architecture changes, as before they were kept, so an
             // older session's approval still holds.
-            Stage::Design if self.architecture.is_empty() => serde_json::to_string(&(&self.approach, &self.scouting)),
-            Stage::Design => serde_json::to_string(&(&self.approach, &self.scouting, &self.architecture)),
+            Stage::Design if self.architecture.is_empty() && self.security.is_empty() => serde_json::to_string(&(&self.approach, &self.scouting)),
+            Stage::Design => serde_json::to_string(&(&self.approach, &self.scouting, &self.architecture, &self.security)),
             Stage::Breakdown => serde_json::to_string(&(&self.size, &self.tasks)),
             Stage::Agree => Ok(String::new()),
         }
@@ -668,7 +799,7 @@ mod tests {
         assert_eq!(a.status(Stage::Requirements, &s), Status::Open);
         a.approve(Stage::Outcome, &s, None, now);
         assert_eq!(a.get(Stage::Outcome).unwrap().round, 2);
-        assert_eq!(a.outstanding(&s).iter().map(|(st, _)| *st).collect::<Vec<_>>(), vec![Stage::Requirements, Stage::Design, Stage::Breakdown]);
+        assert_eq!(a.outstanding(&s).iter().map(|(st, _)| *st).collect::<Vec<_>>(), vec![Stage::Requirements, Stage::Shape, Stage::Design, Stage::Breakdown]);
     }
 
     #[test]
