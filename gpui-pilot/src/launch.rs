@@ -594,3 +594,74 @@ pub fn working_here(harness_repo: &str, harness_path: &Path, branch: &str, refer
     lines.push(format!("- `.worktrees/{branch}/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` and `projects/` are kept out of the harness's git."));
     format!("## Working here\n\n{}\n", lines.join("\n"))
 }
+
+/// Map the System: claude writes the harness's architecture documents from
+/// the code, for planning to start from and keep up to date.
+pub fn map_brief(org: &str, harness_repo: &str, harness_path: &Path, branch: &str) -> String {
+    let today = Utc::now().format("%Y-%m-%d");
+    format!(
+        r#"# Map the System
+
+Write the team's architecture documents: how {org}'s systems fit together, drawn from the code. Planning sessions start their design from these and update them as plans are agreed, so they need to be right and grounded in the code, not a guess at it.
+
+## Working here
+
+- You're in the team's harness, {harness_repo}, checked out at `{harness}`. The code repos are shared clones under `projects/<name>`, to read. Bring each up to date with `git -C projects/<name> pull --ff-only` before reading it, and never change, commit or push in one. For repos that aren't cloned there, `gh repo list {org} --no-archived` lists them: say which you couldn't read rather than cloning them.
+- Read what's in the harness's `architecture/` first. Update a document that exists rather than writing a second one about the same thing.
+- Write every document in `.worktrees/{branch}/architecture/`, under the name it has (or will have) in the harness. Don't write anywhere else.
+- `.worktrees/{branch}/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` is kept out of the harness's git.
+
+## What to write
+
+- `overview.md`: every system, and how they connect, in one context diagram: people, external services and each system as a box, each connection labelled with what crosses it. A line on each system linking to its own document.
+- One document per system or area (a service, an app, a pipeline), named for it in kebab case: `job-runs.md`, `billing.md`.
+
+Each document:
+
+```markdown
+---
+type: architecture
+title: The system's name
+summary: A sentence on what it does and for whom.
+status: current
+covers: [owner/repo, owner/repo:path/inside]
+verified_at:
+  owner/repo: <the commit you read, from git -C projects/<name> rev-parse HEAD>
+updated: {today}
+---
+
+# The system's name
+
+What it is and what it's for, in a paragraph.
+
+## Context
+A Mermaid flowchart: who and what it talks to, outside itself.
+
+## Parts
+A Mermaid flowchart: its services, stores, queues and jobs, each connection labelled with what passes along it.
+
+## Key flows
+One to three Mermaid sequence diagrams for what matters most (a request, a job, a payment).
+
+## Trust boundaries
+Where data comes in from outside, who can trigger what, how it's authenticated, and where personal or sensitive data is kept.
+
+## Where to look
+Links to the code for each part: [owner/repo:path](https://github.com/owner/repo/blob/HEAD/path).
+```
+
+- Ground every box and every connection in code you read, and link it under Where to look. When something is inferred (from config, naming or a README) rather than read, say so in the text.
+- Keep each diagram readable: around fifteen nodes at most. Split a system that needs more into documents of its own and link them.
+- Planned work is marked in diagrams by planning sessions (`:::planned`, `:::retiring`, and `planned_by` in front matter). You're mapping what's built: leave those marks as they are in a document you update, and don't add any.
+
+## When you're done
+
+Say what you wrote, what you couldn't map and why, and anything that looked wrong or risky in passing. Then ask before writing anything to GitHub. With the person's go-ahead, put the documents on a branch of the harness named `{branch}` (a worktree at `.worktrees/{branch}/harness`, from the default branch, with the documents copied into its `architecture/`), commit them, push the branch and open a pull request for the team to review. Never push to the default branch.
+"#,
+        harness = harness_path.display()
+    )
+}
+
+pub fn map_prompt(branch: &str) -> String {
+    format!("You're mapping how the team's systems fit together, to write the harness's architecture documents. Read .worktrees/{branch}/.gannin/brief.md first: it says where the code is, what to write and where. Start by listing the repos you'll read and the systems you expect to find, and ask me if that's the right scope before you go deep.")
+}

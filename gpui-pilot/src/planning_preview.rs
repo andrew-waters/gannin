@@ -82,7 +82,12 @@ pub fn state(stage: Stage, answered: bool) -> State {
     }
     if done(Stage::Design) {
         v["scouting_now"] = Value::Null;
-        v["design"] = json!({ "approach": "The scheduler already emits a `run.finished` event (see `runner.rs`). Add a **notifier** in `acme/notify` that subscribes to it and posts failures to Slack through the existing Slack client.\n\n- Group by job and hour, keyed in Redis, so a repeat edits the first message.\n- Rerun is a Slack action that calls the scheduler's existing `POST /runs` with the job's id.\n- A `quiet` flag on the job, set from the web app's job page.\n\nRolls out behind the `job_alerts` flag, billing jobs first." });
+        v["design"] = json!({ "approach": "The scheduler already emits a `run.finished` event (see `runner.rs`). Add a **notifier** in `acme/notify` that subscribes to it and posts failures to Slack through the existing Slack client.\n\n- Group by job and hour, keyed in Redis, so a repeat edits the first message.\n- Rerun is a Slack action that calls the scheduler's existing `POST /runs` with the job's id.\n- A `quiet` flag on the job, set from the web app's job page.\n\nRolls out behind the `job_alerts` flag, billing jobs first.",
+            "architecture": [{
+                "path": "architecture/job-runs.md",
+                "note": "A notifier joins: it hears run.finished, posts failures to Slack and takes reruns back to the scheduler.",
+                "diagram": "flowchart LR\n  scheduler[Scheduler] -->|run.finished| bus[(Event bus)]\n  bus --> notifier[Notifier]:::planned\n  notifier -->|failure| slack[Slack]:::planned\n  slack -->|Rerun| notifier\n  notifier -->|POST /runs| scheduler\n  notifier --> redis[(Redis: grouping)]:::planned\n  classDef planned stroke-dasharray: 5 5"
+            }] });
         v["scouting"] = json!([
             { "kind": "area", "repo": "acme/scheduler", "path": "src/runner.rs#L88-L120", "note": "Where a run ends and `run.finished` is sent." },
             { "kind": "pattern", "repo": "acme/notify", "path": "src/slack/client.rs", "note": "The Slack client the deploy notices use: reuse it, with its retry." },

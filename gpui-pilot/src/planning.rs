@@ -162,6 +162,30 @@ pub struct Decision {
     pub stage: String,
 }
 
+/// An architecture document the design changes: claude writes the whole
+/// document, with the change marked planned, in the session's folder at
+/// `path`, and Agree commits it beside the plan.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ArchChange {
+    /// `architecture/<name>.md`, the same in the folder and the harness.
+    pub path: String,
+    /// What changes, in a line.
+    pub note: String,
+    /// The changed diagram's Mermaid source, for the panel.
+    pub diagram: String,
+    /// A document that doesn't exist yet.
+    pub new: bool,
+}
+
+impl ArchChange {
+    /// Only `architecture/<name>.md`, with nothing climbing out of it.
+    pub fn valid(&self) -> bool {
+        let path = self.path.trim();
+        path.starts_with("architecture/") && path.ends_with(".md") && !path.split('/').any(|p| p == ".." || p.is_empty())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Scouting {
@@ -180,6 +204,8 @@ pub struct State {
     pub approach: String,
     pub scouting_now: Option<Scouting>,
     pub scouting: Vec<Finding>,
+    /// The architecture documents the design changes.
+    pub architecture: Vec<ArchChange>,
     /// initiative, epic or issue: what claude proposes the whole is.
     pub size: String,
     pub size_reason: String,
@@ -257,6 +283,7 @@ impl State {
             approach: text(&v["design"]["approach"]),
             scouting_now: serde_json::from_value::<Scouting>(v["scouting_now"].clone()).ok().filter(|s| !s.why.is_empty()),
             scouting: list(&v["scouting"]),
+            architecture: list::<ArchChange>(&v["design"]["architecture"]).into_iter().filter(|a| !a.path.trim().is_empty()).collect(),
             size: text(&v["size"]).to_lowercase(),
             size_reason: text(&v["size_reason"]),
             tasks: list::<Task>(&v["tasks"]).into_iter().filter(|t| !t.title.trim().is_empty() || !t.body.trim().is_empty()).collect(),
@@ -315,6 +342,9 @@ impl State {
                 if self.approach.is_empty() {
                     out.push("Propose an approach.".to_string());
                 }
+                for change in self.architecture.iter().filter(|a| !a.valid()) {
+                    out.push(format!("{} isn't in architecture/: move it there.", change.path));
+                }
             }
             Stage::Breakdown => {
                 if self.issues().next().is_none() {
@@ -349,7 +379,10 @@ impl State {
         let fields = match stage {
             Stage::Outcome => serde_json::to_string(&self.outcome),
             Stage::Requirements => serde_json::to_string(&self.requirement),
-            Stage::Design => serde_json::to_string(&(&self.approach, &self.scouting)),
+            // Without architecture changes, as before they were kept, so an
+            // older session's approval still holds.
+            Stage::Design if self.architecture.is_empty() => serde_json::to_string(&(&self.approach, &self.scouting)),
+            Stage::Design => serde_json::to_string(&(&self.approach, &self.scouting, &self.architecture)),
             Stage::Breakdown => serde_json::to_string(&(&self.size, &self.tasks)),
             Stage::Agree => Ok(String::new()),
         }

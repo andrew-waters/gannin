@@ -203,8 +203,17 @@ impl AgreeView {
         let mut repos: Vec<String> = included.iter().map(|d| d.task.repo.clone()).collect();
         repos.sort();
         repos.dedup();
+        let architecture: Vec<String> = self.state.architecture.iter().filter(|a| a.valid()).map(|a| a.path.trim().to_string()).collect();
+        if !self.preview {
+            let folder = self.launch.folder();
+            if let Some(missing) = architecture.iter().find(|p| !folder.join(p).is_file()) {
+                self.error = Some(format!("{missing} isn't in the session's folder yet. Ask Claude to write it there, or to drop it from the design."));
+                return cx.notify();
+            }
+        }
         let shared = planning::docs(&self.dir);
-        let committed: Vec<String> = shared.iter().filter(|d| d.commit).map(|d| d.name.clone()).collect();
+        let mut committed: Vec<String> = shared.iter().filter(|d| d.commit).map(|d| d.name.clone()).collect();
+        committed.extend(architecture.iter().cloned());
         let top = match (&subject, &new_parent) {
             (Some(s), _) => format!("under {}#{}", s.repo, s.number),
             (None, Some(p)) => format!("under a new {} in {}, \"{}\"", p.type_name.as_deref().unwrap_or("issue").to_lowercase(), p.repo, p.title),
@@ -248,6 +257,8 @@ impl AgreeView {
             by,
             owner: crate::auth::saved_viewer().map(|v| v.login).unwrap_or_default(),
             shared,
+            folder: self.launch.folder(),
+            stub_missing: self.preview,
         };
         let rehearse = self.preview;
         cx.spawn_in(window, async move |this, cx| {
@@ -309,6 +320,12 @@ struct Job {
     by: Vec<String>,
     owner: String,
     shared: Vec<planning::Doc>,
+    /// The session's folder in the harness, where claude leaves the
+    /// architecture documents the design changes.
+    folder: PathBuf,
+    /// The preview: an architecture document not in the folder is stood
+    /// in for, where a real Agree stops.
+    stub_missing: bool,
 }
 
 const REPO: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id labels(first: 100) { nodes { id name } } } }";
@@ -596,6 +613,17 @@ impl Job {
                 let bytes = std::fs::read(self.dir.join("docs").join(name)).map_err(|e| format!("Couldn't read {name}: {e}"))?;
                 files.push((format!("{}/{name}", docs::assets_dir(&self.slug)), bytes));
             }
+            // The architecture the design changes, its planned parts traced
+            // to the plan.
+            for change in self.state.architecture.iter().filter(|a| a.valid()) {
+                let path = change.path.trim();
+                let text = match std::fs::read_to_string(self.folder.join(path)) {
+                    Ok(text) => text,
+                    Err(_) if self.stub_missing => docs::architecture_stub(change),
+                    Err(e) => return Err(format!("Couldn't read {path} from the session's folder: {e}")),
+                };
+                files.push((path.to_string(), docs::mark_planned(&text, &agreed.plan_path).into_bytes()));
+            }
             agreed.commit = Some(w.commit(&self.harness, &files, &format!("Plan: {title}"))?);
             agreed.save(&self.dir);
         }
@@ -834,6 +862,8 @@ mod tests {
             by: vec!["aw".into()],
             owner: "aw".into(),
             shared: Vec::new(),
+            folder: std::env::temp_dir().join("gannin-agree-test-no-folder"),
+            stub_missing: true,
         }
     }
 
@@ -855,6 +885,7 @@ mod tests {
         assert!(record.contains("Files acme/scheduler#104: Rerun a job from its alert") && record.contains("Depends on: acme/notify#103"));
         assert!(record.contains("Puts acme/scheduler#104 under #102."));
         assert!(record.contains("Commits plans/") && record.contains("Commits requirements/failed-job-alerts.md"));
+        assert!(record.contains("Commits architecture/job-runs.md") && record.contains("planned_by:\n  - plans/"));
         // Trying again files nothing twice.
         let mut again = Agreed::load(&dir);
         again.at = None;

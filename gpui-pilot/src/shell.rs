@@ -2571,6 +2571,22 @@ impl Workspace {
         true
     }
 
+    /// Map the System: claude writes the harness's architecture documents
+    /// from the code, in this window's harness, and asks before opening a
+    /// pull request with them.
+    fn map_system(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::launch::{self, Flow};
+        let (Some(org), Some(harness)) = (self.org.clone(), self.project.clone().or_else(|| self.projects.first().map(|p| p.id.clone()))) else { return };
+        let mut launch = self.new_launch(Flow::Ask, "Map the System".to_string(), &org, &harness, String::new(), None);
+        launch.branch = format!("map-system-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..4].to_lowercase());
+        let brief = launch::map_brief(&org, &harness, &launch.harness_path, &launch.branch);
+        let prompt = launch::map_prompt(&launch.branch);
+        let context = launch.dir().join("context");
+        let _ = std::fs::create_dir_all(&context);
+        let _ = std::fs::write(context.join("README.md"), format!("# {org}\n\nMapping the system: the code is in the harness's projects/ clones.\n"));
+        self.start_launch(launch, &brief, &prompt, false, window, cx);
+    }
+
     /// Add to Schedule: the issues as a sequence from the next half hour,
     /// in the order picked; then the Schedule shows, to move it.
     fn schedule_issues(&mut self, issues: Vec<IssueItem>, window: &mut Window, cx: &mut Context<Self>) {
@@ -5769,6 +5785,7 @@ impl Workspace {
                                 }))
                                 .child(item("new-menu-plan", "New Initiative, Epic or Issue", None, |this, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
                                 .child(item("new-menu-issue", "New Issue", None, |this, window, cx| this.open_new_issue(None, window, cx)))
+                                .child(item("new-menu-map", "Map the System", None, |this, window, cx| this.map_system(window, cx)))
                                 .child(div().my_1().h(px(1.)).bg(theme.border))
                                 .child(item("new-menu-review", "Review a Pull Request", None, |this, window, cx| this.open_pr_picker(window, cx)))
                                 .child(div().my_1().h(px(1.)).bg(theme.border))

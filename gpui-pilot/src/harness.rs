@@ -1,6 +1,6 @@
 //! The team's harness, as Gannin's sidebar lists it: plans, requirements,
-//! decisions, findings, skills, prompts, learnings, research, refines and
-//! specialists, each a page of its documents, newest first. A document opens
+//! decisions, findings, skills, prompts, learnings, research, refines,
+//! specialists and architecture, each a page of its documents, newest first. A document opens
 //! in a drawer with its facts and its text.
 //!
 //! Read with git from each of the org's harnesses' default branch
@@ -25,10 +25,12 @@ pub enum HarnessKind {
     Research,
     Refines,
     Specialists,
+    /// How the team's systems fit together, as diagrams.
+    Architecture,
 }
 
 impl HarnessKind {
-    pub const ALL: [HarnessKind; 10] = [
+    pub const ALL: [HarnessKind; 11] = [
         HarnessKind::Plans,
         HarnessKind::Requirements,
         HarnessKind::Decisions,
@@ -39,6 +41,7 @@ impl HarnessKind {
         HarnessKind::Research,
         HarnessKind::Refines,
         HarnessKind::Specialists,
+        HarnessKind::Architecture,
     ];
 
     pub fn title(self) -> &'static str {
@@ -53,6 +56,7 @@ impl HarnessKind {
             HarnessKind::Research => "Research",
             HarnessKind::Refines => "Refines",
             HarnessKind::Specialists => "Specialists",
+            HarnessKind::Architecture => "Architecture",
         }
     }
 
@@ -70,6 +74,7 @@ impl HarnessKind {
             HarnessKind::Research => "icons/magnifying_glass.svg",
             HarnessKind::Refines => "icons/pencil.svg",
             HarnessKind::Specialists => "icons/person.svg",
+            HarnessKind::Architecture => "icons/blocks.svg",
         }
     }
 }

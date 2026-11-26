@@ -624,6 +624,7 @@ fn stage_view(stage: Stage, state: &State, _approvals: &Approvals, theme: &Theme
         Stage::Design => col
             .when(!state.approach.is_empty(), |d| d.child(markdown("plan-design", &state.approach, theme)))
             .when(!state.scouting.is_empty(), |d| d.child(heading("In the code", theme)).children(state.scouting.iter().enumerate().map(|(i, f)| finding(i, f, theme))))
+            .when(!state.architecture.is_empty(), |d| d.child(heading("Architecture it changes", theme)).children(state.architecture.iter().enumerate().map(|(i, a)| architecture(i, a, theme))))
             .when(state.approach.is_empty() && state.scouting.is_empty(), |d| d.child(nothing("the design")))
             .into_any_element(),
         Stage::Breakdown | Stage::Agree => {
@@ -638,6 +639,27 @@ fn stage_view(stage: Stage, state: &State, _approvals: &Approvals, theme: &Theme
             .into_any_element()
         }
     }
+}
+
+/// An architecture document the design changes: which, what changes, and
+/// the changed diagram's source (planned parts dashed once it's drawn).
+fn architecture(i: usize, a: &planning::ArchChange, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .py_1()
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .items_center()
+                .child(div().text_xs().text_color(if a.valid() { theme.selected } else { theme.orange() }).child(a.path.clone()))
+                .when(a.new, |d| d.child(div().px_1p5().rounded_md().text_xs().bg(theme.tile).child("New"))),
+        )
+        .when(!a.note.is_empty(), |d| d.child(div().text_sm().child(a.note.clone())))
+        .when(!a.diagram.trim().is_empty(), |d| d.child(markdown(&format!("plan-architecture-{i}"), &format!("```mermaid\n{}\n```", a.diagram.trim()), theme)))
 }
 
 fn finding(i: usize, f: &planning::Finding, theme: &Theme) -> gpui::Div {
@@ -789,7 +811,8 @@ fn spec_view(state: &State, shown: Stage, approvals: &Approvals, theme: &Theme) 
         col = col
             .child(section(Stage::Design))
             .child(small(first))
-            .when(risks > 0, |d| d.child(div().text_xs().text_color(theme.orange()).child(format!("{risks} risk{} found in the code", if risks == 1 { "" } else { "s" }))));
+            .when(risks > 0, |d| d.child(div().text_xs().text_color(theme.orange()).child(format!("{risks} risk{} found in the code", if risks == 1 { "" } else { "s" }))))
+            .when(!state.architecture.is_empty(), |d| d.child(small(format!("Changes {}", state.architecture.iter().map(|a| a.path.trim().trim_start_matches("architecture/").trim_end_matches(".md").to_string()).collect::<Vec<_>>().join(", ")))));
     }
     if shows(Stage::Breakdown) && breakdown_started {
         any = true;

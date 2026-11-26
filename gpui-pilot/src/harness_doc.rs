@@ -34,6 +34,7 @@ fn kind_of(path: &str) -> Option<HarnessKind> {
         "prompts" => HarnessKind::Prompts,
         "learnings" => HarnessKind::Learnings,
         "specialists" => HarnessKind::Specialists,
+        "architecture" => HarnessKind::Architecture,
         _ => return None,
     })
 }
@@ -51,6 +52,7 @@ fn kind_of_type(kind: &str) -> Option<HarnessKind> {
         HarnessKind::Research => "research",
         HarnessKind::Refines => "refine",
         HarnessKind::Specialists => "specialist",
+        HarnessKind::Architecture => "architecture",
     };
     HarnessKind::ALL.into_iter().find(|k| singular(*k) == kind.to_lowercase())
 }

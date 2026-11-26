@@ -100,6 +100,10 @@ pub fn plan(state: &State, ctx: &Context) -> String {
     if let Some(path) = ctx.requirement_path {
         out.push(format!("requirement: {path}"));
     }
+    let architecture: Vec<String> = state.architecture.iter().filter(|a| a.valid()).map(|a| a.path.trim().to_string()).collect();
+    if !architecture.is_empty() {
+        out.push(format!("architecture: {}", yaml_list(&architecture)));
+    }
     out.push(format!("branch: {}", ctx.branch));
     out.push("---".to_string());
     out.push(String::new());
@@ -195,6 +199,14 @@ pub fn plan(state: &State, ctx: &Context) -> String {
             out.push(String::new());
             bullets(&mut out, &found);
         }
+    }
+
+    let changes: Vec<String> = state.architecture.iter().filter(|a| a.valid()).map(|a| format!("[{0}](../{0}){1}{2}", a.path.trim(), if a.new { " (new)" } else { "" }, if a.note.is_empty() { String::new() } else { format!(": {}", a.note) })).collect();
+    if !changes.is_empty() {
+        out.push(String::new());
+        out.push("**Architecture it changes** (marked planned until the work ships)".to_string());
+        out.push(String::new());
+        bullets(&mut out, &changes);
     }
 
     section(&mut out, "## Breakdown");
@@ -344,6 +356,53 @@ pub fn merge_into(body: &str, plan_path: &str, work: &str) -> String {
     }
 }
 
+/// An architecture document as Agree commits it: its front matter's
+/// `planned_by` lists the plan, so the planned parts can be traced to it
+/// and made current when its work ships. Added once, however often it's
+/// written.
+pub fn mark_planned(text: &str, plan_path: &str) -> String {
+    let item = format!("  - {plan_path}");
+    let Some(rest) = text.strip_prefix("---\n") else {
+        return format!("---\ntype: architecture\nplanned_by:\n{item}\n---\n\n{text}");
+    };
+    let Some(end) = rest.find("\n---") else { return text.to_string() };
+    let (front, body) = (&rest[..end], &rest[end..]);
+    let mut lines: Vec<String> = front.lines().map(str::to_string).collect();
+    match lines.iter().position(|l| l.starts_with("planned_by:")) {
+        Some(at) => {
+            let value = lines[at]["planned_by:".len()..].trim().to_string();
+            let mut items: Vec<String> = match value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
+                Some(inline) => inline.split(',').map(|p| p.trim().trim_matches('"').to_string()).filter(|p| !p.is_empty()).collect(),
+                None if !value.is_empty() => vec![value.trim_matches('"').to_string()],
+                None => Vec::new(),
+            };
+            let mut next = at + 1;
+            while next < lines.len() && lines[next].trim_start().starts_with("- ") {
+                items.push(lines[next].trim_start()[2..].trim().trim_matches('"').to_string());
+                next += 1;
+            }
+            if !items.iter().any(|p| p == plan_path) {
+                items.push(plan_path.to_string());
+            }
+            let replaced: Vec<String> = std::iter::once("planned_by:".to_string()).chain(items.iter().map(|p| format!("  - {p}"))).collect();
+            lines.splice(at..next, replaced);
+        }
+        None => {
+            lines.push("planned_by:".to_string());
+            lines.push(item);
+        }
+    }
+    format!("---\n{}{body}", lines.join("\n"))
+}
+
+/// A stand-in for an architecture document claude didn't leave in the
+/// folder, for the preview's rehearsal only: a real Agree never writes
+/// over a document it hasn't read.
+pub fn architecture_stub(change: &crate::planning::ArchChange) -> String {
+    let name = change.path.trim().trim_start_matches("architecture/").trim_end_matches(".md").replace('-', " ");
+    format!("---\ntype: architecture\nstatus: current\nsummary: {}\n---\n\n# {name}\n\n```mermaid\n{}\n```\n", yaml(&change.note), change.diagram.trim())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,6 +454,19 @@ mod tests {
         assert!(md.contains("As an epic: two repos"));
         let req = requirement(&s, "plans/2026-11-24-failure-alerts.md", &["o/r#10".into()]);
         assert!(req.contains("type: requirement") && req.contains("- **R1** When a job fails"));
+    }
+
+    #[test]
+    fn architecture_is_marked_planned_once() {
+        let doc = "---\ntype: architecture\nsummary: Jobs\n---\n\n# Jobs\n";
+        let once = mark_planned(doc, "plans/a.md");
+        assert_eq!(once, "---\ntype: architecture\nsummary: Jobs\nplanned_by:\n  - plans/a.md\n---\n\n# Jobs\n");
+        assert_eq!(mark_planned(&once, "plans/a.md"), once);
+        let two = mark_planned(&once, "plans/b.md");
+        assert!(two.contains("planned_by:\n  - plans/a.md\n  - plans/b.md\n---"));
+        let inline = mark_planned("---\nplanned_by: [plans/x.md]\ntitle: T\n---\nBody", "plans/a.md");
+        assert_eq!(inline, "---\nplanned_by:\n  - plans/x.md\n  - plans/a.md\ntitle: T\n---\nBody");
+        assert!(mark_planned("# No front matter", "plans/a.md").starts_with("---\ntype: architecture\nplanned_by:\n  - plans/a.md\n---\n\n# No front matter"));
     }
 
     #[test]
