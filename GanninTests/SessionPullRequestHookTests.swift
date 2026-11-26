@@ -3,17 +3,32 @@ import Testing
 @testable import Gannin
 
 /// The PostToolUse hook that records a session's PR, run in sh as Claude Code
-/// runs it, with a tool call on standard input in Claude Code's key order.
+/// runs it. Each call is run with `jq` (the JSON is parsed) and without it
+/// (`sed` and `grep` on the raw text, in Claude Code's key order), and both
+/// must record the same.
 struct SessionPullRequestHookTests {
-    /// The URLs the hook recorded for `input`, in the order written.
-    private func recorded(_ inputs: String...) throws -> [String] {
+    /// The URLs the script recorded for each input, in the order written.
+    private func run(_ inputs: [String], withoutJQ: Bool) throws -> [String] {
         let folder = FileManager.default.temporaryDirectory.appending(path: "pr-hook-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
+        let script = folder.appending(path: ClaudeCodeProvider.pullRequestHookFile)
+        try Data(ClaudeCodeProvider.pullRequestHookScript.utf8).write(to: script)
+        // A PATH of only what the script uses, so whether jq is there is
+        // decided by `withoutJQ`, not by the machine running the tests.
+        var environment = ProcessInfo.processInfo.environment
+        let bin = folder.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for tool in ["sed", "grep", "cat", "dirname"] + (withoutJQ ? [] : ["jq"]) {
+            let real = Self.find(tool) ?? "/usr/bin/\(tool)"
+            try FileManager.default.createSymbolicLink(at: bin.appending(path: tool), withDestinationURL: URL(filePath: real))
+        }
+        environment["PATH"] = bin.path
         for input in inputs {
             let process = Process()
             process.executableURL = URL(filePath: "/bin/sh")
-            process.arguments = ["-c", ClaudeCodeProvider.pullRequestHook(directory: folder.path)]
+            process.arguments = [script.path]
+            process.environment = environment
             let stdin = Pipe()
             process.standardInput = stdin
             process.standardOutput = FileHandle.nullDevice
@@ -26,6 +41,22 @@ struct SessionPullRequestHookTests {
         }
         let text = (try? String(contentsOf: folder.appending(path: "pr"), encoding: .utf8)) ?? ""
         return text.split(separator: "\n").map(String.init)
+    }
+
+    /// Where a tool is on this Mac, nil if it isn't installed.
+    private nonisolated static func find(_ tool: String) -> String? {
+        ["/usr/bin/\(tool)", "/bin/\(tool)", "/opt/homebrew/bin/\(tool)", "/usr/local/bin/\(tool)"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    fileprivate nonisolated static let hasJQ = find("jq") != nil
+
+    /// What the hook records with `jq`, checked against what it records
+    /// without. Without jq on the machine, only the fallback runs.
+    private func recorded(_ inputs: String...) throws -> [String] {
+        let fallback = try run(inputs, withoutJQ: true)
+        if Self.hasJQ { #expect(try run(inputs, withoutJQ: false) == fallback) }
+        return fallback
     }
 
     private func call(_ tool: String, input: String, response: String) -> String {
@@ -124,6 +155,14 @@ struct SessionPullRequestHookTests {
         #expect(try recorded(bash("gh pr create --fill; gh pr create --fill", stdout: "\(mine)\\n\(second)")) == [mine, second])
     }
 
+    /// A result with no `stdout`, or the URL on stderr, still holds it.
+    @Test func createIsRecordedFromAnyFieldOfItsResult() throws {
+        let command = #"{"command":"gh pr create --fill"}"#
+        #expect(try recorded(call("Bash", input: command, response: #"{"output":"\#(mine)"}"#)) == [mine])
+        #expect(try recorded(call("Bash", input: command, response: #"{"stdout":"","stderr":"\#(mine)"}"#)) == [mine])
+        #expect(try recorded(call("Bash", input: command, response: #""\#(mine)""#)) == [mine])
+    }
+
     @Test func aRepeatedURLIsRecordedOnce() throws {
         let create = bash("gh pr create --fill", stdout: mine)
         #expect(try recorded(create, create) == [mine])
@@ -136,5 +175,28 @@ struct SessionPullRequestHookTests {
         #expect(try recorded(short) == [mine])
         let wrapped = call("mcp__github__create_pull_request", input: "{}", response: #"[{"type":"text","text":"{\"body\":\"Follows \#(other)\",\"html_url\":\"\#(mine)\"}"}]"#)
         #expect(try recorded(wrapped) == [mine])
+    }
+
+    /// What claude.ai's GitHub connector returns: only `html_url` and `id`.
+    @Test func theGitHubConnectorsResultIsRecorded() throws {
+        let tool = "mcp__claude_ai_Github_MCP__create_pull_request"
+        let input = #"{"owner":"ctrl-hub","repo":"mono","body":"Refs ctrl-hub/product#4495"}"#
+        let object = call(tool, input: input, response: #"{"html_url":"\#(mine)","id":"5503395085"}"#)
+        #expect(try recorded(object) == [mine])
+        let text = call(tool, input: input, response: #""{\"html_url\":\"\#(mine)\",\"id\":\"5503395085\"}""#)
+        #expect(try recorded(text) == [mine])
+        let blocks = call(tool, input: input, response: #"{"content":[{"type":"text","text":"{\"html_url\":\"\#(mine)\",\"id\":\"1\"}"}]}"#)
+        #expect(try recorded(blocks) == [mine])
+    }
+
+    @Test func aFailedPullRequestToolCallRecordsNothing() throws {
+        let failed = call("mcp__claude_ai_Github_MCP__create_pull_request", input: "{}", response: #""failed to create PR, see \#(other)""#)
+        #expect(try recorded(failed) == [])
+    }
+
+    /// With jq the JSON is parsed, so the order of the keys doesn't matter.
+    @Test(.enabled(if: SessionPullRequestHookTests.hasJQ)) func theOrderOfTheKeysDoesNotMatterWithJQ() throws {
+        let reordered = #"{"tool_response":{"html_url":"\#(mine)","id":"1"},"tool_use_id":"t","tool_name":"mcp__claude_ai_Github_MCP__create_pull_request","tool_input":{}}"#
+        #expect(try run([reordered], withoutJQ: false) == [mine])
     }
 }
