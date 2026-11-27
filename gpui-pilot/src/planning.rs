@@ -248,6 +248,15 @@ impl ShapeOf {
     }
 }
 
+/// Claude asking the room to send it back to an earlier stage.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackRequest {
+    /// The stage's key.
+    pub to: String,
+    pub why: String,
+}
+
 /// Claude's answer to a security review finding, by its id.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -303,6 +312,8 @@ pub struct State {
     /// Claude's answers to the security review.
     pub security: Vec<SecurityAnswer>,
     pub shape: ShapeOf,
+    /// A stage claude's asked to go back to, until the room does.
+    pub back: Option<BackRequest>,
     /// initiative, epic or issue: what claude proposes the whole is.
     pub size: String,
     pub size_reason: String,
@@ -382,6 +393,7 @@ impl State {
             scouting: list(&v["scouting"]),
             architecture: list::<ArchChange>(&v["design"]["architecture"]).into_iter().filter(|a| !a.path.trim().is_empty()).collect(),
             security: list::<SecurityAnswer>(&v["design"]["security"]).into_iter().filter(|a| !a.id.trim().is_empty() && !a.response.trim().is_empty()).collect(),
+            back: serde_json::from_value::<BackRequest>(v["back"].clone()).ok().filter(|b| Stage::parse(&b.to).is_some()),
             shape: ShapeOf {
                 tools: serde_json::from_value(v["shape"]["tools"].clone()).unwrap_or_default(),
                 flows: list::<FlowDiagram>(&v["shape"]["flows"]).into_iter().filter(|f| !f.diagram.trim().is_empty() || !f.title.trim().is_empty()).collect(),

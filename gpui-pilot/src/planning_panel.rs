@@ -69,6 +69,10 @@ pub struct PlanningPanel {
     _diagrams: Task<()>,
     /// A diagram opened large, in place of the stage and the spec.
     enlarged: Option<Enlarged>,
+    /// What claude last said, from its transcript: shown when it's the
+    /// room's turn, so nobody needs the terminal to know what it wants.
+    last_said: Option<String>,
+    _said: Task<()>,
 }
 
 /// A diagram opened in the panel: what it's of, and its picture.
@@ -163,6 +167,7 @@ impl PlanningPanel {
         });
         let dir = launch.dir();
         let folder = launch.local_folder();
+        let claude_id = launch.claude_id();
         let resumed_from = {
             let file = dir.join("resumed-from");
             let before = std::fs::read_to_string(&file).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
@@ -192,9 +197,11 @@ impl PlanningPanel {
             claude: None,
             awaiting: None,
             resumed_from,
+            _said: watch_said(claude_id, cx),
             _poll: poll,
             _diagrams: watch_diagrams(cx),
             enlarged: None,
+            last_said: None,
         }
     }
 
@@ -233,9 +240,11 @@ impl PlanningPanel {
             claude: None,
             awaiting: None,
             resumed_from: None,
+            _said: Task::ready(()),
             _poll: Task::ready(()),
             _diagrams: watch_diagrams(cx),
             enlarged: None,
+            last_said: None,
         }
     }
 
@@ -418,11 +427,21 @@ impl PlanningPanel {
     /// approving again.
     fn back(&mut self, to: Stage, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.comment.read(cx).text(cx).trim().to_string();
+        let asked = self.state.as_ref().and_then(|s| s.back.clone()).filter(|b| Stage::parse(&b.to) == Some(to));
+        if let (true, Some(asked)) = (text.is_empty(), asked) {
+            return self.back_because(to, format!("as Claude asked, {}", asked.why), window, cx);
+        }
         if text.is_empty() {
             self.notice = Some(format!("Say in the box why it's going back to {}, then press it again.", to.title()));
             return cx.notify();
         }
         let why = self.take_comment(window, cx);
+        self.back_because(to, why, window, cx);
+    }
+
+    /// Back to `to` for `why`: it and every later stage need approving
+    /// again, and claude's told.
+    fn back_because(&mut self, to: Stage, why: String, window: &mut Window, cx: &mut Context<Self>) {
         self.approvals.reopen(to);
         self.approvals.save(&self.dir);
         if self.preview {
@@ -431,7 +450,7 @@ impl PlanningPanel {
             }
         }
         self.notice = None;
-        self.send(format!("Back to {}: {why}. Set `phase` to `{}`.", to.title().to_lowercase(), to.key()), window, cx);
+        self.send(format!("Back to {}: {}. Set `phase` to `{}` and `back` to null.", to.title().to_lowercase(), why.trim_end_matches('.'), to.key()), window, cx);
         cx.notify();
     }
 
@@ -572,6 +591,62 @@ impl PlanningPanel {
                     .when(!single, |d| d.child(button("plan-send-answers", "Send Answers", true, theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_answers(window, cx))))),
             )
             .into_any_element()
+    }
+
+    /// Claude asking to go back to an earlier stage, with the button that
+    /// does it, using its reason.
+    fn back_request(&self, state: &State, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let asked = state.back.clone()?;
+        let to = Stage::parse(&asked.to).filter(|s| s.index() < state.stage().index())?;
+        let why = asked.why.clone();
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1p5()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.orange().opacity(0.6))
+                .bg(theme.orange().opacity(0.08))
+                .child(div().text_xs().text_color(theme.orange()).child(format!("Claude asks to go back to {}", to.title())))
+                .when(!why.is_empty(), |d| d.child(div().text_sm().child(why.clone())))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1().min_w_0().text_xs().text_color(theme.tertiary).child(format!("{} and every stage after it will need approving again.", to.title())))
+                        .child(button("plan-back-asked", format!("Go Back to {}", to.title()), true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.back_because(to, format!("as Claude asked, {why}"), window, cx)
+                        }))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// What Claude last said, when it's the room's turn.
+    fn said(&self, theme: &Theme) -> Option<gpui::AnyElement> {
+        if self.preview || !matches!(self.claude.as_deref(), Some("idle")) {
+            return None;
+        }
+        let text = self.last_said.clone()?;
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.selected.opacity(0.5))
+                .bg(theme.selected.opacity(0.06))
+                .child(div().text_xs().text_color(theme.secondary).child("Claude says"))
+                .child(markdown("plan-last-said", &text, theme))
+                .child(div().text_xs().text_color(theme.tertiary).child("Answer below, or use the buttons."))
+                .into_any_element(),
+        )
     }
 
     /// The room's just answered: Claude's taking it in.
@@ -1024,8 +1099,10 @@ impl Render for PlanningPanel {
                 } else {
                     if self.awaiting.is_some() && self.questions.is_empty() {
                         Some(self.taking(&theme))
+                    } else if let Some(asked) = self.back_request(state, &theme, cx) {
+                        Some(asked)
                     } else if self.questions.is_empty() {
-                        now_box(state, self.preview, &theme)
+                        self.said(&theme).or_else(|| now_box(state, self.preview, &theme))
                     } else {
                         Some(self.question_box(&theme, cx))
                     }
@@ -1202,6 +1279,46 @@ impl Render for PlanningPanel {
             )
             .into_any_element()
     }
+}
+
+/// Keeps `last_said` to Claude's last words in its transcript, read again
+/// only when the transcript's changed.
+fn watch_said(claude_id: String, cx: &mut Context<PlanningPanel>) -> Task<()> {
+    cx.spawn(async move |this, cx| {
+        let mut seen: Option<std::time::SystemTime> = None;
+        loop {
+            let (id, before) = (claude_id.clone(), seen);
+            let (modified, said) = cx
+                .background_executor()
+                .spawn(async move {
+                    let modified = crate::review::transcript_path(&id).and_then(|p| std::fs::metadata(p).ok()?.modified().ok());
+                    if modified.is_none() || modified == before {
+                        return (modified, None);
+                    }
+                    // The words after the room last spoke, joined.
+                    let lines = crate::marra_mcp::transcript_messages(&id, 30).unwrap_or_default();
+                    let after = lines.iter().rposition(|(who, _)| who == "User").map(|i| i + 1).unwrap_or(0);
+                    let said: Vec<String> = lines[after..].iter().filter(|(who, _)| who == "Claude").map(|(_, t)| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+                    (modified, Some(said.last().cloned()))
+                })
+                .await;
+            seen = modified;
+            if let Some(said) = said {
+                if this
+                    .update(cx, |this, cx| {
+                        if this.last_said != said {
+                            this.last_said = said;
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            cx.background_executor().timer(Duration::from_secs(3)).await;
+        }
+    })
 }
 
 /// Notifies the view each time a diagram finishes drawing.
