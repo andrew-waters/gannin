@@ -1977,7 +1977,7 @@ pub(crate) fn rich(id: &str, text: &str, theme: &Theme, panel: &gpui::WeakEntity
 /// A Mermaid diagram, drawn (click to open it large in the panel), being
 /// drawn, or its source with why it couldn't be.
 pub(crate) fn diagram(id: &str, title: &str, source: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
-    let code = |key: &str| markdown(&format!("{id}-{key}"), &format!("```mermaid\n{}\n```", source.trim()), theme);
+    let code = |key: &str| markdown(&format!("{id}-{key}"), &format!("```\n{}\n```", source.trim()), theme);
     match crate::mermaid::diagram(source, theme.dark) {
         crate::mermaid::Diagram::Drawn(path, w, h) => {
             let (panel, open) = (panel.clone(), Enlarged { title: title.to_string(), path: path.clone(), size: (w, h), fit: true, screen: None });

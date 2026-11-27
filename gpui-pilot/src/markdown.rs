@@ -7,7 +7,7 @@
 
 use crate::charts::Theme;
 use gpui::{
-    div, prelude::*, px, AnyElement, FontStyle, FontWeight, HighlightStyle, InteractiveText, SharedString, StyledText,
+    div, prelude::*, px, AnimationExt, AnyElement, FontStyle, FontWeight, HighlightStyle, InteractiveText, SharedString, StyledText,
     UnderlineStyle,
 };
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -42,6 +42,8 @@ struct Renderer<'a> {
     lists: Vec<Option<u64>>,
     quote: usize,
     code: Option<String>,
+    /// The code block's language, for a ```mermaid one drawn.
+    code_lang: String,
     counter: usize,
     /// A table being read: its rows so far (whether the header, and each
     /// cell drawn), and the row being read.
@@ -159,9 +161,13 @@ impl<'a> Renderer<'a> {
                     self.flush();
                     self.quote += 1;
                 }
-                Tag::CodeBlock(_) => {
+                Tag::CodeBlock(kind) => {
                     self.flush();
                     self.code = Some(String::new());
+                    self.code_lang = match kind {
+                        pulldown_cmark::CodeBlockKind::Fenced(lang) => lang.split_whitespace().next().unwrap_or("").to_lowercase(),
+                        _ => String::new(),
+                    };
                 }
                 Tag::List(start) => {
                     self.flush();
@@ -224,6 +230,12 @@ impl<'a> Renderer<'a> {
                 }
                 TagEnd::CodeBlock => {
                     let code = self.code.take().unwrap_or_default();
+                    if std::mem::take(&mut self.code_lang) == "mermaid" {
+                        self.counter += 1;
+                        let id = format!("{}-mermaid-{}", self.id, self.counter);
+                        self.blocks.push(mermaid(&id, code.trim_end(), self.theme));
+                        return;
+                    }
                     self.blocks.push(
                         div()
                             .p_2()
@@ -289,6 +301,106 @@ fn attribute(html: &str, name: &str) -> Option<String> {
     Some(html[start..end].to_string())
 }
 
+/// The Mermaid blocks shown as their code, by a hash of the source: the
+/// rest are drawn.
+fn showing_code() -> &'static std::sync::Mutex<std::collections::HashSet<u64>> {
+    static CODE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> = std::sync::OnceLock::new();
+    CODE.get_or_init(Default::default)
+}
+
+fn hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// A ```mermaid block: drawn (`crate::mermaid`), with Code to see its
+/// source instead, Copy, and Open for the picture full size. While it's
+/// drawing, its spinner keeps the window redrawing until it's there.
+fn mermaid(id: &str, source: &str, theme: &Theme) -> AnyElement {
+    let key = hash(source);
+    let code = showing_code().lock().map(|c| c.contains(&key)).unwrap_or(false);
+    let drawn = crate::mermaid::diagram(source, theme.dark);
+    let picture = match &drawn {
+        crate::mermaid::Diagram::Drawn(path, ..) => Some(path.clone()),
+        _ => None,
+    };
+    let source_block = |s: &str| div().p_2().rounded_md().bg(theme.tile).font_family(crate::zed::MONO).text_xs().child(s.to_string());
+    let small = |label: &str, key: &str| {
+        div()
+            .id(SharedString::from(format!("{id}-{key}")))
+            .px_1p5()
+            .py_0p5()
+            .rounded_sm()
+            .text_xs()
+            .text_color(theme.secondary)
+            .cursor_pointer()
+            .hover(|d| d.bg(theme.tile).text_color(theme.fg))
+            .child(label.to_string())
+    };
+    let copy = source.to_string();
+    let header = div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .child(div().flex_1().text_xs().text_color(theme.tertiary).child("Diagram"))
+        .child(small(if code { "Diagram" } else { "Code" }, "flip").on_click(move |_, window, _| {
+            if let Ok(mut set) = showing_code().lock() {
+                if !set.remove(&key) {
+                    set.insert(key);
+                }
+            }
+            window.refresh();
+        }))
+        .child(small("Copy", "copy").on_click(move |_, _, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()))))
+        .when_some(picture.clone(), |d, path| {
+            let url = format!("file://{}", path.display());
+            d.child(small("Open", "open").on_click(move |_, _, cx| cx.open_url(&url)))
+        });
+    let body: AnyElement = if code {
+        source_block(source).into_any_element()
+    } else {
+        match drawn {
+            crate::mermaid::Diagram::Drawn(path, w, h) => div()
+                .p_2()
+                .rounded_md()
+                .bg(if theme.dark { theme.tile } else { gpui::white() })
+                .child(gpui::img(path).w(px(w)).h(px(h)).max_w_full().object_fit(gpui::ObjectFit::Contain))
+                .into_any_element(),
+            crate::mermaid::Diagram::Drawing => div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1p5()
+                .p_2()
+                .rounded_md()
+                .bg(theme.tile)
+                .text_xs()
+                .text_color(theme.secondary)
+                .child(
+                    gpui::svg()
+                        .path("icons/arrow_circle.svg")
+                        .size(px(11.))
+                        .flex_none()
+                        .text_color(theme.secondary)
+                        .with_animation(SharedString::from(format!("{id}-spin")), gpui::Animation::new(std::time::Duration::from_millis(1200)).repeat(), |svg, delta| svg.with_transformation(gpui::Transformation::rotate(gpui::percentage(delta)))),
+                )
+                .child("Drawing the diagram")
+                .into_any_element(),
+            crate::mermaid::Diagram::Failed(why) => div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_xs().text_color(theme.orange()).child(format!("Couldn't draw it: {why}")))
+                .child(source_block(source))
+                .into_any_element(),
+        }
+    };
+    div().flex().flex_col().gap_1().child(header).child(body).into_any_element()
+}
+
 /// `source` as blocks, top to bottom. `id` keeps link ids apart when
 /// several are drawn at once.
 pub fn markdown(id: &str, source: &str, theme: &Theme) -> AnyElement {
@@ -304,6 +416,7 @@ pub fn markdown(id: &str, source: &str, theme: &Theme) -> AnyElement {
         lists: Vec::new(),
         quote: 0,
         code: None,
+        code_lang: String::new(),
         counter: 0,
         table: None,
         row: Vec::new(),
