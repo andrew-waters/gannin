@@ -17,6 +17,10 @@ use std::sync::{Mutex, OnceLock};
 /// The renderer, pinned so every Mac draws the same.
 const CLI: &str = "@mermaid-js/mermaid-cli@11.4.2";
 
+/// How many pixels a point: high enough to stay sharp when a diagram's
+/// enlarged to fill the panel.
+const SCALE: u32 = 4;
+
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn drawing() -> &'static Mutex<HashSet<String>> {
@@ -32,6 +36,7 @@ fn key(source: &str, dark: bool) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     CLI.hash(&mut hasher);
+    SCALE.hash(&mut hasher);
     dark.hash(&mut hasher);
     source.trim().hash(&mut hasher);
     format!("{:016x}", hasher.finish())
@@ -43,7 +48,7 @@ pub fn generation() -> u64 {
 }
 
 pub enum Diagram {
-    /// The PNG, and its size in points (drawn at twice that).
+    /// The PNG, and its size in points (drawn at `SCALE` times that).
     Drawn(PathBuf, f32, f32),
     Drawing,
     Failed(String),
@@ -56,7 +61,7 @@ pub fn diagram(source: &str, dark: bool) -> Diagram {
     let key = key(source, dark);
     let png = dir().join(format!("{key}.png"));
     if let Some((w, h)) = png_size(&png) {
-        return Diagram::Drawn(png, w as f32 / 2.0, h as f32 / 2.0);
+        return Diagram::Drawn(png, w as f32 / SCALE as f32, h as f32 / SCALE as f32);
     }
     if let Ok(error) = std::fs::read_to_string(dir().join(format!("{key}.err"))) {
         return Diagram::Failed(error);
@@ -98,7 +103,7 @@ fn draw(key: &str, source: &str, dark: bool) -> Result<(), String> {
     std::fs::write(&input, source).map_err(|e| e.to_string())?;
     let quote = |p: &std::path::Path| format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"));
     let line = format!(
-        "command -v npx >/dev/null 2>&1 || {{ echo 'Drawing diagrams needs Node (npx), which isn'\"'\"'t on this Mac.' >&2; exit 127; }}; npx -y {CLI} -q -i {} -o {} {} -s 2",
+        "command -v npx >/dev/null 2>&1 || {{ echo 'Drawing diagrams needs Node (npx), which isn'\"'\"'t on this Mac.' >&2; exit 127; }}; npx -y {CLI} -q -i {} -o {} {} -s {SCALE}",
         quote(&input),
         quote(&partial),
         if dark { "-t dark -b transparent" } else { "-t default -b white" }

@@ -933,7 +933,7 @@ impl Render for PlanningPanel {
                         .border_b_1()
                         .border_color(theme.border)
                         .child(div().flex_1().min_w_0().font_weight(FontWeight::MEDIUM).truncate().child(big.title.clone()))
-                        .child(button("plan-diagram-size", if big.fit { "Full Size" } else { "Fit Width" }, false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        .child(button("plan-diagram-size", if big.fit { "Actual Size" } else { "Fit Width" }, false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             if let Some(big) = this.enlarged.as_mut() {
                                 big.fit = !big.fit;
                             }
@@ -948,8 +948,7 @@ impl Render for PlanningPanel {
                 // Pinned inside the card, so it's fitted to the space rather
                 // than drawn at its own size.
                 .child(if big.fit {
-                    // As wide as the panel (never wider than it's drawn),
-                    // scrolling down a tall one.
+                    // As wide as the panel, scrolling down a tall one.
                     let (w, h) = big.size;
                     div()
                         .id("plan-diagram-fit")
@@ -964,7 +963,6 @@ impl Render for PlanningPanel {
                                 div()
                                     .relative()
                                     .w_full()
-                                    .max_w(px(w))
                                     .aspect_ratio(w / h.max(1.))
                                     .child(gpui::img(big.path.clone()).absolute().top_0().left_0().size_full().object_fit(gpui::ObjectFit::Contain)),
                             ),
