@@ -130,25 +130,40 @@ pub fn slide(slide: Slide, ctx: &Context, theme: &Theme) -> gpui::AnyElement {
             let journey = s.shape.flows.iter().find(|f| !f.kind.eq_ignore_ascii_case("process")).or(s.shape.flows.first());
             col.when_some(journey, |d, f| d.child(label(&format!("{} {}", f.id, f.title), theme)).child(diagram("recap-flow", &format!("{} {}", f.id, f.title), &f.diagram, theme, ctx.panel)))
                 .when(s.shape.flows.len() > 1, |d| d.child(div().text_sm().text_color(theme.secondary).child(format!("And {} more flow{}: {}.", s.shape.flows.len() - 1, if s.shape.flows.len() == 2 { "" } else { "s" }, s.shape.flows.iter().filter(|f| Some(*f) != journey).map(|f| f.title.clone()).collect::<Vec<_>>().join(", ")))))
+                // Each screen at its own size, down the slide (narrowed to fit
+                // a wide one); click for it large, with the keys between them.
                 .when(!s.shape.screens.is_empty(), |d| {
-                    d.child(label("Screens", theme)).child(div().flex().flex_row().flex_wrap().gap_3().children(s.shape.screens.iter().map(|sc| {
+                    d.child(label("Screens", theme)).child(div().flex().flex_col().gap_6().children(s.shape.screens.iter().map(|sc| {
+                        let panel = ctx.panel.clone();
+                        let id = sc.id.clone();
                         div()
-                            .w(px(240.))
                             .flex()
                             .flex_col()
-                            .gap_1()
+                            .gap_1p5()
+                            .child(div().flex().flex_row().gap_2().items_center().child(div().text_lg().font_weight(FontWeight::MEDIUM).child(format!("{} {}", sc.id, sc.title))).when(!sc.criteria.is_empty(), |d| d.child(div().text_sm().text_color(theme.selected).child(sc.criteria.join(", ")))))
                             .child(match sc.image_path() {
-                                Some(path) => div()
-                                    .h(px(150.))
-                                    .relative()
-                                    .overflow_hidden()
-                                    .rounded_md()
-                                    .bg(gpui::white())
-                                    .child(gpui::img(ctx.folder.join(path)).absolute().top_0().left_0().right_0().bottom_0().object_fit(gpui::ObjectFit::Contain))
-                                    .into_any_element(),
-                                None => div().h(px(150.)).p_2().rounded_md().bg(theme.tile).text_xs().overflow_hidden().child(if sc.wireframe.is_empty() { "Not drawn".to_string() } else { sc.wireframe.clone() }).into_any_element(),
+                                Some(path) => {
+                                    let path = ctx.folder.join(path);
+                                    let (w, h) = crate::mermaid::image_size(&path).unwrap_or((960., 600.));
+                                    div()
+                                        .id(SharedString::from(format!("recap-screen-{}", sc.id)))
+                                        .relative()
+                                        .w_full()
+                                        .max_w(px(w))
+                                        .aspect_ratio(w / h.max(1.))
+                                        .rounded_md()
+                                        .overflow_hidden()
+                                        .bg(gpui::white())
+                                        .cursor_pointer()
+                                        .on_click(move |_, window, cx| {
+                                            let _ = panel.update(cx, |this, cx| this.open_screen(&id, window, cx));
+                                        })
+                                        .child(gpui::img(path).absolute().top_0().left_0().size_full().object_fit(gpui::ObjectFit::Contain))
+                                        .into_any_element()
+                                }
+                                None if sc.wireframe.trim().is_empty() => div().text_sm().text_color(theme.secondary).child("Not drawn.").into_any_element(),
+                                None => div().p_3().rounded_md().bg(theme.tile).text_sm().child(sc.wireframe.clone()).into_any_element(),
                             })
-                            .child(div().text_sm().child(format!("{} {}", sc.id, sc.title)))
                     })))
                 })
                 .into_any_element()

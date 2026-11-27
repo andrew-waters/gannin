@@ -998,7 +998,7 @@ impl PlanningPanel {
     /// Opens a screen: large in the panel when it's drawn (keys moving
     /// between screens), else in place above the gallery. Comments go
     /// about it either way.
-    fn open_screen(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_screen(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(screen) = self.state.as_ref().and_then(|s| s.shape.screens.iter().find(|x| x.id == id)).cloned() else { return };
         self.screen = Some(screen.id.clone());
         self.enlarged = screen.image_path().map(|path| {
