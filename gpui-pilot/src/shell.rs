@@ -191,6 +191,7 @@ fn sections() -> Vec<Section> {
             rows: vec![
                 Item(PullRequests),
                 Item(Issues),
+                Item(Planning),
                 // Item(Epics),
                 // Item(Repositories),
                 // Group(Projects, vec![]),
@@ -231,7 +232,7 @@ fn sections() -> Vec<Section> {
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
         // Claude Code's agents: the workflows sessions run through.
-        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview), Item(Planning)] },
+        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview)] },
     ]
 }
 

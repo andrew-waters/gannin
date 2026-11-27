@@ -1,4 +1,4 @@
-//! Agents › Planning: the org's planning sessions on this Mac (or this
+//! Work › Planning: the org's planning sessions on this Mac (or this
 //! window's server), newest first, each with the stage it's on and whether
 //! the room has agreed it. A row opens its session (claude resuming); New
 //! starts one; Try the Preview opens the made-up plan, which calls nothing.
