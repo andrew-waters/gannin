@@ -147,6 +147,7 @@ impl PlanningPanel {
                     }
                     if this.claude != claude {
                         this.claude = claude;
+                        this.thread_scroll.scroll_to_bottom();
                         cx.notify();
                     }
                     // Back after a restart: claude's idle again, so ask it to
@@ -175,12 +176,14 @@ impl PlanningPanel {
                     };
                     if this.permission != permission {
                         this.permission = permission;
+                        this.thread_scroll.scroll_to_bottom();
                         cx.notify();
                     }
                     let changed_question = this.questions.iter().map(|q| &q.question).ne(question.iter().map(|q| &q.question));
                     if changed_question {
                         this.picked = vec![Vec::new(); question.len()];
                         this.questions = question;
+                        this.thread_scroll.scroll_to_bottom();
                     }
                     if state.is_some() && this.state != state {
                         // Claude took the plan back: what it went back to and
@@ -346,6 +349,7 @@ impl PlanningPanel {
         let waiting = self.launch.state().as_deref() == Some("needs-you");
         // Straight to Claude at work: what was asked is answered.
         self.awaiting = Some((self.questions.iter().map(|q| q.question.clone()).collect(), std::time::Instant::now()));
+        self.thread_scroll.scroll_to_bottom();
         self.claude = Some("working".into());
         self.questions.clear();
         self.picked.clear();
@@ -804,11 +808,62 @@ impl PlanningPanel {
                                 } else {
                                     div().px_3().py_2().rounded_lg().bg(theme.tile).text_sm().child(rich(&format!("plan-thread-{i}"), text, theme, &panel)).into_any_element()
                                 })
-                        })),
+                        }))
+                        // What's happening now, at the foot of the thread.
+                        .children(self.live(theme, cx)),
                 )
                 .when(self.composer_in_thread(), |d| d.child(div().flex_none().p_3().border_t_1().border_color(theme.border).child(self.composer(theme, cx))))
                 .into_any_element(),
         )
+    }
+
+    /// The foot of the conversation, now: what Claude's doing (a spinner
+    /// while it thinks), or what it's waiting on (a question, a permission,
+    /// a stage to go back to).
+    fn live(&self, theme: &Theme, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let mut out = Vec::new();
+        let bubble = |text: String| -> gpui::AnyElement {
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .pr(px(28.))
+                .child(div().text_xs().text_color(theme.secondary).child("Claude"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .rounded_lg()
+                        .bg(theme.tile)
+                        .child(spinner("plan-live-spinner", px(12.), theme.selected))
+                        .child(div().flex_1().min_w_0().text_sm().text_color(theme.secondary).child(text)),
+                )
+                .into_any_element()
+        };
+        if self.reviewing {
+            out.push(bubble(format!("{} is reviewing the shape and the design for security", security::model_name(self.review_model))));
+        }
+        if let Some(card) = self.permission_box(theme, cx) {
+            out.push(card);
+        } else if !self.questions.is_empty() {
+            out.push(self.question_box(theme, cx));
+        } else if let Some(asked) = self.state.as_ref().and_then(|s| self.back_request(s, theme, cx)) {
+            out.push(asked);
+        } else if self.awaiting.is_some() {
+            out.push(bubble("Taking in what the room said".into()));
+        } else if matches!(self.claude.as_deref(), Some("working") | Some("starting") | None) {
+            let text = match (self.claude.as_deref(), self.state.as_ref().and_then(|s| s.scouting_now.as_ref())) {
+                (Some("working"), Some(s)) => format!("Reading the code: {}", s.why),
+                (Some("working"), None) => format!("Working on {}", self.stage().title().to_lowercase()),
+                _ => "Starting the session".into(),
+            };
+            out.push(bubble(text));
+        }
+        out
     }
 
     /// Opens a screen: large in the panel when it's drawn (keys moving
@@ -1469,6 +1524,10 @@ impl Render for PlanningPanel {
                             })))
                             .into_any_element(),
                     )
+                } else if self.composer_in_thread() {
+                    // The conversation has it all: questions, permissions,
+                    // what Claude's doing.
+                    None
                 } else {
                     if self.awaiting.is_some() && self.questions.is_empty() {
                         Some(self.taking(&theme))
@@ -1663,7 +1722,7 @@ fn watch_said(claude_id: String, cx: &mut Context<PlanningPanel>) -> Task<()> {
                     if modified.is_none() || modified == before {
                         return (modified, None);
                     }
-                    let lines = crate::marra_mcp::transcript_messages(&id, 400).unwrap_or_default();
+                    let lines = crate::marra_mcp::transcript_since(&id, None, 400, 20_000).unwrap_or_default();
                     // The words after the room last spoke.
                     let after = lines.iter().rposition(|(who, _)| who == "User").map(|i| i + 1).unwrap_or(0);
                     let said: Vec<String> = lines[after..].iter().filter(|(who, _)| who == "Claude").map(|(_, t)| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
