@@ -73,6 +73,9 @@ pub struct PlanningPanel {
     /// room's turn, so nobody needs the terminal to know what it wants.
     last_said: Option<String>,
     _said: Task<()>,
+    /// A permission claude's waiting on in the terminal: the tool, what
+    /// it's for, and the terminal's own choices ("1. Yes").
+    permission: Option<(String, String, Vec<String>)>,
 }
 
 /// A diagram opened in the panel: what it's of, and its picture.
@@ -142,6 +145,22 @@ impl PlanningPanel {
                             this.send_now(message.to_string(), cx);
                         }
                     }
+                    // Waiting with no question: a permission, with the
+                    // choices the terminal shows.
+                    let permission = match (this.claude.as_deref(), question.is_empty(), &this.terminal) {
+                        (Some("needs-you"), true, Some(terminal)) => {
+                            let screen = terminal.read(cx).get_content();
+                            match crate::work_live::ask(&this.dir, &screen) {
+                                crate::work_panel::Ask::Permission { tool, text, choices } => Some((tool, text, choices)),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    if this.permission != permission {
+                        this.permission = permission;
+                        cx.notify();
+                    }
                     let changed_question = this.questions.iter().map(|q| &q.question).ne(question.iter().map(|q| &q.question));
                     if changed_question {
                         this.picked = vec![Vec::new(); question.len()];
@@ -202,6 +221,7 @@ impl PlanningPanel {
             _diagrams: watch_diagrams(cx),
             enlarged: None,
             last_said: None,
+            permission: None,
         }
     }
 
@@ -245,6 +265,7 @@ impl PlanningPanel {
             _diagrams: watch_diagrams(cx),
             enlarged: None,
             last_said: None,
+            permission: None,
         }
     }
 
@@ -649,6 +670,57 @@ impl PlanningPanel {
         )
     }
 
+    /// A key to claude's terminal, answering its permission prompt: a
+    /// choice's digit, or Esc (`CSI 27 u`, as claude's keyboard mode wants)
+    /// to deny. Then straight to Claude at work.
+    fn press(&mut self, key: Vec<u8>, cx: &mut Context<Self>) {
+        let Some(terminal) = self.terminal.clone() else { return };
+        terminal.update(cx, |t, _| t.input(key));
+        self.permission = None;
+        self.awaiting = Some((Vec::new(), std::time::Instant::now()));
+        self.claude = Some("working".into());
+        cx.notify();
+    }
+
+    /// Claude asking permission in the terminal, with its choices as
+    /// buttons, as the Work panel shows it.
+    fn permission_box(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let (tool, text, choices) = self.permission.clone()?;
+        let title = match tool.as_str() {
+            "Bash" => "Claude wants to run a command".to_string(),
+            "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => "Claude wants to change a file".to_string(),
+            "WebFetch" | "WebSearch" => "Claude wants to go online".to_string(),
+            "" => "Claude needs your permission".to_string(),
+            other => format!("Claude wants to use {other}"),
+        };
+        let buttons = div().flex().flex_row().flex_wrap().justify_end().gap_1p5().child(button("plan-perm-deny", "Deny", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.press(b"\x1b[27u".to_vec(), cx)))).map(|row| {
+            if choices.is_empty() {
+                row.child(button("plan-perm-allow", "Allow", true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.press(b"\r".to_vec(), cx))))
+            } else {
+                row.children(choices.iter().enumerate().rev().map(|(i, c)| {
+                    let digit = c.chars().next().filter(|d| d.is_ascii_digit()).unwrap_or('1');
+                    let label = c.split_once(". ").map(|(_, l)| l.to_string()).unwrap_or_else(|| c.clone());
+                    button(SharedString::from(format!("plan-perm-{i}")), label, i == 0, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.press(digit.to_string().into_bytes(), cx)))
+                }))
+            }
+        });
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.orange().opacity(0.6))
+                .bg(theme.orange().opacity(0.08))
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.orange()).child(title))
+                .child(div().p_2().rounded_md().bg(theme.bg).font_family("SF Mono").text_xs().child(text))
+                .child(buttons)
+                .into_any_element(),
+        )
+    }
+
     /// The room's just answered: Claude's taking it in.
     fn taking(&self, theme: &Theme) -> gpui::AnyElement {
         div()
@@ -682,6 +754,7 @@ impl PlanningPanel {
                     None if self.state.is_none() => ("Claude is reading the topic and what was shared".into(), true, theme.selected),
                     None => (format!("Claude is working on {stage}"), true, theme.selected),
                 },
+                Some("needs-you") if self.permission.is_some() => ("Claude needs permission".into(), false, theme.orange()),
                 Some("needs-you") => ("Claude is waiting for the room".into(), false, theme.orange()),
                 Some("exited") => ("Claude Code has stopped: resume it in the terminal".into(), false, theme.critical()),
                 Some(_) => ("The room's turn".into(), false, theme.secondary),
@@ -1103,7 +1176,9 @@ impl Render for PlanningPanel {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .children(if !self.questions.is_empty() {
+                .children(if let Some(card) = self.permission_box(&theme, cx) {
+                    Some(card)
+                } else if !self.questions.is_empty() {
                     Some(self.question_box(&theme, cx))
                 } else if self.awaiting.is_some() {
                     Some(self.taking(&theme))
@@ -1134,6 +1209,8 @@ impl Render for PlanningPanel {
                 } else {
                     if self.awaiting.is_some() && self.questions.is_empty() {
                         Some(self.taking(&theme))
+                    } else if let Some(card) = self.permission_box(&theme, cx) {
+                        Some(card)
                     } else if let Some(asked) = self.back_request(state, &theme, cx) {
                         Some(asked)
                     } else if self.questions.is_empty() {
