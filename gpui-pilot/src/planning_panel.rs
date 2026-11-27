@@ -65,6 +65,8 @@ pub struct PlanningPanel {
     /// asked to pick up, since a resumed claude doesn't ask again itself.
     resumed_from: Option<String>,
     _poll: Task<()>,
+    /// Redraws when a diagram's been drawn.
+    _diagrams: Task<()>,
 }
 
 impl PlanningPanel {
@@ -177,6 +179,7 @@ impl PlanningPanel {
             awaiting: None,
             resumed_from,
             _poll: poll,
+            _diagrams: watch_diagrams(cx),
         }
     }
 
@@ -216,6 +219,7 @@ impl PlanningPanel {
             awaiting: None,
             resumed_from: None,
             _poll: Task::ready(()),
+            _diagrams: watch_diagrams(cx),
         }
     }
 
@@ -616,20 +620,24 @@ impl PlanningPanel {
     /// and the room's comments go to claude about it.
     fn shape_view(&self, state: &State, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let shape = &state.shape;
-        let yes_no = |v: Option<bool>| match v {
-            Some(true) => "yes",
-            Some(false) => "no",
-            None => "not checked",
-        };
-        let tools = if shape.tools.checked() {
-            let mut line = format!("This machine: Node {}, a headless browser {}.", yes_no(shape.tools.node), yes_no(shape.tools.browser));
-            if shape.tools.browser != Some(true) {
-                line.push_str(" Screens are wireframes Claude draws, not screenshots of a running mock.");
-            }
-            Some(line)
-        } else {
-            None
-        };
+        // Only what's missing, called out: with everything there, nothing.
+        let missing: Vec<&str> = [(shape.tools.node == Some(false), "Node"), (shape.tools.browser == Some(false), "a headless browser")].into_iter().filter(|(m, _)| *m).map(|(_, n)| n).collect();
+        let tools = (!missing.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.orange().opacity(0.6))
+                .bg(theme.orange().opacity(0.08))
+                .child(div().text_sm().text_color(theme.orange()).child(format!(
+                    "The machine running this session has no {}, so the screens are wireframes Claude draws, not screenshots of a running mock.",
+                    missing.join(" and no ")
+                )))
+                .when(!shape.tools.note.is_empty(), |d| d.child(div().text_xs().text_color(theme.secondary).child(shape.tools.note.clone())))
+        });
         let mock = (shape.mock.kind.eq_ignore_ascii_case("running") && !shape.mock.branch.is_empty()).then(|| {
             let url = shape.mock.url.clone();
             div()
@@ -665,7 +673,7 @@ impl PlanningPanel {
                         .when(!f.kind.is_empty(), |d| d.child(div().text_xs().text_color(theme.secondary).child(if f.kind.eq_ignore_ascii_case("process") { "System process" } else { "User journey" })))
                         .child(chips(&f.criteria)),
                 )
-                .when(!f.diagram.trim().is_empty(), |d| d.child(markdown(&format!("plan-flow-{i}"), &format!("```mermaid\n{}\n```", f.diagram.trim()), theme)))
+                .when(!f.diagram.trim().is_empty(), |d| d.child(diagram(&format!("plan-flow-{i}"), &f.diagram, theme)))
         });
         let open = self.screen.as_ref().and_then(|id| shape.screens.iter().find(|s| &s.id == id));
         let large = open.map(|s| {
@@ -727,8 +735,7 @@ impl PlanningPanel {
             .flex()
             .flex_col()
             .gap_1()
-            .children(tools.map(|t| quiet(t, theme)))
-            .when(!shape.tools.note.is_empty(), |d| d.child(quiet(shape.tools.note.clone(), theme)))
+            .children(tools)
             .children(mock)
             .when(!shape.flows.is_empty(), |d| d.child(heading("Flows", theme)).children(flows))
             .when(!shape.screens.is_empty(), |d| d.child(heading("Screens", theme)).children(large).child(div().flex().flex_row().flex_wrap().gap_2().children(cards)))
@@ -1112,6 +1119,80 @@ impl Render for PlanningPanel {
     }
 }
 
+/// Notifies the view each time a diagram finishes drawing.
+fn watch_diagrams(cx: &mut Context<PlanningPanel>) -> Task<()> {
+    cx.spawn(async move |this, cx| {
+        let mut seen = crate::mermaid::generation();
+        loop {
+            cx.background_executor().timer(Duration::from_millis(800)).await;
+            let now = crate::mermaid::generation();
+            if now != seen {
+                seen = now;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            }
+        }
+    })
+}
+
+/// A Mermaid diagram, drawn (click to open it full size), being drawn,
+/// or its source with why it couldn't be.
+fn diagram(id: &str, source: &str, theme: &Theme) -> gpui::AnyElement {
+    let code = |key: &str| markdown(&format!("{id}-{key}"), &format!("```mermaid\n{}\n```", source.trim()), theme);
+    match crate::mermaid::diagram(source) {
+        crate::mermaid::Diagram::Drawn(path, w, h) => {
+            let url = format!("file://{}", path.display());
+            div()
+                .id(SharedString::from(format!("{id}-drawn")))
+                .flex()
+                .flex_row()
+                .p_2()
+                .rounded_md()
+                .bg(gpui::white())
+                .cursor_pointer()
+                .on_click(move |_, _, cx| cx.open_url(&url))
+                .child(gpui::img(path).w(px(w)).h(px(h)).max_w_full().object_fit(gpui::ObjectFit::Contain))
+                .into_any_element()
+        }
+        crate::mermaid::Diagram::Drawing => div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().flex().flex_row().items_center().gap_1p5().text_xs().text_color(theme.secondary).child(spinner_keyed(SharedString::from(format!("{id}-spin")), px(11.), theme.secondary)).child("Drawing the diagram (the first one takes a minute)"))
+            .child(code("code"))
+            .into_any_element(),
+        crate::mermaid::Diagram::Failed(why) => {
+            let source = source.to_string();
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1().min_w_0().text_xs().text_color(theme.orange()).child(format!("Couldn't draw it: {why}")))
+                        .child(button(SharedString::from(format!("{id}-retry")), "Try Again", false, theme).on_click(move |_, _, _| crate::mermaid::retry(&source))),
+                )
+                .child(code("code"))
+                .into_any_element()
+        }
+    }
+}
+
+fn spinner_keyed(id: SharedString, size: gpui::Pixels, tint: gpui::Hsla) -> gpui::AnyElement {
+    gpui::svg()
+        .path("icons/arrow_circle.svg")
+        .size(size)
+        .flex_none()
+        .text_color(tint)
+        .with_animation(id, Animation::new(Duration::from_millis(1200)).repeat(), |svg, delta| svg.with_transformation(Transformation::rotate(gpui::percentage(delta))))
+        .into_any_element()
+}
+
 fn spinner(id: &'static str, size: gpui::Pixels, tint: gpui::Hsla) -> gpui::AnyElement {
     gpui::svg()
         .path("icons/arrow_circle.svg")
@@ -1229,7 +1310,7 @@ fn architecture(i: usize, a: &planning::ArchChange, theme: &Theme) -> gpui::Div 
                 .when(a.new, |d| d.child(div().px_1p5().rounded_md().text_xs().bg(theme.tile).child("New"))),
         )
         .when(!a.note.is_empty(), |d| d.child(div().text_sm().child(a.note.clone())))
-        .when(!a.diagram.trim().is_empty(), |d| d.child(markdown(&format!("plan-architecture-{i}"), &format!("```mermaid\n{}\n```", a.diagram.trim()), theme)))
+        .when(!a.diagram.trim().is_empty(), |d| d.child(diagram(&format!("plan-architecture-{i}"), &a.diagram, theme)))
 }
 
 fn finding(i: usize, f: &planning::Finding, theme: &Theme) -> gpui::Div {

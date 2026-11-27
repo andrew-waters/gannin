@@ -37,6 +37,7 @@ mod marra_api;
 mod marra_mcp;
 mod marra_model;
 mod marra_view;
+mod mermaid;
 mod metrics;
 mod new_issue;
 mod note_editor;
