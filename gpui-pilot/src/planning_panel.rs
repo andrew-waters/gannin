@@ -84,6 +84,12 @@ pub struct PlanningPanel {
     info: Option<String>,
     /// Takes the arrow keys while a screen's open large.
     focus: gpui::FocusHandle,
+    /// The whole conversation, from claude's transcript: (the room said
+    /// it, the words), oldest first.
+    thread: Vec<(bool, String)>,
+    thread_scroll: gpui::ScrollHandle,
+    /// The conversation as a third column.
+    show_thread: bool,
 }
 
 /// A diagram opened in the panel: what it's of, and its picture.
@@ -249,6 +255,9 @@ impl PlanningPanel {
             last_stage: None,
             info: None,
             focus: cx.focus_handle(),
+            thread: Vec::new(),
+            thread_scroll: gpui::ScrollHandle::new(),
+            show_thread: true,
         }
     }
 
@@ -296,6 +305,9 @@ impl PlanningPanel {
             last_stage: None,
             info: None,
             focus: cx.focus_handle(),
+            thread: Vec::new(),
+            thread_scroll: gpui::ScrollHandle::new(),
+            show_thread: true,
         }
     }
 
@@ -695,6 +707,68 @@ impl PlanningPanel {
                 .child(div().text_xs().text_color(theme.secondary).child("Claude says"))
                 .child(rich("plan-last-said", &text, theme, panel))
                 .child(div().text_xs().text_color(theme.tertiary).child("Answer below, or use the buttons."))
+                .into_any_element(),
+        )
+    }
+
+    /// Shows or hides the conversation column.
+    fn thread_toggle(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        (!self.preview).then(|| {
+            button("plan-thread-toggle", if self.show_thread { "Hide Conversation" } else { "Conversation" }, false, theme)
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.show_thread = !this.show_thread;
+                    if this.show_thread {
+                        this.thread_scroll.scroll_to_bottom();
+                    }
+                    cx.notify();
+                }))
+                .into_any_element()
+        })
+    }
+
+    /// The room and Claude, as one thread, newest at the bottom.
+    fn thread_view(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if !self.show_thread || self.preview {
+            return None;
+        }
+        let panel = cx.entity().downgrade();
+        Some(
+            div()
+                .w(relative(0.27))
+                .flex_none()
+                .h_full()
+                .flex()
+                .flex_col()
+                .border_l_1()
+                .border_color(theme.border)
+                .child(div().flex_none().px_4().pt_4().pb_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.tertiary).child("CONVERSATION"))
+                .child(
+                    div()
+                        .id("plan-thread")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.thread_scroll)
+                        .px_4()
+                        .pb_4()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .when(self.thread.is_empty(), |d| d.child(quiet("The room and Claude's conversation shows here.".into(), theme)))
+                        .children(self.thread.iter().enumerate().map(|(i, (room, text))| {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_0p5()
+                                .when(*room, |d| d.pl(px(24.)))
+                                .child(div().text_xs().text_color(if *room { theme.selected } else { theme.secondary }).child(if *room { "The room" } else { "Claude" }))
+                                .child(if *room {
+                                    div().p_2().rounded_md().bg(theme.selected.opacity(0.1)).text_sm().child(text.clone()).into_any_element()
+                                } else {
+                                    div().text_sm().child(rich(&format!("plan-thread-{i}"), text, theme, &panel)).into_any_element()
+                                })
+                        })),
+                )
                 .into_any_element(),
         )
     }
@@ -1211,7 +1285,7 @@ impl Render for PlanningPanel {
                 .flex_col()
                 .bg(theme.bg)
                 .text_color(theme.fg)
-                .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_none().child(stepper)).children(self.activity(&theme)))
+                .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_none().child(stepper)).children(self.activity(&theme)).children(self.thread_toggle(&theme, cx)))
                 .child(div().flex_1().min_w_0().min_h_0().child(view.clone()))
                 .into_any_element();
         }
@@ -1400,7 +1474,8 @@ impl Render for PlanningPanel {
                     .border_color(theme.border)
                     .bg(theme.sidebar)
                     .child(spec_view(state, shown, &self.approvals, &theme));
-                div().flex_1().min_w_0().min_h_0().flex().flex_row().child(left).child(right).into_any_element()
+                let right = right.w(relative(if self.show_thread { 0.3 } else { 0.38 }));
+                div().flex_1().min_w_0().min_h_0().flex().flex_row().child(left).child(right).children(self.thread_view(&theme, cx)).into_any_element()
             }
         } };
 
@@ -1500,7 +1575,7 @@ impl Render for PlanningPanel {
             .flex_col()
             .bg(theme.bg)
             .text_color(theme.fg)
-            .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_none().child(stepper)).children(self.activity(&theme)))
+            .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_none().child(stepper)).children(self.activity(&theme)).children(self.thread_toggle(&theme, cx)))
             .children(strip)
             .child(body)
             .child(
@@ -1572,19 +1647,39 @@ fn watch_said(claude_id: String, cx: &mut Context<PlanningPanel>) -> Task<()> {
                     if modified.is_none() || modified == before {
                         return (modified, None);
                     }
-                    // The words after the room last spoke, joined.
-                    let lines = crate::marra_mcp::transcript_messages(&id, 30).unwrap_or_default();
+                    let lines = crate::marra_mcp::transcript_messages(&id, 400).unwrap_or_default();
+                    // The words after the room last spoke.
                     let after = lines.iter().rposition(|(who, _)| who == "User").map(|i| i + 1).unwrap_or(0);
                     let said: Vec<String> = lines[after..].iter().filter(|(who, _)| who == "Claude").map(|(_, t)| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
-                    (modified, Some(said.last().cloned()))
+                    // The conversation: the room and Claude, not its tools.
+                    let thread: Vec<(bool, String)> = lines
+                        .iter()
+                        .filter(|(who, text)| (who == "User" || who == "Claude") && !text.trim().is_empty())
+                        .map(|(who, text)| {
+                            let room = who == "User";
+                            // The brief that started it, kept short.
+                            let text = if room && text.contains("This is a live planning session") {
+                                "(The planning brief Gannin started the session with.)".to_string()
+                            } else {
+                                text.trim().to_string()
+                            };
+                            (room, text)
+                        })
+                        .collect();
+                    (modified, Some((said.last().cloned(), thread)))
                 })
                 .await;
             seen = modified;
-            if let Some(said) = said {
+            if let Some((said, thread)) = said {
                 if this
                     .update(cx, |this, cx| {
                         if this.last_said != said {
                             this.last_said = said;
+                            cx.notify();
+                        }
+                        if this.thread != thread {
+                            this.thread = thread;
+                            this.thread_scroll.scroll_to_bottom();
                             cx.notify();
                         }
                     })
