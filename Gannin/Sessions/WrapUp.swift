@@ -463,7 +463,7 @@ struct WrapUpSessionSheet: View {
         var text = "Keep Running closes the tab and leaves claude working; find it again under Agents. "
             + "Stop Claude ends it and its helpers but keeps the worktrees, so opening it again carries on the conversation."
         if finished {
-            text += " Every pull request is merged, so Finish and Clean Up removes the worktrees and marks it done."
+            text += " Every pull request is merged or closed, so Finish and Clean Up removes the worktrees and marks it done."
         }
         return text
     }

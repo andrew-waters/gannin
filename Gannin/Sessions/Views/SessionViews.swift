@@ -2389,7 +2389,7 @@ struct SessionSettingsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Ask to wrap up when closing a session's tab", isOn: $wrapsUp)
-            Text("Closing the tab of an issue's session while claude runs shows its pull requests, what isn't pushed and its plans and requirements to tick off, then leaves it running, ends it or, once every PR is merged, finishes it.")
+            Text("Closing the tab of an issue's session while claude runs shows its pull requests, what isn't pushed and its plans and requirements to tick off, then leaves it running, ends it or, once every PR is merged or closed, finishes it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Show in the menu bar", isOn: $showsMenuBar)
