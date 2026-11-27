@@ -441,7 +441,7 @@ struct WrapUpSessionSheet: View {
                     .help("Keep the tab open")
                 if finished {
                     Button("Finish and Clean Up…") { confirmingFinish = true }
-                        .help("Every pull request is merged: end claude, remove its worktrees and mark it finished in the harness")
+                        .help("Every pull request is merged or closed: end claude, remove its worktrees and mark it finished in the harness")
                 }
                 Button("Stop Claude") {
                     sessions.wrappingUp = nil

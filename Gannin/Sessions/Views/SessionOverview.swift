@@ -191,7 +191,7 @@ struct SessionFinishSection: View {
         if !session.isHelper, !session.isAsk, finished || stale {
             Section {
                 Text(finished
-                     ? "Every pull request from this session is merged, so its worktrees can go."
+                     ? "Every pull request from this session is merged or closed, so its worktrees can go."
                      : "Nothing's happened in this session for over three days. Finish it to remove its worktrees, or leave it be.")
                     .font(.callout)
                 HStack {

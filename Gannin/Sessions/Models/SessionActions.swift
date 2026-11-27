@@ -628,10 +628,10 @@ extension SessionStore {
         return -last.timeIntervalSinceNow > 3 * 24 * 60 * 60
     }
 
-    /// Whether every PR the session has is merged, so it can be finished.
+    /// Whether every PR the session has is merged or closed, so it can be finished.
     func isFinished(_ id: UUID) -> Bool {
         guard let pullRequests = pullRequestInfo[id], !pullRequests.isEmpty else { return false }
-        return pullRequests.allSatisfy { $0.state == "MERGED" }
+        return pullRequests.allSatisfy { $0.state == "MERGED" || $0.state == "CLOSED" }
     }
 
     /// Ends the session and its helpers, removes its worktrees and the
