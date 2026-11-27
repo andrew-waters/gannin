@@ -82,6 +82,8 @@ pub struct PlanningPanel {
     /// What Gannin has to tell the room, not an error: why claude took
     /// the plan back.
     info: Option<String>,
+    /// Takes the arrow keys while a screen's open large.
+    focus: gpui::FocusHandle,
 }
 
 /// A diagram opened in the panel: what it's of, and its picture.
@@ -246,6 +248,7 @@ impl PlanningPanel {
             permission: None,
             last_stage: None,
             info: None,
+            focus: cx.focus_handle(),
         }
     }
 
@@ -292,6 +295,7 @@ impl PlanningPanel {
             permission: None,
             last_stage: None,
             info: None,
+            focus: cx.focus_handle(),
         }
     }
 
@@ -695,6 +699,79 @@ impl PlanningPanel {
         )
     }
 
+    /// Opens a screen: large in the panel when it's drawn (keys moving
+    /// between screens), else in place above the gallery. Comments go
+    /// about it either way.
+    fn open_screen(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(screen) = self.state.as_ref().and_then(|s| s.shape.screens.iter().find(|x| x.id == id)).cloned() else { return };
+        self.screen = Some(screen.id.clone());
+        self.enlarged = screen.image_path().map(|path| {
+            let path = self.folder.join(path);
+            let fit = self.enlarged.as_ref().map(|e| e.fit).unwrap_or(true);
+            Enlarged { title: format!("{} {}", screen.id, screen.title), size: crate::mermaid::image_size(&path).unwrap_or((960., 600.)), path, fit, screen: Some(screen.id.clone()) }
+        });
+        if self.enlarged.is_some() {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// The next drawn screen (`step` 1) or the one before (-1), wrapping.
+    fn step_screen(&mut self, step: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let drawn: Vec<String> = self.state.as_ref().map(|s| s.shape.screens.iter().filter(|x| x.image_path().is_some()).map(|x| x.id.clone()).collect()).unwrap_or_default();
+        if drawn.is_empty() {
+            return;
+        }
+        let at = self.screen.as_ref().and_then(|id| drawn.iter().position(|d| d == id)).unwrap_or(0) as i32;
+        let next = (at + step).rem_euclid(drawn.len() as i32) as usize;
+        let id = drawn[next].clone();
+        self.open_screen(&id, window, cx);
+    }
+
+    /// The drawn screens as thumbnails under one that's open large.
+    fn screen_strip(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let screens: Vec<planning::Screen> = self.state.as_ref()?.shape.screens.iter().filter(|s| s.image_path().is_some()).cloned().collect();
+        (screens.len() > 1).then(|| {
+            div()
+                .id("plan-screen-strip")
+                .flex_none()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .px_3()
+                .pb_3()
+                .overflow_x_scroll()
+                .children(screens.into_iter().map(|s| {
+                    let on = self.screen.as_deref() == Some(s.id.as_str());
+                    let id = s.id.clone();
+                    div()
+                        .id(SharedString::from(format!("plan-strip-{}", s.id)))
+                        .flex_none()
+                        .w(px(132.))
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .p_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(if on { theme.selected } else { theme.border })
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_screen(&id, window, cx)))
+                        .child(
+                            div()
+                                .h(px(72.))
+                                .relative()
+                                .overflow_hidden()
+                                .rounded_sm()
+                                .bg(gpui::white())
+                                .child(gpui::img(self.folder.join(s.image_path().unwrap_or_default())).absolute().top_0().left_0().right_0().bottom_0().object_fit(gpui::ObjectFit::Contain)),
+                        )
+                        .child(div().text_xs().truncate().text_color(if on { theme.selected } else { theme.secondary }).child(format!("{} {}", s.id, s.title)))
+                }))
+                .into_any_element()
+        })
+    }
+
     /// A key to claude's terminal, answering its permission prompt: a
     /// choice's digit, or Esc (`CSI 27 u`, as claude's keyboard mode wants)
     /// to deny. Then straight to Claude at work.
@@ -899,10 +976,6 @@ impl PlanningPanel {
         });
         let cards = shape.screens.iter().map(|s| {
             let id = s.id.clone();
-            let big = s.image_path().map(|path| {
-                let path = self.folder.join(path);
-                Enlarged { title: format!("{} {}", s.id, s.title), size: crate::mermaid::image_size(&path).unwrap_or((960., 600.)), path, fit: true, screen: Some(s.id.clone()) }
-            });
             let picked = self.screen.as_deref() == Some(s.id.as_str());
             div()
                 .id(SharedString::from(format!("plan-screen-{}", s.id)))
@@ -915,14 +988,13 @@ impl PlanningPanel {
                 .border_1()
                 .border_color(if picked { theme.selected } else { theme.border })
                 .cursor_pointer()
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let again = this.screen.as_deref() == Some(id.as_str());
-                    this.screen = if again { None } else { Some(id.clone()) };
-                    this.enlarged = match (&this.screen, &big) {
-                        (Some(_), Some(open)) => Some(open.clone()),
-                        _ => None,
-                    };
-                    cx.notify();
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    if this.screen.as_deref() == Some(id.as_str()) {
+                        this.screen = None;
+                        this.enlarged = None;
+                        return cx.notify();
+                    }
+                    this.open_screen(&id, window, cx);
                 }))
                 // Pinned inside its frame, so it's fitted, not drawn at its size.
                 .child(match s.image_path() {
@@ -1147,6 +1219,20 @@ impl Render for PlanningPanel {
                 .min_h_0()
                 .flex()
                 .flex_col()
+                // Left and right move between screens; Esc closes.
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| match event.keystroke.key.as_str() {
+                    "left" if this.enlarged.as_ref().is_some_and(|e| e.screen.is_some()) => this.step_screen(-1, window, cx),
+                    "right" if this.enlarged.as_ref().is_some_and(|e| e.screen.is_some()) => this.step_screen(1, window, cx),
+                    "escape" => {
+                        if this.enlarged.as_ref().is_some_and(|e| e.screen.is_some()) {
+                            this.screen = None;
+                        }
+                        this.enlarged = None;
+                        cx.notify();
+                    }
+                    _ => {}
+                }))
                 .child(
                     div()
                         .flex_none()
@@ -1158,6 +1244,10 @@ impl Render for PlanningPanel {
                         .py_2()
                         .border_b_1()
                         .border_color(theme.border)
+                        .when(big.screen.is_some(), |d| {
+                            d.child(button("plan-screen-prev", "‹", false, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.step_screen(-1, window, cx))))
+                                .child(button("plan-screen-next", "›", false, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.step_screen(1, window, cx))))
+                        })
                         .child(div().flex_1().min_w_0().font_weight(FontWeight::MEDIUM).truncate().child(big.title.clone()))
                         .child(button("plan-diagram-size", if big.fit { "Actual Size" } else { "Fit Width" }, false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             if let Some(big) = this.enlarged.as_mut() {
@@ -1211,6 +1301,7 @@ impl Render for PlanningPanel {
                         .child(div().p_3().w(px(big.size.0 + 24.)).h(px(big.size.1 + 24.)).child(gpui::img(big.path.clone()).w(px(big.size.0)).h(px(big.size.1))))
                         .into_any_element()
                 })
+                .when(big.screen.is_some(), |d| d.children(self.screen_strip(&theme, cx)))
                 .into_any_element()
         } else { match &self.state {
             // Before claude's written the plan: its first question still shows.
