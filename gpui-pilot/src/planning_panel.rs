@@ -793,6 +793,7 @@ impl PlanningPanel {
                 )
                 .child(match s.image_path() {
                     Some(path) => div().h(px(420.)).rounded_md().bg(gpui::white()).child(gpui::img(self.folder.join(path)).size_full().object_fit(gpui::ObjectFit::Contain)).into_any_element(),
+                    None if s.wireframe.trim().is_empty() => quiet("Claude hasn't drawn this screen yet.".into(), theme).into_any_element(),
                     None => markdown(&format!("plan-screen-large-{}", s.id), &s.wireframe, theme).into_any_element(),
                 })
                 .child(quiet(format!("What the room says now goes to Claude about {}.", s.id), theme))
@@ -817,12 +818,46 @@ impl PlanningPanel {
                 }))
                 .child(match s.image_path() {
                     Some(path) => div().h(px(130.)).rounded_sm().bg(gpui::white()).child(gpui::img(self.folder.join(path)).size_full().object_fit(gpui::ObjectFit::Contain)).into_any_element(),
+                    None if s.wireframe.trim().is_empty() => div()
+                        .h(px(130.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_sm()
+                        .border_1()
+                        .border_dashed()
+                        .border_color(theme.border)
+                        .text_xs()
+                        .text_color(theme.tertiary)
+                        .child("Not drawn yet")
+                        .into_any_element(),
                     None => div().h(px(130.)).overflow_hidden().p_1().rounded_sm().bg(theme.tile).text_xs().child(s.wireframe.clone()).into_any_element(),
                 })
                 .child(div().flex().flex_row().gap_1().child(div().text_xs().text_color(theme.selected).child(s.id.clone())).child(div().text_xs().truncate().child(s.title.clone())))
                 .child(chips(&s.criteria))
         });
         let unshaped: Vec<String> = state.unshaped().iter().map(|c| c.id.clone()).collect();
+        // Screens listed but not drawn: say so, and offer to have them drawn.
+        let undrawn: Vec<String> = shape.screens.iter().filter(|s| s.image_path().is_none() && s.wireframe.trim().is_empty()).map(|s| s.id.clone()).collect();
+        let draw = (!undrawn.is_empty() && self.awaiting.is_none() && self.questions.is_empty()).then(|| {
+            let ids = undrawn.join(", ");
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .p_2()
+                .rounded_md()
+                .bg(theme.tile)
+                .child(div().flex_1().min_w_0().text_xs().text_color(theme.secondary).child(format!("{ids} {} listed but not drawn yet.", if undrawn.len() == 1 { "is" } else { "are" })))
+                .child(button("plan-draw-screens", "Ask Claude to Draw Them", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.send(
+                        format!("From the room, on shape: draw the screens now ({ids}). Draw each as an SVG wireframe at `shape/<id>.svg` beside the state file, unless the room has asked for a running mock, and set each screen's `image`."),
+                        window,
+                        cx,
+                    )
+                })))
+        });
         div()
             .flex()
             .flex_col()
@@ -830,7 +865,7 @@ impl PlanningPanel {
             .children(tools)
             .children(mock)
             .when(!shape.flows.is_empty(), |d| d.child(heading("Flows", theme)).children(flows))
-            .when(!shape.screens.is_empty(), |d| d.child(heading("Screens", theme)).children(large).child(div().flex().flex_row().flex_wrap().gap_2().children(cards)))
+            .when(!shape.screens.is_empty(), |d| d.child(heading("Screens", theme)).children(draw).children(large).child(div().flex().flex_row().flex_wrap().gap_2().children(cards)))
             .when(!unshaped.is_empty() && !shape.is_empty(), |d| d.child(div().text_xs().text_color(theme.orange()).child(format!("Not in any flow or screen yet: {}", unshaped.join(", ")))))
             .when(shape.is_empty(), |d| d.child(quiet("Nothing yet: Claude draws the flows, then the screens, as the room answers.".into(), theme)))
             .into_any_element()
