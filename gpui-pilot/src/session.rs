@@ -178,6 +178,14 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch
     if let Some(launch) = launch {
         let dir = launch.dir();
         if dir.join("started").exists() {
+            // A plan cut off waiting on the room, or mid-turn: its panel
+            // asks claude to pick up again once it's back.
+            if launch.flow == crate::launch::Flow::Plan {
+                let before = std::fs::read_to_string(dir.join("state")).unwrap_or_default();
+                if matches!(before.trim(), "needs-you" | "working") {
+                    let _ = std::fs::write(dir.join("resumed-from"), before.trim());
+                }
+            }
             let _ = std::fs::write(dir.join("state"), "starting");
         }
     }

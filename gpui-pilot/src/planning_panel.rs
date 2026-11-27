@@ -56,6 +56,14 @@ pub struct PlanningPanel {
     /// What claude's doing, as the session's hooks last wrote it:
     /// starting, working, needs-you, idle or exited.
     claude: Option<String>,
+    /// A message just sent to claude, with the questions open then: until
+    /// claude's seen working (or asks something new), the hooks' older
+    /// "waiting for the room" and that question are stale, not shown again.
+    awaiting: Option<(Vec<String>, std::time::Instant)>,
+    /// Reopened after Gannin quit while claude was waiting on the room
+    /// ("needs-you") or mid-turn ("working"): once claude's back, it's
+    /// asked to pick up, since a resumed claude doesn't ask again itself.
+    resumed_from: Option<String>,
     _poll: Task<()>,
 }
 
@@ -82,9 +90,37 @@ impl PlanningPanel {
                 .await;
             if this
                 .update(cx, |this, cx| {
+                    let (mut claude, mut question) = (claude, question);
+                    // Until a resumed claude is up, what the hooks last said
+                    // (a server's copy may still say it's waiting) is stale.
+                    if this.resumed_from.is_some() && claude.as_deref() != Some("idle") {
+                        claude = Some("starting".into());
+                        question = Vec::new();
+                    }
+                    if let Some((asked, at)) = &this.awaiting {
+                        let asks_anew = !question.is_empty() && question.iter().map(|q| &q.question).ne(asked.iter());
+                        if claude.as_deref() == Some("working") || asks_anew || at.elapsed() > Duration::from_secs(45) {
+                            this.awaiting = None;
+                        } else {
+                            claude = Some("working".into());
+                            question = Vec::new();
+                        }
+                    }
                     if this.claude != claude {
                         this.claude = claude;
                         cx.notify();
+                    }
+                    // Back after a restart: claude's idle again, so ask it to
+                    // pick up where it was.
+                    if this.claude.as_deref() == Some("idle") {
+                        if let Some(before) = this.resumed_from.take() {
+                            let message = if before == "needs-you" {
+                                "Gannin was restarted while you were waiting on the room, so the question you'd asked was lost. Ask it again."
+                            } else {
+                                "Gannin was restarted while you were working, so that turn was cut off. Carry on from where you were."
+                            };
+                            this.send_now(message.to_string(), cx);
+                        }
                     }
                     let changed_question = this.questions.iter().map(|q| &q.question).ne(question.iter().map(|q| &q.question));
                     if changed_question {
@@ -111,6 +147,12 @@ impl PlanningPanel {
         });
         let dir = launch.dir();
         let folder = launch.local_folder();
+        let resumed_from = {
+            let file = dir.join("resumed-from");
+            let before = std::fs::read_to_string(&file).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            let _ = std::fs::remove_file(&file);
+            before
+        };
         Self {
             approvals: Approvals::load(&dir),
             agreed: Agreed::load(&dir),
@@ -132,6 +174,8 @@ impl PlanningPanel {
             reviewing: false,
             review_model: security::MODELS[0].0,
             claude: None,
+            awaiting: None,
+            resumed_from,
             _poll: poll,
         }
     }
@@ -169,6 +213,8 @@ impl PlanningPanel {
             reviewing: false,
             review_model: security::MODELS[0].0,
             claude: None,
+            awaiting: None,
+            resumed_from: None,
             _poll: Task::ready(()),
         }
     }
@@ -196,13 +242,23 @@ impl PlanningPanel {
 
     /// Sends claude a message: Esc first when a question is waiting, as
     /// Gannin answers, then the text as one message.
-    fn send(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, message: String, _window: &mut Window, cx: &mut Context<Self>) {
+        self.send_now(message, cx);
+    }
+
+    fn send_now(&mut self, message: String, cx: &mut Context<Self>) {
         let Some(terminal) = self.terminal.clone() else {
             self.sent = Some(message);
             return cx.notify();
         };
         let waiting = self.launch.state().as_deref() == Some("needs-you");
-        cx.spawn_in(window, async move |_, cx| {
+        // Straight to Claude at work: what was asked is answered.
+        self.awaiting = Some((self.questions.iter().map(|q| q.question.clone()).collect(), std::time::Instant::now()));
+        self.claude = Some("working".into());
+        self.questions.clear();
+        self.picked.clear();
+        cx.notify();
+        cx.spawn(async move |_, cx| {
             if waiting {
                 terminal.update(cx, |t, _| t.input(b"\x1b[27u".to_vec()));
                 cx.background_executor().timer(Duration::from_millis(400)).await;
@@ -423,14 +479,13 @@ impl PlanningPanel {
             })
             .collect();
         let message = format!("The room's answers:\n{}", lines.join("\n"));
-        self.questions.clear();
-        self.picked.clear();
-        if self.preview {
-            self.send(message, window, cx);
-            return self.answer(cx);
-        }
+        // `send` clears the questions, once it's noted them as answered.
         self.send(message, window, cx);
-        cx.notify();
+        if self.preview {
+            self.questions.clear();
+            self.picked.clear();
+            self.answer(cx);
+        }
     }
 
     /// Claude's questions to the room, each option a button.
@@ -499,6 +554,23 @@ impl PlanningPanel {
             .into_any_element()
     }
 
+    /// The room's just answered: Claude's taking it in.
+    fn taking(&self, theme: &Theme) -> gpui::AnyElement {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.selected.opacity(0.5))
+            .bg(theme.selected.opacity(0.06))
+            .child(spinner("plan-taking-spinner", px(14.), theme.selected))
+            .child(div().text_sm().child("Claude is taking in what the room said"))
+            .into_any_element()
+    }
+
     /// What's happening now, beside the stages: a spinner while claude (or
     /// the security review) is at work, else whose turn it is.
     fn activity(&self, theme: &Theme) -> Option<gpui::AnyElement> {
@@ -530,13 +602,7 @@ impl PlanningPanel {
                 .text_xs()
                 .text_color(tint)
                 .child(if busy {
-                    gpui::svg()
-                        .path("icons/arrow_circle.svg")
-                        .size(px(12.))
-                        .flex_none()
-                        .text_color(tint)
-                        .with_animation("plan-activity-spinner", Animation::new(Duration::from_millis(1200)).repeat(), |svg, delta| svg.with_transformation(Transformation::rotate(gpui::percentage(delta))))
-                        .into_any_element()
+                    spinner("plan-activity-spinner", px(12.), tint)
                 } else {
                     div().size(px(7.)).rounded_full().bg(tint).flex_none().into_any_element()
                 })
@@ -835,7 +901,13 @@ impl Render for PlanningPanel {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .children(if self.questions.is_empty() { None } else { Some(self.question_box(&theme, cx)) })
+                .children(if !self.questions.is_empty() {
+                    Some(self.question_box(&theme, cx))
+                } else if self.awaiting.is_some() {
+                    Some(self.taking(&theme))
+                } else {
+                    None
+                })
                 .child(quiet("The plan shows here as Claude writes it, from the room's answers.".into()))
                 .into_any_element(),
             Some(state) => {
@@ -858,7 +930,9 @@ impl Render for PlanningPanel {
                             .into_any_element(),
                     )
                 } else {
-                    if self.questions.is_empty() {
+                    if self.awaiting.is_some() && self.questions.is_empty() {
+                        Some(self.taking(&theme))
+                    } else if self.questions.is_empty() {
                         now_box(state, self.preview, &theme)
                     } else {
                         Some(self.question_box(&theme, cx))
@@ -1036,6 +1110,16 @@ impl Render for PlanningPanel {
             )
             .into_any_element()
     }
+}
+
+fn spinner(id: &'static str, size: gpui::Pixels, tint: gpui::Hsla) -> gpui::AnyElement {
+    gpui::svg()
+        .path("icons/arrow_circle.svg")
+        .size(size)
+        .flex_none()
+        .text_color(tint)
+        .with_animation(id, Animation::new(Duration::from_millis(1200)).repeat(), |svg, delta| svg.with_transformation(Transformation::rotate(gpui::percentage(delta))))
+        .into_any_element()
 }
 
 fn heading(text: &str, theme: &Theme) -> gpui::Div {
