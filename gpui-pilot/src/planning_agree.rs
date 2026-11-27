@@ -15,7 +15,7 @@ use crate::github;
 use crate::launch::Launch;
 use crate::planning::{self, Agreed, Approvals, Draft, Made, State, Status};
 use crate::planning_docs as docs;
-use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, EventEmitter, FontWeight, SharedString, Window};
+use gpui::{div, prelude::*, px, relative, ClickEvent, Context, Entity, EventEmitter, FontWeight, KeyDownEvent, SharedString, Window};
 use serde_json::json;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -37,7 +37,12 @@ pub struct AgreeView {
     approvals: Approvals,
     drafts: Vec<Draft>,
     titles: Vec<Entity<editor::Editor>>,
+    /// Typing to find who was here, or to name someone not on GitHub.
     who: Entity<editor::Editor>,
+    /// Who was here: GitHub logins, or names as typed.
+    people: Vec<String>,
+    /// The org's members, (login, name), to pick from.
+    members: Vec<(String, String)>,
     parent_title: Entity<editor::Editor>,
     parent_repo: Option<String>,
     repos: Vec<String>,
@@ -51,6 +56,8 @@ pub struct AgreeView {
 }
 
 impl EventEmitter<AgreeEvent> for AgreeView {}
+
+const ORG_MEMBERS: &str = "query($login: String!, $cursor: String) { organization(login: $login) { membersWithRole(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { login name } } } }";
 
 const ORG_TYPES: &str = "query($login: String!) { organization(login: $login) { issueTypes(first: 25) { nodes { id name isEnabled } } } }";
 
@@ -71,10 +78,44 @@ impl AgreeView {
         let viewer = crate::auth::saved_viewer().map(|v| v.login).unwrap_or_default();
         let who = cx.new(|cx| {
             let mut editor = editor::Editor::single_line(window, cx);
-            editor.set_placeholder_text("Logins, separated by commas", window, cx);
-            editor.set_text(viewer, window, cx);
+            editor.set_placeholder_text("Find someone, or type a name and press Return", window, cx);
             editor
         });
+        // Typing filters the members offered.
+        cx.observe(&who, |_, _, cx| cx.notify()).detach();
+        let people: Vec<String> = [viewer].into_iter().filter(|v| !v.is_empty()).collect();
+        // The org's members, to pick who was here from.
+        let org_login = launch.org.clone();
+        cx.spawn(async move |this, cx| {
+            let members = cx
+                .background_executor()
+                .spawn(async move {
+                    if preview {
+                        return [("aw", "Andrew Waters"), ("sam", "Sam Okafor"), ("priya", "Priya Shah"), ("jo", "Jo Lindqvist")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
+                    }
+                    let Some(token) = crate::auth::token() else { return Vec::new() };
+                    let mut members: Vec<(String, String)> = Vec::new();
+                    let mut cursor: Option<String> = None;
+                    for _ in 0..10 {
+                        let Ok(data) = github::graphql(&token, ORG_MEMBERS, json!({ "login": org_login, "cursor": cursor })) else { break };
+                        let page = &data["organization"]["membersWithRole"];
+                        members.extend(page["nodes"].as_array().into_iter().flatten().filter_map(|n| Some((n["login"].as_str()?.to_string(), n["name"].as_str().unwrap_or_default().to_string()))));
+                        if page["pageInfo"]["hasNextPage"] != true {
+                            break;
+                        }
+                        cursor = page["pageInfo"]["endCursor"].as_str().map(str::to_string);
+                    }
+                    members.sort_by_key(|(l, n)| if n.is_empty() { l.to_lowercase() } else { n.to_lowercase() });
+                    members
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.members = members;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         let parent_title = cx.new(|cx| {
             let mut editor = editor::Editor::single_line(window, cx);
             editor.set_placeholder_text("The initiative, epic or issue it all sits under", window, cx);
@@ -133,6 +174,8 @@ impl AgreeView {
             drafts,
             titles,
             who,
+            people,
+            members: Vec::new(),
             parent_title,
             parent_repo,
             repos,
@@ -143,6 +186,169 @@ impl AgreeView {
             running: false,
             error: None,
         }
+    }
+
+    /// Adds someone who was here: a member's login, or a name as typed.
+    fn add_person(&mut self, who: String, window: &mut Window, cx: &mut Context<Self>) {
+        let who = who.trim().trim_start_matches('@').to_string();
+        if !who.is_empty() && !self.people.iter().any(|p| p.eq_ignore_ascii_case(&who)) {
+            self.people.push(who);
+        }
+        self.who.update(cx, |e, cx| e.set_text("", window, cx));
+        cx.notify();
+    }
+
+    /// The members whose login or name has what's typed in it, not yet
+    /// picked: a few, for the list under the box.
+    fn matches(&self, query: &str) -> Vec<(String, String)> {
+        let q = query.trim().trim_start_matches('@').to_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        self.members
+            .iter()
+            .filter(|(l, n)| !self.people.iter().any(|p| p.eq_ignore_ascii_case(l)) && (l.to_lowercase().contains(&q) || n.to_lowercase().contains(&q)))
+            .take(6)
+            .cloned()
+            .collect()
+    }
+
+    /// Return in the box: the one member it matches, else the name typed.
+    fn add_typed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.who.read(cx).text(cx).trim().to_string();
+        if typed.is_empty() {
+            return;
+        }
+        let found = self.matches(&typed);
+        let exact = self.members.iter().find(|(l, _)| l.eq_ignore_ascii_case(typed.trim_start_matches('@'))).map(|(l, _)| l.clone());
+        let pick = exact.or_else(|| (found.len() == 1).then(|| found[0].0.clone())).unwrap_or(typed);
+        self.add_person(pick, window, cx);
+    }
+
+    /// What Agree commits to the harness, a line each.
+    fn committed(&self) -> Vec<String> {
+        let slug = crate::launch::slug(if self.state.title.is_empty() { &self.launch.title } else { &self.state.title }, 40);
+        let mut out = vec![format!("The plan, {}", if self.agreed.plan_path.is_empty() { format!("plans/<today>-{slug}.md") } else { self.agreed.plan_path.clone() })];
+        if self.write_requirement {
+            out.push(format!("The requirement, {}", docs::requirement_path(&slug)));
+        }
+        let screens = self.state.shape.screens.iter().filter(|s| s.image_path().is_some()).count();
+        if screens > 0 {
+            out.push(format!("{screens} screen{}, {}/screens/", if screens == 1 { "" } else { "s" }, docs::assets_dir(&slug)));
+        }
+        let flows = self.state.shape.flows.len();
+        if flows > 0 {
+            out.push(format!("{flows} flow{}, as diagrams in the plan", if flows == 1 { "" } else { "s" }));
+        }
+        for a in self.state.architecture.iter().filter(|a| a.valid()) {
+            out.push(format!("{}{}, marked planned", a.path.trim(), if a.new { " (new)" } else { "" }));
+        }
+        for d in planning::docs(&self.dir).iter().filter(|d| d.commit) {
+            out.push(format!("{}, {}/{}", d.name, docs::assets_dir(&slug), d.name));
+        }
+        out
+    }
+
+    /// Who was here: chips for those picked, a box to find a member or
+    /// type any name, and the members it matches.
+    fn who_picker(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let typed = self.who.read(cx).text(cx);
+        let found = self.matches(&typed);
+        let name_of = |login: &str| self.members.iter().find(|(l, _)| l.eq_ignore_ascii_case(login)).map(|(_, n)| n.clone()).filter(|n| !n.is_empty());
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().flex().flex_row().flex_wrap().gap_1().children(self.people.iter().enumerate().map(|(i, who)| {
+                let label = match name_of(who) {
+                    Some(name) => format!("{name} ({who})"),
+                    None => who.clone(),
+                };
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .pl_2()
+                    .pr_1()
+                    .py_0p5()
+                    .rounded_md()
+                    .bg(theme.selected.opacity(0.16))
+                    .text_sm()
+                    .child(label)
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("agree-who-remove-{i}")))
+                            .px_1()
+                            .rounded_sm()
+                            .text_color(theme.secondary)
+                            .cursor_pointer()
+                            .hover(|d| d.bg(theme.tile))
+                            .child("×")
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                if i < this.people.len() {
+                                    this.people.remove(i);
+                                }
+                                cx.notify();
+                            })),
+                    )
+            })))
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.bg)
+                    .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "enter" {
+                            cx.stop_propagation();
+                            this.add_typed(window, cx);
+                        }
+                    }))
+                    .child(self.who.clone()),
+            )
+            .when(!typed.trim().is_empty(), |d| {
+                let typed_name = typed.trim().to_string();
+                let exact = self.members.iter().any(|(l, _)| l.eq_ignore_ascii_case(typed_name.trim_start_matches('@')));
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .children(found.into_iter().enumerate().map(|(i, (login, name))| {
+                            let pick = login.clone();
+                            div()
+                                .id(SharedString::from(format!("agree-who-member-{i}")))
+                                .px_2()
+                                .py_1()
+                                .text_sm()
+                                .cursor_pointer()
+                                .hover(|d| d.bg(theme.tile))
+                                .child(if name.is_empty() { login.clone() } else { format!("{name} ({login})") })
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.add_person(pick.clone(), window, cx)))
+                        }))
+                        .when(!exact, |d| {
+                            let name = typed_name.clone();
+                            d.child(
+                                div()
+                                    .id("agree-who-typed")
+                                    .px_2()
+                                    .py_1()
+                                    .text_sm()
+                                    .text_color(theme.secondary)
+                                    .cursor_pointer()
+                                    .hover(|d| d.bg(theme.tile))
+                                    .child(format!("Add \"{typed_name}\", not on GitHub"))
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.add_person(name.clone(), window, cx))),
+                            )
+                        }),
+                )
+            })
+            .into_any_element()
     }
 
     /// The drafts with the titles as edited, and the epics' new titles
@@ -171,9 +377,9 @@ impl AgreeView {
     }
 
     fn agree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let by: Vec<String> = self.who.read(cx).text(cx).split([',', ' ']).map(|s| s.trim().trim_start_matches('@').to_string()).filter(|s| !s.is_empty()).collect();
+        let by: Vec<String> = self.people.clone();
         if by.is_empty() {
-            self.error = Some("Say who was here: at least one login.".into());
+            self.error = Some("Say who was here: at least one person.".into());
             return cx.notify();
         }
         let drafts = self.edited(cx);
@@ -729,6 +935,8 @@ impl Render for AgreeView {
                 .into_any_element(),
         };
 
+        let who = self.who_picker(&theme, cx);
+
         // The breakdown as it'll be filed: epics, and the issues under them.
         let rows = self.drafts.iter().enumerate().map(|(i, draft)| {
             let task = &draft.task;
@@ -794,18 +1002,11 @@ impl Render for AgreeView {
                     .child(quiet("You can agree anyway: it's the room's call.".into()))
             })
             .child(heading("Who was here"))
-            .child(div().flex().flex_row().child(field(&self.who)))
+            .child(who)
             .child(heading("Top of the tree"))
             .child(top)
-            .child(heading("What gets filed"))
-            .children(rows)
-            .child(quiet("Change a repository or a body by asking Claude in the session: it updates the plan, and this list follows.".into()))
-            .child(heading("In the harness"))
-            .child(quiet(format!(
-                "{} in {}",
-                if self.agreed.plan_path.is_empty() { "plans/<today>-<slug>.md".to_string() } else { self.agreed.plan_path.clone() },
-                self.launch.harness_repo
-            )))
+            .child(heading(&format!("In the harness, {}", self.launch.harness_repo)))
+            .children(self.committed().into_iter().map(|line| div().text_sm().child(line)))
             .child(
                 div()
                     .id("agree-requirement")
@@ -852,9 +1053,31 @@ impl Render for AgreeView {
                 .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("What Agree would have written"))
                 .child(quiet("Nothing was filed or committed. This is what GitHub and the harness would have been sent, in order.".into()))
                 .child(div().flex().flex_row().child(button("agree-preview-done", "Done", true, &theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(AgreeEvent::Agreed(agreed.clone()))))))
-                .child(crate::markdown::markdown("agree-written", written, &theme));
+                .child(crate::markdown::markdown("agree-written", written, &theme))
+                .into_any_element();
         }
-        div().id("agree").size_full().text_color(theme.fg).overflow_y_scroll().p_4().child(body)
+        // The choices on the left; what gets filed, the long part, on the right.
+        let tickets = div()
+            .id("agree-tickets")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .overflow_y_scroll()
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(heading("What gets filed"))
+            .children(rows)
+            .child(quiet("Change a repository or a body by asking Claude in the session: it updates the plan, and this list follows.".into()));
+        div()
+            .size_full()
+            .flex()
+            .flex_row()
+            .text_color(theme.fg)
+            .child(div().id("agree").w(relative(0.4)).flex_none().h_full().overflow_y_scroll().p_4().border_r_1().border_color(theme.border).child(body))
+            .child(tickets)
+            .into_any_element()
     }
 }
 
