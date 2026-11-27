@@ -684,7 +684,7 @@ impl Render for AgreeView {
         let theme = Theme::for_window(window);
         let heading = |text: &str| div().pt_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(text.to_string());
         let quiet = |text: String| div().text_xs().text_color(theme.secondary).child(text);
-        let field = |editor: &Entity<editor::Editor>| div().flex_1().px_2().py_1().rounded_md().border_1().border_color(theme.border).bg(theme.bg).child(editor.clone());
+        let field = |editor: &Entity<editor::Editor>| div().flex_1().min_w_0().px_2().py_1().rounded_md().border_1().border_color(theme.border).bg(theme.bg).child(editor.clone());
 
         // Before you agree: what isn't settled. Never a block.
         let mut warnings: Vec<String> = self

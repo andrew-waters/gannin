@@ -519,7 +519,7 @@ impl PlanningPanel {
                         .child(div().w(px(18.)).flex_none().text_color(theme.selected).child(if q.multi { (if on { "☑" } else { "☐" }).to_string() } else { format!("{}", oi + 1) }))
                         .child(
                             div()
-                                .flex_1()
+                                .flex_1().min_w_0()
                                 .min_w_0()
                                 .flex()
                                 .flex_col()
@@ -640,7 +640,7 @@ impl PlanningPanel {
                 .p_2()
                 .rounded_md()
                 .bg(theme.tile)
-                .child(div().flex_1().text_xs().text_color(theme.secondary).child(format!(
+                .child(div().flex_1().min_w_0().text_xs().text_color(theme.secondary).child(format!(
                     "A running mock of {} on {}, a throwaway branch that's never pushed: delete it once the plan's agreed.",
                     if shape.mock.repo.is_empty() { "the app" } else { shape.mock.repo.as_str() },
                     shape.mock.branch
@@ -661,7 +661,7 @@ impl PlanningPanel {
                         .items_center()
                         .gap_2()
                         .child(div().text_xs().text_color(theme.selected).child(f.id.clone()))
-                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(f.title.clone()))
+                        .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::MEDIUM).child(f.title.clone()))
                         .when(!f.kind.is_empty(), |d| d.child(div().text_xs().text_color(theme.secondary).child(if f.kind.eq_ignore_ascii_case("process") { "System process" } else { "User journey" })))
                         .child(chips(&f.criteria)),
                 )
@@ -684,7 +684,7 @@ impl PlanningPanel {
                         .items_center()
                         .gap_2()
                         .child(div().text_xs().text_color(theme.selected).child(s.id.clone()))
-                        .child(div().flex_1().text_sm().font_weight(FontWeight::MEDIUM).child(s.title.clone()))
+                        .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::MEDIUM).child(s.title.clone()))
                         .child(chips(&s.criteria))
                         .child(button("plan-screen-close", "Close", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.screen = None;
@@ -781,7 +781,7 @@ impl PlanningPanel {
                         .gap_2()
                         .items_center()
                         .child(div().text_xs().text_color(tint).child(format!("{} {}", f.id, f.severity.to_uppercase())))
-                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(f.title.clone())),
+                        .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::MEDIUM).child(f.title.clone())),
                 )
                 .when(!f.detail.is_empty(), |d| d.child(div().text_sm().child(f.detail.clone())))
                 .when(!f.place.is_empty(), |d| d.child(quiet(format!("Where: {}", f.place), theme)))
@@ -805,7 +805,7 @@ impl PlanningPanel {
                     .items_center()
                     .gap_2()
                     .child(models)
-                    .child(div().flex_1())
+                    .child(div().flex_1().min_w_0())
                     .child(if self.reviewing {
                         button("plan-review-run", run_label, false, theme).opacity(0.5).into_any_element()
                     } else {
@@ -886,7 +886,7 @@ impl Render for PlanningPanel {
                 .bg(theme.bg)
                 .text_color(theme.fg)
                 .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_1().min_w_0().child(stepper)).children(self.activity(&theme)))
-                .child(div().flex_1().min_h_0().child(view.clone()))
+                .child(div().flex_1().min_w_0().min_h_0().child(view.clone()))
                 .into_any_element();
         }
 
@@ -894,7 +894,7 @@ impl Render for PlanningPanel {
             // Before claude's written the plan: its first question still shows.
             None => div()
                 .id("plan-stage")
-                .flex_1()
+                .flex_1().min_w_0()
                 .min_h_0()
                 .overflow_y_scroll()
                 .p_4()
@@ -922,7 +922,7 @@ impl Render for PlanningPanel {
                             .p_2()
                             .rounded_md()
                             .bg(theme.tile)
-                            .child(div().flex_1().text_xs().text_color(theme.secondary).child(format!("Looking back at {}. The room is on {}.", shown.title(), stage.title())))
+                            .child(div().flex_1().min_w_0().text_xs().text_color(theme.secondary).child(format!("Looking back at {}. The room is on {}.", shown.title(), stage.title())))
                             .child(button("plan-view-current", format!("Back to {}", stage.title()), false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.viewing = None;
                                 cx.notify();
@@ -940,7 +940,7 @@ impl Render for PlanningPanel {
                 };
                 let left = div()
                     .id("plan-stage")
-                    .flex_1()
+                    .flex_1().min_w_0()
                     .min_w_0()
                     .h_full()
                     .overflow_y_scroll()
@@ -968,7 +968,7 @@ impl Render for PlanningPanel {
                     .border_color(theme.border)
                     .bg(theme.sidebar)
                     .child(spec_view(state, shown, &self.approvals, &theme));
-                div().flex_1().min_h_0().flex().flex_row().child(left).child(right).into_any_element()
+                div().flex_1().min_w_0().min_h_0().flex().flex_row().child(left).child(right).into_any_element()
             }
         };
 
@@ -982,7 +982,7 @@ impl Render for PlanningPanel {
                 .flex_row()
                 .items_center()
                 .gap_2()
-                .child(div().flex_1().text_xs().text_color(theme.secondary).child(format!("Agreed. The plan is {}.", self.agreed.plan_path)))
+                .child(div().flex_1().min_w_0().text_xs().text_color(theme.secondary).child(format!("Agreed. The plan is {}.", self.agreed.plan_path)))
                 .child(button("plan-open-agreed", "Open the Plan", false, &theme).on_click(move |_, _, cx| cx.open_url(&url)))
                 .into_any_element()
         } else if self.state.is_none() {
@@ -994,7 +994,7 @@ impl Render for PlanningPanel {
                 .flex_wrap()
                 .items_center()
                 .gap_1()
-                .child(div().flex_1().text_xs().text_color(theme.secondary).child("The room's agreed the breakdown: check what gets filed, then write it all."))
+                .child(div().flex_1().min_w_0().text_xs().text_color(theme.secondary).child("The room's agreed the breakdown: check what gets filed, then write it all."))
                 .children(earlier.iter().map(|s| {
                     let s = *s;
                     button(SharedString::from(format!("plan-back-{}", s.key())), format!("Back to {}", s.title()), false, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.back(s, window, cx)))
@@ -1019,7 +1019,7 @@ impl Render for PlanningPanel {
                             let s = *s;
                             button(SharedString::from(format!("plan-back-{}", s.key())), format!("Back to {}", s.title()), false, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.back(s, window, cx)))
                         }))
-                        .child(div().flex_1())
+                        .child(div().flex_1().min_w_0())
                         .when(approved, |d| d.child(div().text_xs().text_color(theme.secondary).child("Approved; waiting for Claude to move on.")))
                         .when(!approved && !unmet.is_empty(), |d| {
                             d.child(button("plan-approve-anyway", "Approve Anyway", false, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.approve(true, window, cx))))
@@ -1050,7 +1050,7 @@ impl Render for PlanningPanel {
                 .border_color(theme.border)
                 .child(
                     div()
-                        .flex_1()
+                        .flex_1().min_w_0()
                         .flex()
                         .flex_col()
                         .text_xs()
@@ -1091,7 +1091,7 @@ impl Render for PlanningPanel {
                             .gap_2()
                             .child(
                                 div()
-                                    .flex_1()
+                                    .flex_1().min_w_0()
                                     .px_2()
                                     .py_1()
                                     .rounded_md()
@@ -1139,7 +1139,7 @@ fn list(label: &str, items: &[String], theme: &Theme) -> Option<gpui::Div> {
 }
 
 fn ided(id: &str, text: &str, tint: gpui::Hsla) -> gpui::Div {
-    div().flex().flex_row().gap_2().child(div().w(px(28.)).flex_none().text_color(tint).child(id.to_string())).child(div().flex_1().child(text.to_string()))
+    div().flex().flex_row().gap_2().child(div().w(px(28.)).flex_none().text_color(tint).child(id.to_string())).child(div().flex_1().min_w_0().child(text.to_string()))
 }
 
 /// What's happening now: the question waiting for the room, what claude's
@@ -1247,7 +1247,7 @@ fn finding(i: usize, f: &planning::Finding, theme: &Theme) -> gpui::Div {
         .child(div().w(px(52.)).flex_none().text_xs().text_color(if kind == "Risk" { theme.orange() } else { theme.secondary }).child(kind))
         .child(
             div()
-                .flex_1()
+                .flex_1().min_w_0()
                 .flex()
                 .flex_col()
                 .when(!f.path.is_empty(), |d| {
@@ -1295,7 +1295,7 @@ fn breakdown_cards(state: &State, theme: &Theme) -> Vec<gpui::AnyElement> {
                     .items_center()
                     .gap_1p5()
                     .when(task.is_epic(), |d| d.child(div().text_xs().px_1().rounded_sm().border_1().border_color(theme.border).text_color(theme.secondary).child("Epic")))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(if task.title.is_empty() { "Untitled".to_string() } else { task.title.clone() })),
+                    .child(div().flex_1().min_w_0().font_weight(FontWeight::MEDIUM).child(if task.title.is_empty() { "Untitled".to_string() } else { task.title.clone() })),
             )
             .when(!meta.is_empty(), |d| d.child(quiet(meta, theme)))
             .when(!task.body.is_empty(), |d| d.child(markdown(&format!("plan-task-{i}"), &task.body, theme)))

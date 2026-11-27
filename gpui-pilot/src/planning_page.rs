@@ -92,7 +92,7 @@ impl Render for PlanningPage {
             .border_color(theme.border)
             .child(
                 div()
-                    .flex_1()
+                    .flex_1().min_w_0()
                     .flex()
                     .flex_col()
                     .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Planning"))
@@ -100,7 +100,7 @@ impl Render for PlanningPage {
             )
             .child(button("planning-preview", "Try the Preview", false, &theme).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(PlanningAction::Preview))))
             .child(button("planning-new", "New Initiative, Epic or Issue", true, &theme).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(PlanningAction::New))));
-        let list = div().id("planning-sessions").flex_1().min_h_0().overflow_y_scroll().flex().flex_col().children(self.rows.iter().enumerate().map(|(i, row)| {
+        let list = div().id("planning-sessions").flex_1().min_w_0().min_h_0().overflow_y_scroll().flex().flex_col().children(self.rows.iter().enumerate().map(|(i, row)| {
             let launch = row.launch.clone();
             let (status, tint) = match (&row.agreed, row.stage) {
                 (Some(_), _) => ("Agreed".to_string(), theme.selected),
