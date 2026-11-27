@@ -846,13 +846,13 @@ impl PlanningPanel {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .flex()
-                    .flex_row()
-                    .justify_center()
+                    // Its full height, centred by margins, so a long slide scrolls.
                     .child(
                         div()
+                            .flex_none()
                             .w_full()
                             .max_w(px(1100.))
+                            .mx_auto()
                             .px_10()
                             .py_8()
                             .flex()
