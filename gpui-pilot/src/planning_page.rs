@@ -26,6 +26,8 @@ struct Row {
     stage: Option<Stage>,
     agreed: Option<String>,
     started_from: Option<String>,
+    /// What claude's doing in it now, from the session's hooks.
+    claude: Option<String>,
 }
 
 pub struct PlanningPage {
@@ -47,6 +49,7 @@ fn rows(org: Option<&str>, server: Option<&crate::servers::Server>) -> Vec<Row> 
                 stage: state.as_ref().map(State::stage),
                 agreed: agreed.finished().then(|| agreed.plan_path.clone()),
                 started_from: launch.subject.as_ref().map(|s| format!("{}#{}", s.repo, s.number)),
+                claude: launch.state(),
                 launch,
             }
         })
@@ -129,6 +132,11 @@ impl Render for PlanningPage {
                 .hover(|d| d.bg(theme.tile))
                 .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(PlanningAction::Open(launch.clone()))))
                 .child(div().w(px(110.)).flex_none().text_xs().text_color(tint).child(status))
+                .children(match row.claude.as_deref() {
+                    Some("working") | Some("starting") => Some(div().flex_none().text_xs().text_color(theme.selected).child("Claude working")),
+                    Some("needs-you") => Some(div().flex_none().text_xs().text_color(theme.orange()).child("Waiting for the room")),
+                    _ => None,
+                })
                 .child(div().flex_1().min_w_0().flex().flex_col().child(div().truncate().child(row.title.clone())).child(div().text_xs().text_color(theme.secondary).truncate().child(detail)))
         }));
         let empty = (self.loaded && self.rows.is_empty()).then(|| {

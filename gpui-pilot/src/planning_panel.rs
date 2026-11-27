@@ -17,7 +17,7 @@ use crate::markdown::markdown;
 use crate::planning::{self, Agreed, Approvals, Comment, Stage, State, Status};
 use crate::planning_agree::{AgreeEvent, AgreeView};
 use crate::planning_security::{self as security, Review};
-use gpui::{div, prelude::*, px, relative, ClickEvent, Context, Entity, FontWeight, KeyDownEvent, SharedString, Subscription, Task, Window};
+use gpui::{div, prelude::*, px, relative, Animation, AnimationExt, ClickEvent, Transformation, Context, Entity, FontWeight, KeyDownEvent, SharedString, Subscription, Task, Window};
 use std::time::Duration;
 use terminal::Terminal;
 
@@ -51,6 +51,9 @@ pub struct PlanningPanel {
     reviewing: bool,
     /// The model the next security review runs on.
     review_model: &'static str,
+    /// What claude's doing, as the session's hooks last wrote it:
+    /// starting, working, needs-you, idle or exited.
+    claude: Option<String>,
     _poll: Task<()>,
 }
 
@@ -63,19 +66,24 @@ impl PlanningPanel {
         let poll = cx.spawn(async move |this, cx| loop {
             let file = path.clone();
             let session = dir.clone();
-            let (state, question) = cx
+            let (state, question, claude) = cx
                 .background_executor()
                 .spawn(async move {
-                    let waiting = std::fs::read_to_string(session.join("state")).is_ok_and(|s| s.trim() == "needs-you");
+                    let claude = std::fs::read_to_string(session.join("state")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                    let waiting = claude.as_deref() == Some("needs-you");
                     let question = match waiting.then(|| crate::work_live::ask(&session, "")) {
                         Some(crate::work_panel::Ask::Questions(qs)) => qs.into_iter().next(),
                         _ => None,
                     };
-                    (State::read(&file), question)
+                    (State::read(&file), question, claude)
                 })
                 .await;
             if this
                 .update(cx, |this, cx| {
+                    if this.claude != claude {
+                        this.claude = claude;
+                        cx.notify();
+                    }
                     let changed_question = this.question.as_ref().map(|q| &q.question) != question.as_ref().map(|q| &q.question);
                     if changed_question {
                         this.question = question;
@@ -119,6 +127,7 @@ impl PlanningPanel {
             screen: None,
             reviewing: false,
             review_model: security::MODELS[0].0,
+            claude: None,
             _poll: poll,
         }
     }
@@ -154,6 +163,7 @@ impl PlanningPanel {
             review: None,
             reviewing: false,
             review_model: security::MODELS[0].0,
+            claude: None,
             _poll: Task::ready(()),
         }
     }
@@ -369,6 +379,52 @@ impl PlanningPanel {
 }
 
 impl PlanningPanel {
+    /// What's happening now, beside the stages: a spinner while claude (or
+    /// the security review) is at work, else whose turn it is.
+    fn activity(&self, theme: &Theme) -> Option<gpui::AnyElement> {
+        let stage = self.stage().title().to_lowercase();
+        let (text, busy, tint): (String, bool, gpui::Hsla) = if self.reviewing {
+            (format!("{} is reviewing the shape and the design for security", security::model_name(self.review_model)), true, theme.selected)
+        } else if self.preview {
+            return None;
+        } else {
+            match self.claude.as_deref() {
+                None | Some("starting") => ("Claude is starting the session".into(), true, theme.selected),
+                Some("working") => match self.state.as_ref().and_then(|s| s.scouting_now.as_ref()) {
+                    Some(s) => (format!("Claude is reading the code: {}", s.why), true, theme.selected),
+                    None if self.state.is_none() => ("Claude is reading the topic and what was shared".into(), true, theme.selected),
+                    None => (format!("Claude is working on {stage}"), true, theme.selected),
+                },
+                Some("needs-you") => ("Claude is waiting for the room".into(), false, theme.orange()),
+                Some("exited") => ("Claude Code has stopped: resume it in the terminal".into(), false, theme.critical()),
+                Some(_) => ("The room's turn".into(), false, theme.secondary),
+            }
+        };
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1p5()
+                .flex_none()
+                .text_xs()
+                .text_color(tint)
+                .child(if busy {
+                    gpui::svg()
+                        .path("icons/arrow_circle.svg")
+                        .size(px(12.))
+                        .flex_none()
+                        .text_color(tint)
+                        .with_animation("plan-activity-spinner", Animation::new(Duration::from_millis(1200)).repeat(), |svg, delta| svg.with_transformation(Transformation::rotate(gpui::percentage(delta))))
+                        .into_any_element()
+                } else {
+                    div().size(px(7.)).rounded_full().bg(tint).flex_none().into_any_element()
+                })
+                .child(text)
+                .into_any_element(),
+        )
+    }
+
     /// Shape: what the machine can run, the mock behind the screens, the
     /// flows, and the screens in flow order. A screen clicked opens large,
     /// and the room's comments go to claude about it.
@@ -643,13 +699,25 @@ impl Render for PlanningPanel {
                 .flex_col()
                 .bg(theme.bg)
                 .text_color(theme.fg)
-                .child(div().flex_none().px_3().py_2().border_b_1().border_color(theme.border).child(stepper))
+                .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_1().min_w_0().child(stepper)).children(self.activity(&theme)))
                 .child(div().flex_1().min_h_0().child(view.clone()))
                 .into_any_element();
         }
 
         let body = match &self.state {
-            None => div().flex_1().p_4().child(quiet("Claude keeps the plan in planning.json as the room answers; it shows here once it starts.".into())).into_any_element(),
+            // Before claude's written the plan: its first question still shows.
+            None => div()
+                .id("plan-stage")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .children(now_box(self.question.as_ref(), &empty, self.preview, &theme))
+                .child(quiet("The plan shows here as Claude writes it, from the room's answers.".into()))
+                .into_any_element(),
             Some(state) => {
                 // Left: the stage in hand, in full, with what's happening now.
                 let now: Option<gpui::AnyElement> = if shown != stage {
@@ -802,7 +870,7 @@ impl Render for PlanningPanel {
             .flex_col()
             .bg(theme.bg)
             .text_color(theme.fg)
-            .child(div().flex_none().px_3().py_2().border_b_1().border_color(theme.border).child(stepper))
+            .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_1().min_w_0().child(stepper)).children(self.activity(&theme)))
             .children(strip)
             .child(body)
             .child(
