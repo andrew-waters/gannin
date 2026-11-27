@@ -1140,7 +1140,7 @@ fn watch_diagrams(cx: &mut Context<PlanningPanel>) -> Task<()> {
 /// or its source with why it couldn't be.
 fn diagram(id: &str, source: &str, theme: &Theme) -> gpui::AnyElement {
     let code = |key: &str| markdown(&format!("{id}-{key}"), &format!("```mermaid\n{}\n```", source.trim()), theme);
-    match crate::mermaid::diagram(source) {
+    match crate::mermaid::diagram(source, theme.dark) {
         crate::mermaid::Diagram::Drawn(path, w, h) => {
             let url = format!("file://{}", path.display());
             div()
@@ -1149,7 +1149,7 @@ fn diagram(id: &str, source: &str, theme: &Theme) -> gpui::AnyElement {
                 .flex_row()
                 .p_2()
                 .rounded_md()
-                .bg(gpui::white())
+                .bg(if theme.dark { theme.tile } else { gpui::white() })
                 .cursor_pointer()
                 .on_click(move |_, _, cx| cx.open_url(&url))
                 .child(gpui::img(path).w(px(w)).h(px(h)).max_w_full().object_fit(gpui::ObjectFit::Contain))

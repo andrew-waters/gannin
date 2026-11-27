@@ -28,10 +28,11 @@ fn dir() -> PathBuf {
     crate::paths::app_dir().join("diagrams")
 }
 
-fn key(source: &str) -> String {
+fn key(source: &str, dark: bool) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     CLI.hash(&mut hasher);
+    dark.hash(&mut hasher);
     source.trim().hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
@@ -48,10 +49,11 @@ pub enum Diagram {
     Failed(String),
 }
 
-/// The diagram for `source`: drawn already, being drawn (started now if
-/// it isn't), or why it couldn't be.
-pub fn diagram(source: &str) -> Diagram {
-    let key = key(source);
+/// The diagram for `source`, for a light window or a dark one (Mermaid's
+/// dark theme on a transparent background): drawn already, being drawn
+/// (started now if it isn't), or why it couldn't be.
+pub fn diagram(source: &str, dark: bool) -> Diagram {
+    let key = key(source, dark);
     let png = dir().join(format!("{key}.png"));
     if let Some((w, h)) = png_size(&png) {
         return Diagram::Drawn(png, w as f32 / 2.0, h as f32 / 2.0);
@@ -67,7 +69,7 @@ pub fn diagram(source: &str) -> Diagram {
             // over itself, and one browser is plenty.
             static ONE: Mutex<()> = Mutex::new(());
             let _turn = ONE.lock();
-            if let Err(error) = draw(&key, &source) {
+            if let Err(error) = draw(&key, &source, dark) {
                 let _ = std::fs::write(dir().join(format!("{key}.err")), error);
             }
             if let Ok(mut d) = drawing().lock() {
@@ -81,11 +83,13 @@ pub fn diagram(source: &str) -> Diagram {
 
 /// Forgets why a diagram failed, so it's tried again.
 pub fn retry(source: &str) {
-    let _ = std::fs::remove_file(dir().join(format!("{}.err", key(source))));
+    for dark in [false, true] {
+        let _ = std::fs::remove_file(dir().join(format!("{}.err", key(source, dark))));
+    }
     GENERATION.fetch_add(1, Ordering::Relaxed);
 }
 
-fn draw(key: &str, source: &str) -> Result<(), String> {
+fn draw(key: &str, source: &str, dark: bool) -> Result<(), String> {
     let dir = dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let input = dir.join(format!("{key}.mmd"));
@@ -94,9 +98,10 @@ fn draw(key: &str, source: &str) -> Result<(), String> {
     std::fs::write(&input, source).map_err(|e| e.to_string())?;
     let quote = |p: &std::path::Path| format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"));
     let line = format!(
-        "command -v npx >/dev/null 2>&1 || {{ echo 'Drawing diagrams needs Node (npx), which isn'\"'\"'t on this Mac.' >&2; exit 127; }}; npx -y {CLI} -q -i {} -o {} -b white -s 2",
+        "command -v npx >/dev/null 2>&1 || {{ echo 'Drawing diagrams needs Node (npx), which isn'\"'\"'t on this Mac.' >&2; exit 127; }}; npx -y {CLI} -q -i {} -o {} {} -s 2",
         quote(&input),
-        quote(&partial)
+        quote(&partial),
+        if dark { "-t dark -b transparent" } else { "-t default -b white" }
     );
     let out = std::process::Command::new(crate::paths::shell()).args(["-l", "-c", &line]).current_dir(&dir).output().map_err(|e| format!("Couldn't run npx: {e}"))?;
     let _ = std::fs::remove_file(&input);
