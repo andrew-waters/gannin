@@ -67,6 +67,15 @@ pub struct PlanningPanel {
     _poll: Task<()>,
     /// Redraws when a diagram's been drawn.
     _diagrams: Task<()>,
+    /// A diagram opened large, in place of the stage and the spec.
+    enlarged: Option<Enlarged>,
+}
+
+/// A diagram opened in the panel: what it's of, and its picture.
+#[derive(Clone)]
+struct Enlarged {
+    title: String,
+    path: std::path::PathBuf,
 }
 
 impl PlanningPanel {
@@ -180,6 +189,7 @@ impl PlanningPanel {
             resumed_from,
             _poll: poll,
             _diagrams: watch_diagrams(cx),
+            enlarged: None,
         }
     }
 
@@ -220,6 +230,7 @@ impl PlanningPanel {
             resumed_from: None,
             _poll: Task::ready(()),
             _diagrams: watch_diagrams(cx),
+            enlarged: None,
         }
     }
 
@@ -620,6 +631,7 @@ impl PlanningPanel {
     /// and the room's comments go to claude about it.
     fn shape_view(&self, state: &State, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let shape = &state.shape;
+        let panel = cx.entity().downgrade();
         // Only what's missing, called out: with everything there, nothing.
         let missing: Vec<&str> = [(shape.tools.node == Some(false), "Node"), (shape.tools.browser == Some(false), "a headless browser")].into_iter().filter(|(m, _)| *m).map(|(_, n)| n).collect();
         let tools = (!missing.is_empty()).then(|| {
@@ -673,7 +685,7 @@ impl PlanningPanel {
                         .when(!f.kind.is_empty(), |d| d.child(div().text_xs().text_color(theme.secondary).child(if f.kind.eq_ignore_ascii_case("process") { "System process" } else { "User journey" })))
                         .child(chips(&f.criteria)),
                 )
-                .when(!f.diagram.trim().is_empty(), |d| d.child(diagram(&format!("plan-flow-{i}"), &f.diagram, theme)))
+                .when(!f.diagram.trim().is_empty(), |d| d.child(diagram(&format!("plan-flow-{i}"), &format!("{} {}", f.id, f.title), &f.diagram, theme, &panel)))
         });
         let open = self.screen.as_ref().and_then(|id| shape.screens.iter().find(|s| &s.id == id));
         let large = open.map(|s| {
@@ -897,7 +909,43 @@ impl Render for PlanningPanel {
                 .into_any_element();
         }
 
-        let body = match &self.state {
+        let body = if let Some(big) = self.enlarged.clone() {
+            let url = format!("file://{}", big.path.display());
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_4()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .child(div().flex_1().min_w_0().font_weight(FontWeight::MEDIUM).truncate().child(big.title.clone()))
+                        .child(button("plan-diagram-preview", "Open in Preview", false, &theme).on_click(move |_, _, cx| cx.open_url(&url)))
+                        .child(button("plan-diagram-close", "Close", true, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.enlarged = None;
+                            cx.notify();
+                        }))),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .m_3()
+                        .p_3()
+                        .rounded_md()
+                        .bg(if theme.dark { theme.tile } else { gpui::white() })
+                        .child(gpui::img(big.path).size_full().object_fit(gpui::ObjectFit::Contain)),
+                )
+                .into_any_element()
+        } else { match &self.state {
             // Before claude's written the plan: its first question still shows.
             None => div()
                 .id("plan-stage")
@@ -959,8 +1007,8 @@ impl Render for PlanningPanel {
                     .children(now)
                     .child(match shown {
                         Stage::Shape => self.shape_view(state, &theme, cx),
-                        Stage::Design => div().flex().flex_col().gap_1().child(stage_view(shown, state, &self.approvals, &theme)).child(self.security_view(state, &theme, cx)).into_any_element(),
-                        _ => stage_view(shown, state, &self.approvals, &theme),
+                        Stage::Design => div().flex().flex_col().gap_1().child(stage_view(shown, state, &self.approvals, &theme, &cx.entity().downgrade())).child(self.security_view(state, &theme, cx)).into_any_element(),
+                        _ => stage_view(shown, state, &self.approvals, &theme, &cx.entity().downgrade()),
                     })
                     .children(decisions(state, shown, &theme));
                 // Right: what's been settled, compact, so the room keeps it in view.
@@ -977,7 +1025,7 @@ impl Render for PlanningPanel {
                     .child(spec_view(state, shown, &self.approvals, &theme));
                 div().flex_1().min_w_0().min_h_0().flex().flex_row().child(left).child(right).into_any_element()
             }
-        };
+        } };
 
         // The gate for the stage it's on, and the way back.
         let unmet = if self.state.is_some() { self.unmet(state, stage) } else { Vec::new() };
@@ -1136,13 +1184,13 @@ fn watch_diagrams(cx: &mut Context<PlanningPanel>) -> Task<()> {
     })
 }
 
-/// A Mermaid diagram, drawn (click to open it full size), being drawn,
-/// or its source with why it couldn't be.
-fn diagram(id: &str, source: &str, theme: &Theme) -> gpui::AnyElement {
+/// A Mermaid diagram, drawn (click to open it large in the panel), being
+/// drawn, or its source with why it couldn't be.
+fn diagram(id: &str, title: &str, source: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
     let code = |key: &str| markdown(&format!("{id}-{key}"), &format!("```mermaid\n{}\n```", source.trim()), theme);
     match crate::mermaid::diagram(source, theme.dark) {
         crate::mermaid::Diagram::Drawn(path, w, h) => {
-            let url = format!("file://{}", path.display());
+            let (panel, open) = (panel.clone(), Enlarged { title: title.to_string(), path: path.clone() });
             div()
                 .id(SharedString::from(format!("{id}-drawn")))
                 .flex()
@@ -1151,7 +1199,12 @@ fn diagram(id: &str, source: &str, theme: &Theme) -> gpui::AnyElement {
                 .rounded_md()
                 .bg(if theme.dark { theme.tile } else { gpui::white() })
                 .cursor_pointer()
-                .on_click(move |_, _, cx| cx.open_url(&url))
+                .on_click(move |_, _, cx| {
+                    let _ = panel.update(cx, |this, cx| {
+                        this.enlarged = Some(open.clone());
+                        cx.notify();
+                    });
+                })
                 .child(gpui::img(path).w(px(w)).h(px(h)).max_w_full().object_fit(gpui::ObjectFit::Contain))
                 .into_any_element()
         }
@@ -1239,7 +1292,7 @@ fn now_box(state: &State, preview: bool, theme: &Theme) -> Option<gpui::AnyEleme
 }
 
 /// A stage in full, as the room works on it.
-fn stage_view(stage: Stage, state: &State, _approvals: &Approvals, theme: &Theme) -> gpui::AnyElement {
+fn stage_view(stage: Stage, state: &State, _approvals: &Approvals, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
     let o = &state.outcome;
     let r = &state.requirement;
     let uncovered: Vec<String> = state.uncovered().iter().map(|c| c.id.clone()).collect();
@@ -1273,7 +1326,7 @@ fn stage_view(stage: Stage, state: &State, _approvals: &Approvals, theme: &Theme
         Stage::Design => col
             .when(!state.approach.is_empty(), |d| d.child(markdown("plan-design", &state.approach, theme)))
             .when(!state.scouting.is_empty(), |d| d.child(heading("In the code", theme)).children(state.scouting.iter().enumerate().map(|(i, f)| finding(i, f, theme))))
-            .when(!state.architecture.is_empty(), |d| d.child(heading("Architecture it changes", theme)).children(state.architecture.iter().enumerate().map(|(i, a)| architecture(i, a, theme))))
+            .when(!state.architecture.is_empty(), |d| d.child(heading("Architecture it changes", theme)).children(state.architecture.iter().enumerate().map(|(i, a)| architecture(i, a, theme, panel))))
             .when(state.approach.is_empty() && state.scouting.is_empty(), |d| d.child(nothing("the design")))
             .into_any_element(),
         // Drawn by the panel, which handles its clicks.
@@ -1294,7 +1347,7 @@ fn stage_view(stage: Stage, state: &State, _approvals: &Approvals, theme: &Theme
 
 /// An architecture document the design changes: which, what changes, and
 /// the changed diagram's source (planned parts dashed once it's drawn).
-fn architecture(i: usize, a: &planning::ArchChange, theme: &Theme) -> gpui::Div {
+fn architecture(i: usize, a: &planning::ArchChange, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::Div {
     div()
         .flex()
         .flex_col()
@@ -1310,7 +1363,7 @@ fn architecture(i: usize, a: &planning::ArchChange, theme: &Theme) -> gpui::Div 
                 .when(a.new, |d| d.child(div().px_1p5().rounded_md().text_xs().bg(theme.tile).child("New"))),
         )
         .when(!a.note.is_empty(), |d| d.child(div().text_sm().child(a.note.clone())))
-        .when(!a.diagram.trim().is_empty(), |d| d.child(diagram(&format!("plan-architecture-{i}"), &a.diagram, theme)))
+        .when(!a.diagram.trim().is_empty(), |d| d.child(diagram(&format!("plan-architecture-{i}"), &a.path, &a.diagram, theme, panel)))
 }
 
 fn finding(i: usize, f: &planning::Finding, theme: &Theme) -> gpui::Div {
