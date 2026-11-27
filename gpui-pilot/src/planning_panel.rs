@@ -76,6 +76,12 @@ pub struct PlanningPanel {
     /// A permission claude's waiting on in the terminal: the tool, what
     /// it's for, and the terminal's own choices ("1. Yes").
     permission: Option<(String, String, Vec<String>)>,
+    /// The stage the plan was on at the last read: when claude takes it
+    /// back, the approvals from there on are reopened.
+    last_stage: Option<Stage>,
+    /// What Gannin has to tell the room, not an error: why claude took
+    /// the plan back.
+    info: Option<String>,
 }
 
 /// A diagram opened in the panel: what it's of, and its picture.
@@ -169,6 +175,20 @@ impl PlanningPanel {
                         this.questions = question;
                     }
                     if state.is_some() && this.state != state {
+                        // Claude took the plan back: what it went back to and
+                        // everything after needs the room's approval again.
+                        if let Some(now) = state.as_ref().map(State::stage) {
+                            if let Some(before) = this.last_stage.filter(|b| now.index() < b.index()) {
+                                this.approvals.reopen(now);
+                                this.approvals.save(&this.dir);
+                                let why = state.as_ref().and_then(|s| s.back.as_ref()).filter(|b| Stage::parse(&b.to) == Some(now)).map(|b| b.why.trim().trim_end_matches('.').to_string()).filter(|w| !w.is_empty());
+                                this.info = Some(match why {
+                                    Some(why) => format!("Claude took this back from {} to {}: {why}. It and every stage after need approving again.", before.title(), now.title()),
+                                    None => format!("Claude took this back from {} to {}. It and every stage after need approving again.", before.title(), now.title()),
+                                });
+                            }
+                            this.last_stage = Some(now);
+                        }
                         this.state = state;
                         cx.notify();
                     } else if changed_question {
@@ -224,6 +244,8 @@ impl PlanningPanel {
             enlarged: None,
             last_said: None,
             permission: None,
+            last_stage: None,
+            info: None,
         }
     }
 
@@ -268,6 +290,8 @@ impl PlanningPanel {
             enlarged: None,
             last_said: None,
             permission: None,
+            last_stage: None,
+            info: None,
         }
     }
 
@@ -454,17 +478,16 @@ impl PlanningPanel {
         if let (true, Some(asked)) = (text.is_empty(), asked) {
             return self.back_because(to, format!("as Claude asked, {}", asked.why), window, cx);
         }
-        if text.is_empty() {
-            self.notice = Some(format!("Say in the box why it's going back to {}, then press it again.", to.title()));
-            return cx.notify();
-        }
-        let why = self.take_comment(window, cx);
+        let why = if text.is_empty() { "the room sent it back".to_string() } else { self.take_comment(window, cx) };
         self.back_because(to, why, window, cx);
     }
 
     /// Back to `to` for `why`: it and every later stage need approving
     /// again, and claude's told.
     fn back_because(&mut self, to: Stage, why: String, window: &mut Window, cx: &mut Context<Self>) {
+        // The room's own doing: not news when the plan goes back.
+        self.last_stage = Some(to);
+        self.info = None;
         self.approvals.reopen(to);
         self.approvals.save(&self.dir);
         if self.preview {
@@ -1387,6 +1410,20 @@ impl Render for PlanningPanel {
                     .border_t_1()
                     .border_color(theme.border)
                     .child(gate)
+                    .when_some(self.info.clone(), |d, n| {
+                        d.child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .child(div().flex_1().min_w_0().text_xs().text_color(theme.orange()).child(n))
+                                .child(button("plan-info-ok", "OK", false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.info = None;
+                                    cx.notify();
+                                }))),
+                        )
+                    })
                     .when_some(self.notice.clone(), |d, n| d.child(div().text_xs().text_color(theme.critical()).child(n)))
                     .child(
                         div()
