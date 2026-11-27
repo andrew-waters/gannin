@@ -45,6 +45,7 @@ mod page;
 mod planning;
 mod planning_agree;
 mod planning_docs;
+mod planning_page;
 mod planning_panel;
 mod planning_preview;
 mod planning_security;

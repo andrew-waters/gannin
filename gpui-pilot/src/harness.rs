@@ -54,7 +54,7 @@ impl HarnessKind {
             HarnessKind::Prompts => "Prompts",
             HarnessKind::Learnings => "Learnings",
             HarnessKind::Research => "Research",
-            HarnessKind::Refines => "Refines",
+            HarnessKind::Refines => "Refinements",
             HarnessKind::Specialists => "Specialists",
             HarnessKind::Architecture => "Architecture",
         }

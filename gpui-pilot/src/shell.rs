@@ -231,7 +231,7 @@ fn sections() -> Vec<Section> {
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
         // Claude Code's agents: the workflows sessions run through.
-        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview), Item(PlanningPreview)] },
+        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview), Item(Planning)] },
     ]
 }
 
@@ -431,6 +431,7 @@ enum Page {
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
     PlanningPreview(Entity<crate::planning_panel::PlanningPanel>),
+    Planning(Entity<crate::planning_page::PlanningPage>),
     AgentMetrics(Entity<crate::agent_metrics::AgentMetricsPage>),
     Releases(Entity<crate::releases::ReleasesPage>),
     Settings(Entity<crate::settings_page::SettingsPage>),
@@ -1132,6 +1133,10 @@ impl Workspace {
             Nav::ReviewPreview => Page::ReviewPreview(cx.new(|cx| crate::review_preview::ReviewPreview::new(window, cx))),
             Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_page::SchedulePage::new(org.clone(), window, cx))),
             Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
+            Nav::Planning => {
+                let server = self.folder.as_ref().and_then(|f| f.location.server.clone());
+                Page::Planning(cx.new(|cx| crate::planning_page::PlanningPage::new(org.clone(), server, cx)))
+            }
             Nav::PlanningPreview => Page::PlanningPreview(cx.new(|cx| crate::planning_panel::PlanningPanel::preview(window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             Nav::AgentMetrics => Page::AgentMetrics(cx.new(|cx| crate::agent_metrics::AgentMetricsPage::new(org.clone(), cx))),
@@ -1230,6 +1235,11 @@ impl Workspace {
                 None => cx.open_url(&event.url),
             })],
             Page::SchedulePreview(page) => vec![cx.subscribe_in(page, window, |this, _, event: &crate::schedule_page::RunNow, window, cx| this.run_now(&event.0, window, cx))],
+            Page::Planning(page) => vec![cx.subscribe_in(page, window, |this, _, event: &crate::planning_page::PlanningAction, window, cx| match event {
+                crate::planning_page::PlanningAction::Open(launch) => this.resume_launch(launch.clone(), window, cx),
+                crate::planning_page::PlanningAction::New => this.open_form(crate::launch::Flow::Plan, None, window, cx),
+                crate::planning_page::PlanningAction::Preview => this.navigate(Nav::PlanningPreview, true, window, cx),
+            })],
             Page::Harness(page) => vec![cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
                 this.drawers.clear();
                 let id = event.0.path.clone();
@@ -6463,6 +6473,7 @@ impl Workspace {
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
                 Page::PlanningPreview(page) => page.into_any_element(),
+                Page::Planning(page) => page.into_any_element(),
                 Page::AgentMetrics(page) => page.into_any_element(),
                 Page::Releases(page) => page.into_any_element(),
                 Page::Settings(page) => page.into_any_element(),
@@ -7611,7 +7622,8 @@ fn nav_icon(nav: Nav) -> &'static str {
         Nav::ReviewPreview => "icons/eye.svg",
         Nav::SchedulePreview => "icons/clock.svg",
         Nav::WorkflowsPreview => "icons/git_graph.svg",
-        Nav::PlanningPreview => "icons/list_todo.svg",
+        Nav::PlanningPreview => "icons/eye.svg",
+        Nav::Planning => "icons/list_todo.svg",
         Nav::Settings => "icons/settings.svg",
         Nav::AgentMetrics => "icons/sparkle.svg",
         Nav::Releases => "icons/box.svg",
