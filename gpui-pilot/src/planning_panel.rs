@@ -88,6 +88,8 @@ struct Enlarged {
     /// Fitted to the panel's width, scrolling down; else at its natural
     /// size, scrolling both ways.
     fit: bool,
+    /// A screen's id, when it's one: the room's comments go about it.
+    screen: Option<String>,
 }
 
 impl PlanningPanel {
@@ -840,7 +842,8 @@ impl PlanningPanel {
                 )
                 .when(!f.diagram.trim().is_empty(), |d| d.child(diagram(&format!("plan-flow-{i}"), &format!("{} {}", f.id, f.title), &f.diagram, theme, &panel)))
         });
-        let open = self.screen.as_ref().and_then(|id| shape.screens.iter().find(|s| &s.id == id));
+        // A drawn screen opens large in the panel; one in words opens here.
+        let open = self.screen.as_ref().and_then(|id| shape.screens.iter().find(|s| &s.id == id)).filter(|s| s.image_path().is_none());
         let large = open.map(|s| {
             div()
                 .flex()
@@ -873,6 +876,10 @@ impl PlanningPanel {
         });
         let cards = shape.screens.iter().map(|s| {
             let id = s.id.clone();
+            let big = s.image_path().map(|path| {
+                let path = self.folder.join(path);
+                Enlarged { title: format!("{} {}", s.id, s.title), size: crate::mermaid::image_size(&path).unwrap_or((960., 600.)), path, fit: true, screen: Some(s.id.clone()) }
+            });
             let picked = self.screen.as_deref() == Some(s.id.as_str());
             div()
                 .id(SharedString::from(format!("plan-screen-{}", s.id)))
@@ -886,11 +893,24 @@ impl PlanningPanel {
                 .border_color(if picked { theme.selected } else { theme.border })
                 .cursor_pointer()
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.screen = if this.screen.as_deref() == Some(id.as_str()) { None } else { Some(id.clone()) };
+                    let again = this.screen.as_deref() == Some(id.as_str());
+                    this.screen = if again { None } else { Some(id.clone()) };
+                    this.enlarged = match (&this.screen, &big) {
+                        (Some(_), Some(open)) => Some(open.clone()),
+                        _ => None,
+                    };
                     cx.notify();
                 }))
+                // Pinned inside its frame, so it's fitted, not drawn at its size.
                 .child(match s.image_path() {
-                    Some(path) => div().h(px(130.)).rounded_sm().bg(gpui::white()).child(gpui::img(self.folder.join(path)).size_full().object_fit(gpui::ObjectFit::Contain)).into_any_element(),
+                    Some(path) => div()
+                        .h(px(130.))
+                        .relative()
+                        .overflow_hidden()
+                        .rounded_sm()
+                        .bg(gpui::white())
+                        .child(gpui::img(self.folder.join(path)).absolute().top_0().left_0().right_0().bottom_0().object_fit(gpui::ObjectFit::Contain))
+                        .into_any_element(),
                     None if s.wireframe.trim().is_empty() => div()
                         .h(px(130.))
                         .flex()
@@ -1124,10 +1144,14 @@ impl Render for PlanningPanel {
                         })))
                         .child(button("plan-diagram-preview", "Open in Preview", false, &theme).on_click(move |_, _, cx| cx.open_url(&url)))
                         .child(button("plan-diagram-close", "Close", true, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            if this.enlarged.as_ref().is_some_and(|e| e.screen.is_some()) {
+                                this.screen = None;
+                            }
                             this.enlarged = None;
                             cx.notify();
                         }))),
                 )
+                .when_some(big.screen.clone(), |d, id| d.child(div().px_4().pt_2().text_xs().text_color(theme.secondary).child(format!("What the room says now goes to Claude about {id}."))))
                 // Pinned inside the card, so it's fitted to the space rather
                 // than drawn at its own size.
                 .child(if big.fit {
@@ -1456,7 +1480,7 @@ fn diagram(id: &str, title: &str, source: &str, theme: &Theme, panel: &gpui::Wea
     let code = |key: &str| markdown(&format!("{id}-{key}"), &format!("```mermaid\n{}\n```", source.trim()), theme);
     match crate::mermaid::diagram(source, theme.dark) {
         crate::mermaid::Diagram::Drawn(path, w, h) => {
-            let (panel, open) = (panel.clone(), Enlarged { title: title.to_string(), path: path.clone(), size: (w, h), fit: true });
+            let (panel, open) = (panel.clone(), Enlarged { title: title.to_string(), path: path.clone(), size: (w, h), fit: true, screen: None });
             div()
                 .id(SharedString::from(format!("{id}-drawn")))
                 .flex()

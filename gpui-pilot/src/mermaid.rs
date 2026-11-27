@@ -126,3 +126,25 @@ fn png_size(path: &std::path::Path) -> Option<(u32, u32)> {
     std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
     (head[..8] == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]).then(|| (u32::from_be_bytes(head[16..20].try_into().unwrap()), u32::from_be_bytes(head[20..24].try_into().unwrap())))
 }
+
+/// An image's natural size in points: a PNG's from its header (at
+/// `SCALE` pixels a point when it's one of ours, else one), an SVG's from
+/// its width and height, or its viewBox.
+pub fn image_size(path: &std::path::Path) -> Option<(f32, f32)> {
+    if let Some((w, h)) = png_size(path) {
+        let scale = if path.starts_with(dir()) { SCALE as f32 } else { 1.0 };
+        return Some((w as f32 / scale, h as f32 / scale));
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    let head = &text[..text.find('>').map(|i| i + 1).unwrap_or(text.len()).min(text.len())];
+    let attr = |name: &str| -> Option<String> {
+        let at = head.find(&format!(" {name}=\""))? + name.len() + 3;
+        Some(head[at..].split('"').next()?.to_string())
+    };
+    let number = |v: String| v.trim_end_matches("px").trim().parse::<f32>().ok().filter(|n| *n > 0.0);
+    if let (Some(w), Some(h)) = (attr("width").and_then(number), attr("height").and_then(number)) {
+        return Some((w, h));
+    }
+    let view: Vec<f32> = attr("viewBox")?.split(|c: char| c == ' ' || c == ',').filter_map(|n| n.parse().ok()).collect();
+    (view.len() == 4 && view[2] > 0.0 && view[3] > 0.0).then(|| (view[2], view[3]))
+}
