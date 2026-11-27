@@ -209,6 +209,33 @@ fn entries(claude_id: &str) -> Option<Vec<(Option<chrono::DateTime<chrono::Utc>>
     )
 }
 
+/// The input of Claude's last AskUserQuestion still waiting for an answer
+/// (no tool result for it yet), from its own transcript: subagents
+/// working meanwhile don't hide it, as they can the hooks' files.
+pub fn pending_question(claude_id: &str) -> Option<Value> {
+    let mut pending: Option<(String, Value)> = None;
+    for (_, value) in entries(claude_id)? {
+        for block in value["message"]["content"].as_array().into_iter().flatten() {
+            match block["type"].as_str() {
+                Some("tool_use") if block["name"] == "AskUserQuestion" => {
+                    pending = Some((block["id"].as_str().unwrap_or_default().to_string(), block["input"].clone()));
+                }
+                Some("tool_result") => {
+                    if pending.as_ref().is_some_and(|(id, _)| block["tool_use_id"].as_str() == Some(id.as_str())) {
+                        pending = None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // The room typed instead of answering: the question's gone.
+        if value["type"] == "user" && value["message"]["content"].as_str().is_some_and(|t| !wrapper(t)) {
+            pending = None;
+        }
+    }
+    pending.map(|(_, input)| input)
+}
+
 /// Claude Code's own wrappers (command output, reminders) aren't the user's words.
 fn wrapper(text: &str) -> bool {
     text.trim_start().starts_with('<') || text.trim().is_empty()

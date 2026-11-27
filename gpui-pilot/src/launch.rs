@@ -319,20 +319,23 @@ pub fn quote_path(path: &Path) -> String {
 fn settings_json(dir: &Path, gate: bool, gap: Option<String>) -> String {
     let file = |name: &str| format!("{}/{name}", quote_path(dir));
     let state = |value: &str| serde_json::json!({ "type": "command", "command": format!("printf {value} > {} 2>/dev/null; exit 0", file("state")) });
+    // Subagents' tool calls carry an agent_id: they mustn't say claude's
+    // working while it waits on the room, or replace the question it asked.
+    let main_only = |command: String| serde_json::json!({ "type": "command", "command": format!("p=$(cat); case \"$p\" in *'\"agent_id\"'*) exit 0;; esac; {command}") });
     let pr_hook = PR_HOOK.replace("__PR__", &file("pr"));
     let settings = serde_json::json!({
         "hooks": {
             "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [state("needs-you")] }],
             "PostToolUse": [
-                { "matcher": "*", "hooks": [state("working")] },
+                { "matcher": "*", "hooks": [main_only(format!("printf working > {} 2>/dev/null; exit 0", file("state")))] },
                 { "matcher": "*", "hooks": [{ "type": "command", "command": pr_hook }] },
                 { "matcher": "Edit|MultiEdit|Write|NotebookEdit|Bash", "hooks": [{ "type": "command", "command": format!("printf %s \"$(date +%s)-$$\" > {} 2>/dev/null; exit 0", file("changed")) }] },
             ],
             "PreToolUse": [
-                { "matcher": "*", "hooks": [state("working")] },
+                { "matcher": "*", "hooks": [main_only(format!("printf working > {} 2>/dev/null; exit 0", file("state")))] },
                 // The tool it's about to use, and on what, for the question
                 // or permission card.
-                { "matcher": "*", "hooks": [{ "type": "command", "command": format!("cat > {} 2>/dev/null; exit 0", file("tool.json")) }] },
+                { "matcher": "*", "hooks": [main_only(format!("printf %s \"$p\" > {} 2>/dev/null; exit 0", file("tool.json")))] },
                 { "matcher": "AskUserQuestion", "hooks": [state("needs-you")] },
             ],
             "SessionEnd": [{ "hooks": [state("exited")] }],

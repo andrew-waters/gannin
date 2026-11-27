@@ -82,6 +82,9 @@ pub struct PlanningPanel {
     /// The whole conversation, from claude's transcript: (the room said
     /// it, the words), oldest first.
     thread: Vec<(bool, String)>,
+    /// Claude's question still unanswered in its transcript: shown even
+    /// while subagents' hooks say it's working.
+    transcript_questions: Vec<crate::work_panel::Question>,
     thread_scroll: gpui::ScrollHandle,
     /// The conversation as a third column.
     show_thread: bool,
@@ -131,6 +134,9 @@ impl PlanningPanel {
             if this
                 .update(cx, |this, cx| {
                     let (mut claude, mut question) = (claude, question);
+                    if question.is_empty() {
+                        question = this.transcript_questions.clone();
+                    }
                     // Until a resumed claude is up, what the hooks last said
                     // (a server's copy may still say it's waiting) is stale.
                     if this.resumed_from.is_some() && claude.as_deref() != Some("idle") {
@@ -263,6 +269,7 @@ impl PlanningPanel {
             info: None,
             focus: cx.focus_handle(),
             thread: Vec::new(),
+            transcript_questions: Vec::new(),
             thread_scroll: gpui::ScrollHandle::new(),
             show_thread: true,
             recap: None,
@@ -1043,6 +1050,7 @@ impl PlanningPanel {
             (format!("{} is reviewing the shape and the design for security", security::model_name(self.review_model)), true, theme.selected)
         } else {
             match self.claude.as_deref() {
+                _ if !self.questions.is_empty() => ("Claude is waiting for the room".into(), false, theme.orange()),
                 None | Some("starting") => ("Claude is starting the session".into(), true, theme.selected),
                 Some("working") => match self.state.as_ref().and_then(|s| s.scouting_now.as_ref()) {
                     Some(s) => (format!("Claude is reading the code: {}", s.why), true, theme.selected),
@@ -1745,16 +1753,20 @@ fn watch_said(claude_id: String, cx: &mut Context<PlanningPanel>) -> Task<()> {
                             (room, text)
                         })
                         .collect();
-                    (modified, Some((said.last().cloned(), thread)))
+                    let asking = crate::marra_mcp::pending_question(&id).map(|input| crate::work_live::questions_in(&input)).unwrap_or_default();
+                    (modified, Some((said.last().cloned(), thread, asking)))
                 })
                 .await;
             seen = modified;
-            if let Some((said, thread)) = said {
+            if let Some((said, thread, asking)) = said {
                 if this
                     .update(cx, |this, cx| {
                         if this.last_said != said {
                             this.last_said = said;
                             cx.notify();
+                        }
+                        if this.transcript_questions.iter().map(|q| &q.question).ne(asking.iter().map(|q| &q.question)) {
+                            this.transcript_questions = asking;
                         }
                         if this.thread != thread {
                             this.thread = thread;

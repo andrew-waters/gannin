@@ -181,7 +181,18 @@ pub fn ask(session_dir: &Path, screen: &str) -> Ask {
     let name = tool["tool_name"].as_str().unwrap_or("").to_string();
     let input = &tool["tool_input"];
     if name == "AskUserQuestion" {
-        let questions: Vec<Question> = input["questions"]
+        let questions = questions_in(input);
+        if !questions.is_empty() {
+            return Ask::Questions(questions);
+        }
+    }
+    let text = ["command", "file_path", "url", "query", "plan"].iter().find_map(|k| input[*k].as_str()).map(str::to_string).unwrap_or_else(|| "Look at the terminal for what it wants to do.".into());
+    Ask::Permission { tool: name, text, choices: screen_choices(screen) }
+}
+
+/// An AskUserQuestion's questions, from its input.
+pub fn questions_in(input: &Value) -> Vec<Question> {
+    input["questions"]
             .as_array()
             .into_iter()
             .flatten()
@@ -200,13 +211,7 @@ pub fn ask(session_dir: &Path, screen: &str) -> Ask {
                     })
                     .collect(),
             })
-            .collect();
-        if !questions.is_empty() {
-            return Ask::Questions(questions);
-        }
-    }
-    let text = ["command", "file_path", "url", "query", "plan"].iter().find_map(|k| input[*k].as_str()).map(str::to_string).unwrap_or_else(|| "Look at the terminal for what it wants to do.".into());
-    Ask::Permission { tool: name, text, choices: screen_choices(screen) }
+            .collect()
 }
 
 /// The numbered choices at the end of the screen, as "1. Yes" and so on,
