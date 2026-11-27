@@ -436,6 +436,8 @@ t=$(ls "$HOME"/.claude/projects/*/{id}.jsonl 2>/dev/null | head -1)
 if [ -n "$t" ]; then printf 'size %s\n' "$(wc -c < "$t" | tr -d ' ')"; printf 'transcript %s\n' "$(tail -c +{from} "$t" | base64 | tr -d '\n')"; fi
 w={work}
 if [ -d "$w" ]; then for f in "$w"/planning.json "$w"/shape/* "$w"/architecture/*; do [ -f "$f" ] && printf 'sum %s %s\n' "$(cksum < "$f" | cut -d' ' -f1-2 | tr ' ' '-')" "$(printf %s "${{f#$w/}}" | base64 | tr -d '\n')"; done; fi
+# A glob matching nothing leaves the loop's last test false: that's no failure.
+exit 0
 "#,
         remote = crate::launch::quote_path(&job.local),
         work = crate::launch::quote_path(&job.folder),
@@ -495,6 +497,7 @@ if [ -d "$w" ]; then for f in "$w"/planning.json "$w"/shape/* "$w"/architecture/
         for (rel, _) in &changed {
             fetch.push_str(&format!("[ -f {q} ] && printf 'got %s %s\\n' {b} \"$(base64 < {q} | tr -d '\\n')\"\n", q = crate::launch::quote(rel), b = crate::launch::quote(&base64::engine::general_purpose::STANDARD.encode(rel))));
         }
+        fetch.push_str("exit 0\n");
         let got = command_within(&job.server, "bash -s", Some(fetch.as_bytes()), Some(READ_TIMEOUT))?;
         for line in String::from_utf8_lossy(&got).lines() {
             let mut parts = line.splitn(3, ' ');
