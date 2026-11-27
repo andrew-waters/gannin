@@ -52,6 +52,18 @@ impl Stage {
         }
     }
 
+    /// The room's approval of it, as its button says.
+    pub fn approve_label(self) -> &'static str {
+        match self {
+            Stage::Outcome => "The Outcome Is Right",
+            Stage::Requirements => "The Requirements Are Right",
+            Stage::Shape => "The Shape Is Right",
+            Stage::Design => "The Design Is Right",
+            Stage::Breakdown => "The Breakdown Is Right",
+            Stage::Agree => "Agree",
+        }
+    }
+
     /// A stage by its key; the old `context` and `tasks` read as the
     /// stages that took their place, so earlier sessions still open.
     pub fn parse(key: &str) -> Option<Stage> {

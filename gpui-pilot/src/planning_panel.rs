@@ -1337,8 +1337,17 @@ impl Render for PlanningPanel {
                             .p_2()
                             .rounded_md()
                             .bg(theme.tile)
-                            .child(div().flex_1().min_w_0().text_xs().text_color(theme.secondary).child(format!("Looking back at {}. The room is on {}.", shown.title(), stage.title())))
-                            .child(button("plan-view-current", format!("Back to {}", stage.title()), false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            .child(div().flex_1().min_w_0().text_xs().text_color(theme.secondary).child(format!(
+                                "You're looking at {}. The plan is still on {}: looking changes nothing. To change {}, take the plan back to it.",
+                                shown.title(),
+                                stage.title(),
+                                shown.title()
+                            )))
+                            .child(button("plan-view-go-back", format!("Go Back to {}", shown.title()), false, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                this.viewing = None;
+                                this.back(shown, window, cx);
+                            })))
+                            .child(button("plan-view-current", format!("Return to {}", stage.title()), true, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.viewing = None;
                                 cx.notify();
                             })))
@@ -1416,7 +1425,7 @@ impl Render for PlanningPanel {
                 .child(div().flex_1().min_w_0().text_xs().text_color(theme.secondary).child("The room's agreed the breakdown: check what gets filed, then write it all."))
                 .children(earlier.iter().map(|s| {
                     let s = *s;
-                    button(SharedString::from(format!("plan-back-{}", s.key())), format!("Back to {}", s.title()), false, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.back(s, window, cx)))
+                    button(SharedString::from(format!("plan-back-{}", s.key())), format!("Go Back to {}", s.title()), false, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.back(s, window, cx)))
                 }))
                 .child(button("plan-agree", "Agree", true, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_agree(window, cx))))
                 .into_any_element()
@@ -1436,7 +1445,7 @@ impl Render for PlanningPanel {
                         .gap_1()
                         .children(earlier.iter().map(|s| {
                             let s = *s;
-                            button(SharedString::from(format!("plan-back-{}", s.key())), format!("Back to {}", s.title()), false, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.back(s, window, cx)))
+                            button(SharedString::from(format!("plan-back-{}", s.key())), format!("Go Back to {}", s.title()), false, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.back(s, window, cx)))
                         }))
                         .child(div().flex_1().min_w_0())
                         .when(approved, |d| d.child(div().text_xs().text_color(theme.secondary).child("Approved; waiting for Claude to move on.")))
@@ -1444,7 +1453,7 @@ impl Render for PlanningPanel {
                             d.child(button("plan-approve-anyway", "Approve Anyway", false, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.approve(true, window, cx))))
                         })
                         .when(!approved, |d| {
-                            let label = format!("{} Is Right", stage.title());
+                            let label = stage.approve_label();
                             d.child(if unmet.is_empty() {
                                 button("plan-approve", label, true, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.approve(false, window, cx))).into_any_element()
                             } else {
