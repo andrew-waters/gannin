@@ -545,6 +545,12 @@ impl PlanningPanel {
             match event {
                 AgreeEvent::Agreed(agreed) => {
                     this.agreed = agreed.clone();
+                    // What was just committed shows in the Harness now, not
+                    // after the next fetch.
+                    if !this.preview {
+                        crate::harness_git::refetch(&this.launch.org, &this.launch.harness_repo);
+                        window.dispatch_action(Box::new(crate::shell::Refresh), cx);
+                    }
                     let issues: Vec<String> = agreed.made.iter().map(|m| m.reference()).collect();
                     let message = format!(
                         "The room agreed. Gannin filed {} and wrote the plan to {}{}. There's nothing more to write.",
