@@ -867,8 +867,12 @@ impl PlanningPanel {
                 .flex()
                 .flex_row()
                 .items_center()
+                .justify_end()
                 .gap_1p5()
-                .flex_none()
+                // What's left beside the stages, cut short: the stages
+                // keep their row.
+                .flex_1()
+                .min_w_0()
                 .text_xs()
                 .text_color(tint)
                 .child(if busy {
@@ -876,7 +880,7 @@ impl PlanningPanel {
                 } else {
                     div().size(px(7.)).rounded_full().bg(tint).flex_none().into_any_element()
                 })
-                .child(text)
+                .child(div().min_w_0().truncate().child(text))
                 .into_any_element(),
         )
     }
@@ -1207,7 +1211,7 @@ impl Render for PlanningPanel {
                 .flex_col()
                 .bg(theme.bg)
                 .text_color(theme.fg)
-                .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_1().min_w_0().child(stepper)).children(self.activity(&theme)))
+                .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_none().child(stepper)).children(self.activity(&theme)))
                 .child(div().flex_1().min_w_0().min_h_0().child(view.clone()))
                 .into_any_element();
         }
@@ -1496,7 +1500,7 @@ impl Render for PlanningPanel {
             .flex_col()
             .bg(theme.bg)
             .text_color(theme.fg)
-            .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_1().min_w_0().child(stepper)).children(self.activity(&theme)))
+            .child(div().flex_none().flex().flex_row().items_center().gap_2().px_3().py_2().border_b_1().border_color(theme.border).child(div().flex_none().child(stepper)).children(self.activity(&theme)))
             .children(strip)
             .child(body)
             .child(

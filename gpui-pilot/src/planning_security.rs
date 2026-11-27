@@ -89,7 +89,20 @@ pub fn unmet(review: Option<&Review>, state: &State) -> Vec<String> {
     match review {
         None => vec!["Run the security review.".to_string()],
         Some(r) if !r.done() => vec!["Run the security review again: it didn't finish.".to_string()],
-        Some(r) => r.unanswered(state).iter().map(|f| format!("Claude hasn't answered {} ({}): {}.", f.id, f.severity.to_lowercase(), f.title.trim_end_matches('.'))).collect(),
+        Some(r) => {
+            let open = r.unanswered(state);
+            match open.as_slice() {
+                [] => Vec::new(),
+                [f] => vec![format!("Claude hasn't answered {} ({}): {}.", f.id, f.severity.to_lowercase(), f.title.trim_end_matches('.'))],
+                many => {
+                    // One line for them all: the list is in the review above.
+                    let high = many.iter().filter(|f| f.severity.eq_ignore_ascii_case("high")).count();
+                    let medium = many.len() - high;
+                    let counts = [(high, "high"), (medium, "medium")].iter().filter(|(n, _)| *n > 0).map(|(n, w)| format!("{n} {w}")).collect::<Vec<_>>().join(", ");
+                    vec![format!("Claude hasn't answered {} security findings: {} ({counts}).", many.len(), many.iter().map(|f| f.id.as_str()).collect::<Vec<_>>().join(", "))]
+                }
+            }
+        }
     }
 }
 
