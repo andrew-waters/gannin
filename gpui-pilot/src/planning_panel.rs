@@ -711,6 +711,41 @@ impl PlanningPanel {
         )
     }
 
+    /// Whether the room's message box sits under the conversation, which
+    /// shows beside a plan that's begun, unless a picture's open large.
+    fn composer_in_thread(&self) -> bool {
+        self.show_thread && !self.preview && self.state.is_some() && self.enlarged.is_none() && self.agree.is_none()
+    }
+
+    /// The room's message box and Send.
+    fn composer(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.bg)
+                    .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "enter" {
+                            cx.stop_propagation();
+                            this.send_comment(window, cx);
+                        }
+                    }))
+                    .child(self.comment.clone()),
+            )
+            .child(button("plan-send", "Send", true, theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_comment(window, cx))))
+            .into_any_element()
+    }
+
     /// Shows or hides the conversation column.
     fn thread_toggle(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         (!self.preview).then(|| {
@@ -755,20 +790,23 @@ impl PlanningPanel {
                         .flex_col()
                         .gap_3()
                         .when(self.thread.is_empty(), |d| d.child(quiet("The room and Claude's conversation shows here.".into(), theme)))
+                        // A chat: Claude's on the left in grey, the room's on the right.
                         .children(self.thread.iter().enumerate().map(|(i, (room, text))| {
                             div()
                                 .flex()
                                 .flex_col()
                                 .gap_0p5()
-                                .when(*room, |d| d.pl(px(24.)))
+                                .when(*room, |d| d.pl(px(28.)).items_end())
+                                .when(!*room, |d| d.pr(px(28.)))
                                 .child(div().text_xs().text_color(if *room { theme.selected } else { theme.secondary }).child(if *room { "The room" } else { "Claude" }))
                                 .child(if *room {
-                                    div().p_2().rounded_md().bg(theme.selected.opacity(0.1)).text_sm().child(text.clone()).into_any_element()
+                                    div().px_3().py_2().rounded_lg().bg(theme.selected.opacity(0.14)).text_sm().child(text.clone()).into_any_element()
                                 } else {
-                                    div().text_sm().child(rich(&format!("plan-thread-{i}"), text, theme, &panel)).into_any_element()
+                                    div().px_3().py_2().rounded_lg().bg(theme.tile).text_sm().child(rich(&format!("plan-thread-{i}"), text, theme, &panel)).into_any_element()
                                 })
                         })),
                 )
+                .when(self.composer_in_thread(), |d| d.child(div().flex_none().p_3().border_t_1().border_color(theme.border).child(self.composer(theme, cx))))
                 .into_any_element(),
         )
     }
@@ -1604,30 +1642,8 @@ impl Render for PlanningPanel {
                         )
                     })
                     .when_some(self.notice.clone(), |d, n| d.child(div().text_xs().text_color(theme.critical()).child(n)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex_1().min_w_0()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                                        if event.keystroke.key == "enter" {
-                                            cx.stop_propagation();
-                                            this.send_comment(window, cx);
-                                        }
-                                    }))
-                                    .child(self.comment.clone()),
-                            )
-                            .child(button("plan-send", "Send", true, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_comment(window, cx)))),
-                    ),
+                    // In the conversation when it's showing; else here.
+                    .when(!self.composer_in_thread(), |d| d.child(self.composer(&theme, cx))),
             )
             .into_any_element()
     }
