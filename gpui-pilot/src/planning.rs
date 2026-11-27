@@ -260,6 +260,20 @@ impl ShapeOf {
     }
 }
 
+/// What claude writes for the room's walk-through before it agrees:
+/// short, for confirming, not capturing.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Recap {
+    pub problem: String,
+    pub solution: String,
+    pub highlights: Vec<String>,
+    /// What a person must look at before agreeing.
+    pub attention: Vec<String>,
+    /// The order it ships in, and how it rolls out.
+    pub delivery: String,
+}
+
 /// Claude asking the room to send it back to an earlier stage.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -326,6 +340,7 @@ pub struct State {
     pub shape: ShapeOf,
     /// A stage claude's asked to go back to, until the room does.
     pub back: Option<BackRequest>,
+    pub recap: Recap,
     /// initiative, epic or issue: what claude proposes the whole is.
     pub size: String,
     pub size_reason: String,
@@ -406,6 +421,7 @@ impl State {
             architecture: list::<ArchChange>(&v["design"]["architecture"]).into_iter().filter(|a| !a.path.trim().is_empty()).collect(),
             security: list::<SecurityAnswer>(&v["design"]["security"]).into_iter().filter(|a| !a.id.trim().is_empty() && !a.response.trim().is_empty()).collect(),
             back: serde_json::from_value::<BackRequest>(v["back"].clone()).ok().filter(|b| Stage::parse(&b.to).is_some()),
+            recap: serde_json::from_value(v["recap"].clone()).unwrap_or_default(),
             shape: ShapeOf {
                 tools: serde_json::from_value(v["shape"]["tools"].clone()).unwrap_or_default(),
                 flows: list::<FlowDiagram>(&v["shape"]["flows"]).into_iter().filter(|f| !f.diagram.trim().is_empty() || !f.title.trim().is_empty()).collect(),
@@ -447,6 +463,51 @@ impl State {
     /// The screens that show any of `criteria`, in order.
     pub fn screens_for(&self, criteria: &[String]) -> Vec<&Screen> {
         self.shape.screens.iter().filter(|s| s.criteria.iter().any(|c| criteria.iter().any(|w| w.eq_ignore_ascii_case(c)))).collect()
+    }
+
+    /// The issues in the order they can be delivered: each wave needs
+    /// only what's in the waves before it (`depends_on`), and what's in a
+    /// wave can go in parallel. A loop of dependencies stops rising at the
+    /// number of issues rather than going on.
+    pub fn waves(&self) -> Vec<Vec<&Task>> {
+        let issues: Vec<&Task> = self.issues().collect();
+        let key = |t: &str| t.trim().to_lowercase();
+        let mut level: std::collections::HashMap<String, usize> = issues.iter().map(|t| (key(&t.title), 0)).collect();
+        for _ in 0..issues.len() {
+            let mut changed = false;
+            for t in &issues {
+                let need = t.depends_on.iter().filter_map(|d| level.get(&key(d))).map(|l| l + 1).max().unwrap_or(0);
+                if need > level[&key(&t.title)] && need < issues.len() {
+                    level.insert(key(&t.title), need);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let depth = level.values().copied().max().map(|m| m + 1).unwrap_or(0);
+        (0..depth).map(|w| issues.iter().copied().filter(|t| level[&key(&t.title)] == w).collect::<Vec<_>>()).filter(|w| !w.is_empty()).collect()
+    }
+
+    /// The longest run of issues each needing the one before: the
+    /// shortest the whole can take, whatever runs in parallel.
+    pub fn longest_chain(&self) -> Vec<&Task> {
+        let waves = self.waves();
+        let key = |t: &str| t.trim().to_lowercase();
+        let Some(mut at) = waves.last().and_then(|w| w.first().copied()) else { return Vec::new() };
+        let mut chain = vec![at];
+        for wave in waves.iter().rev().skip(1) {
+            match wave.iter().find(|t| at.depends_on.iter().any(|d| key(d) == key(&t.title))) {
+                Some(before) => {
+                    chain.push(before);
+                    at = before;
+                }
+                None => break,
+            }
+        }
+        chain.reverse();
+        chain
     }
 
     /// Acceptance criteria no issue satisfies.
@@ -824,6 +885,15 @@ mod tests {
         a.approve(Stage::Outcome, &s, None, now);
         assert_eq!(a.get(Stage::Outcome).unwrap().round, 2);
         assert_eq!(a.outstanding(&s).iter().map(|(st, _)| *st).collect::<Vec<_>>(), vec![Stage::Requirements, Stage::Shape, Stage::Design, Stage::Breakdown]);
+    }
+
+    #[test]
+    fn planning_delivery_waves_follow_dependencies() {
+        let s = crate::planning_preview::state(Stage::Agree, true);
+        let waves: Vec<Vec<&str>> = s.waves().iter().map(|w| w.iter().map(|t| t.title.as_str()).collect()).collect();
+        assert_eq!(waves, vec![vec!["Post a failed run to Slack, grouped by job", "Mark a job quiet"], vec!["Rerun a job from its alert"]]);
+        let chain: Vec<&str> = s.longest_chain().iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(chain, vec!["Post a failed run to Slack, grouped by job", "Rerun a job from its alert"]);
     }
 
     #[test]

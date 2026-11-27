@@ -132,6 +132,15 @@ pub fn state(stage: Stage, answered: bool) -> State {
     } else if stage == Stage::Breakdown {
         v["tasks"] = json!([{ "title": "Failed job alerts", "level": "epic", "repo": "acme/notify" }]);
     }
+    if stage == Stage::Agree {
+        v["recap"] = json!({
+            "problem": "Scheduled jobs fail silently overnight. Ops hear about it from customers the next morning, nine hours late.",
+            "solution": "A notifier posts each failure to the on-call Slack channel within a minute, grouped by job, with a Rerun button.",
+            "highlights": ["Billing jobs first, behind the job_alerts flag", "Repeats within an hour update one message, not many", "Flaky jobs can be marked quiet from the job page"],
+            "attention": ["Rerun starts production jobs from Slack: it must check who may run the job (SEC1)", "Three jobs fail most nights and retry: mark them quiet before the flag goes on, or the channel floods"],
+            "delivery": "The Slack notifier ships first. Rerun follows it; Quiet can go in parallel. Turn the flag on for billing jobs, watch a week, then all jobs."
+        });
+    }
     State::parse(&v)
 }
 

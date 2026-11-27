@@ -90,6 +90,12 @@ pub struct PlanningPanel {
     thread_scroll: gpui::ScrollHandle,
     /// The conversation as a third column.
     show_thread: bool,
+    /// The recap open, on its slide: the plan walked through before the
+    /// room agrees.
+    recap: Option<usize>,
+    /// Focus the recap at the next draw, for its keys (opened where
+    /// there's no window to focus it).
+    focus_recap: bool,
 }
 
 /// A diagram opened in the panel: what it's of, and its picture.
@@ -198,6 +204,11 @@ impl PlanningPanel {
                                     None => format!("Claude took this back from {} to {}. It and every stage after need approving again.", before.title(), now.title()),
                                 });
                             }
+                            // Arrived at Agree: the room walks through it first.
+                            if now == Stage::Agree && this.last_stage.is_some_and(|b| b != Stage::Agree) && !this.agreed.finished() {
+                                this.recap = Some(0);
+                                this.focus_recap = true;
+                            }
                             this.last_stage = Some(now);
                         }
                         this.state = state;
@@ -261,6 +272,8 @@ impl PlanningPanel {
             thread: Vec::new(),
             thread_scroll: gpui::ScrollHandle::new(),
             show_thread: true,
+            recap: None,
+            focus_recap: false,
         }
     }
 
@@ -311,6 +324,8 @@ impl PlanningPanel {
             thread: Vec::new(),
             thread_scroll: gpui::ScrollHandle::new(),
             show_thread: true,
+            recap: None,
+            focus_recap: false,
         }
     }
 
@@ -475,7 +490,7 @@ impl PlanningPanel {
                 unmet.iter().map(|u| u.trim_end_matches('.').to_lowercase()).collect::<Vec<_>>().join("; "),
                 next.title().to_lowercase()
             ),
-            None if next == Stage::Agree => "The room approved the breakdown. Set `phase` to `ready` and `done` to true.".to_string(),
+            None if next == Stage::Agree => "The room approved the breakdown. Write `recap` for the room's walk-through, as the instructions say, then set `phase` to `ready` and `done` to true.".to_string(),
             None => format!("The room approved {}. Move on to {}: set `phase` to `{}`.", stage.title().to_lowercase(), next.title().to_lowercase(), next.key()),
         };
         self.send(message, window, cx);
@@ -484,6 +499,9 @@ impl PlanningPanel {
             let mut moved = crate::planning_preview::state(next, next == Stage::Agree);
             moved.security = state.security.clone();
             self.state = Some(moved);
+            if next == Stage::Agree {
+                self.open_recap(window, cx);
+            }
             self.questions = crate::planning_preview::question(next).into_iter().collect();
             self.picked = vec![Vec::new(); self.questions.len()];
         }
@@ -492,7 +510,7 @@ impl PlanningPanel {
 
     /// Back to an earlier stage, saying why: it and every later one need
     /// approving again.
-    fn back(&mut self, to: Stage, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn back(&mut self, to: Stage, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.comment.read(cx).text(cx).trim().to_string();
         let asked = self.state.as_ref().and_then(|s| s.back.clone()).filter(|b| Stage::parse(&b.to) == Some(to));
         if let (true, Some(asked)) = (text.is_empty(), asked) {
@@ -520,7 +538,7 @@ impl PlanningPanel {
         cx.notify();
     }
 
-    fn open_agree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_agree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(state) = self.state.clone() else { return };
         let view = cx.new(|cx| AgreeView::new(self.launch.clone(), self.dir.clone(), self.preview, state, self.approvals.clone(), window, cx));
         let subscription = cx.subscribe_in(&view, window, |this, _, event: &AgreeEvent, window, cx| {
@@ -747,6 +765,117 @@ impl PlanningPanel {
                     .child(self.comment.clone()),
             )
             .child(button("plan-send", "Send", true, theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_comment(window, cx))))
+            .into_any_element()
+    }
+
+    pub(crate) fn open_recap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.recap = Some(0);
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn close_recap(&mut self, cx: &mut Context<Self>) {
+        self.recap = None;
+        cx.notify();
+    }
+
+    /// The recap, full window: a slide at a time.
+    fn recap_view(&mut self, at: usize, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if std::mem::take(&mut self.focus_recap) {
+            window.focus(&self.focus, cx);
+        }
+        let state = self.state.clone().unwrap_or_default();
+        let slides = crate::planning_recap::slides(&state);
+        let at = at.min(slides.len().saturating_sub(1));
+        let slide = slides[at];
+        let panel = cx.entity().downgrade();
+        let ctx = crate::planning_recap::Context { state: &state, review: self.review.as_ref(), approvals: &self.approvals, folder: &self.folder, panel: &panel };
+        let count = slides.len();
+        let content = crate::planning_recap::slide(slide, &ctx, theme);
+        let step = move |this: &mut Self, by: i32, cx: &mut Context<Self>| {
+            let next = (at as i32 + by).clamp(0, count as i32 - 1) as usize;
+            this.recap = Some(next);
+            cx.notify();
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(theme.bg)
+            .text_color(theme.fg)
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| match event.keystroke.key.as_str() {
+                "left" => step(this, -1, cx),
+                "right" | "space" => step(this, 1, cx),
+                "escape" => this.close_recap(cx),
+                _ => {}
+            }))
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .px_6()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(div().text_sm().text_color(theme.secondary).child(format!("Recap: {}", if state.title.is_empty() { "the plan" } else { state.title.as_str() })))
+                    .child(div().flex_1().flex().flex_row().justify_center().gap_1p5().children(slides.iter().enumerate().map(|(i, s)| {
+                        div()
+                            .id(SharedString::from(format!("recap-dot-{i}")))
+                            .px_2()
+                            .py_0p5()
+                            .rounded_full()
+                            .text_xs()
+                            .cursor_pointer()
+                            .bg(if i == at { theme.selected } else { theme.tile })
+                            .text_color(if i == at { theme.on_selected } else { theme.secondary })
+                            .child(s.title())
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.recap = Some(i);
+                                cx.notify();
+                            }))
+                    })))
+                    .child(button("recap-close", "Close", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_recap(cx)))),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("recap-slide-{at}")))
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_row()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(1100.))
+                            .px_10()
+                            .py_8()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(div().text_3xl().font_weight(FontWeight::SEMIBOLD).child(slide.title()))
+                            .child(content),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .px_6()
+                    .py_3()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(div().flex_1().text_xs().text_color(theme.tertiary).child(format!("{} of {count}. The arrow keys move between slides; Esc closes.", at + 1)))
+                    .when(at > 0, |d| d.child(button("recap-prev", "‹ Back", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| step(this, -1, cx)))))
+                    .when(at + 1 < count, |d| d.child(div().w(px(8.))).child(button("recap-next", "Next ›", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| step(this, 1, cx))))),
+            )
             .into_any_element()
     }
 
@@ -1371,6 +1500,9 @@ impl Render for PlanningPanel {
                 )
         }));
 
+        if let Some(at) = self.recap.filter(|_| self.state.is_some() && self.agree.is_none()) {
+            return self.recap_view(at, &theme, window, cx);
+        }
         if let Some((view, _)) = &self.agree {
             return div()
                 .size_full()
@@ -1603,6 +1735,7 @@ impl Render for PlanningPanel {
                     let s = *s;
                     button(SharedString::from(format!("plan-back-{}", s.key())), format!("Go Back to {}", s.title()), false, &theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.back(s, window, cx)))
                 }))
+                .child(button("plan-recap", "Show the Recap", false, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_recap(window, cx))))
                 .child(button("plan-agree", "Agree", true, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_agree(window, cx))))
                 .into_any_element()
         } else {
@@ -1787,7 +1920,7 @@ fn watch_diagrams(cx: &mut Context<PlanningPanel>) -> Task<()> {
 
 /// Markdown with any ```mermaid blocks in it drawn as diagrams, the rest
 /// as Markdown.
-fn rich(id: &str, text: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
+pub(crate) fn rich(id: &str, text: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
     let mut parts: Vec<(bool, String)> = Vec::new();
     let (mut prose, mut chart, mut in_chart) = (String::new(), String::new(), false);
     for line in text.lines() {
@@ -1836,7 +1969,7 @@ fn rich(id: &str, text: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPa
 
 /// A Mermaid diagram, drawn (click to open it large in the panel), being
 /// drawn, or its source with why it couldn't be.
-fn diagram(id: &str, title: &str, source: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
+pub(crate) fn diagram(id: &str, title: &str, source: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
     let code = |key: &str| markdown(&format!("{id}-{key}"), &format!("```mermaid\n{}\n```", source.trim()), theme);
     match crate::mermaid::diagram(source, theme.dark) {
         crate::mermaid::Diagram::Drawn(path, w, h) => {

@@ -49,6 +49,7 @@ mod planning_docs;
 mod planning_page;
 mod planning_panel;
 mod planning_preview;
+mod planning_recap;
 mod planning_security;
 mod paths;
 mod projects;
