@@ -46,9 +46,10 @@ mod page;
 mod planning;
 mod planning_agree;
 mod planning_docs;
+#[cfg(test)]
+mod planning_fixtures;
 mod planning_page;
 mod planning_panel;
-mod planning_preview;
 mod planning_recap;
 mod planning_security;
 mod paths;
@@ -219,27 +220,6 @@ fn main() {
                         ..Default::default()
                     };
                     cx.open_window(options, |window, cx| cx.new(|cx| assistant_preview::AssistantPreview::new(window, cx))).expect("open the preview");
-                    cx.activate(true);
-                });
-                return;
-            }
-            // Planning with a made-up plan, in its own window and process:
-            // no Claude Code, no GitHub, nothing a running Gannin uses.
-            "--planning-preview" => {
-                gpui_platform::application().with_assets(icons::Assets).run(|cx: &mut App| {
-                    zed::init(cx);
-                    cx.bind_keys(window_key_bindings());
-                    cx.on_action(|_: &Quit, cx| cx.quit());
-                    handle_window_actions(cx);
-                    cx.set_menus(vec![Menu { name: "Planning Preview".into(), items: app_menu_items(), disabled: false }, window_menu()]);
-                    let options = gpui::WindowOptions {
-                        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(760.), gpui::px(900.)), cx))),
-                        titlebar: Some(gpui::TitlebarOptions { title: Some("Planning Preview".into()), appears_transparent: false, traffic_light_position: None }),
-                        app_id: Some(crate::shell::APP_ID.into()),
-                        ..Default::default()
-                    };
-                    cx.open_window(options, |window, cx| cx.new(|cx| planning_panel::PlanningPanel::preview(window, cx))).expect("open the preview");
-                    cx.on_window_closed(|cx, _| cx.quit()).detach();
                     cx.activate(true);
                 });
                 return;

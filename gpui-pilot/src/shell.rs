@@ -113,8 +113,6 @@ pub enum Nav {
     SchedulePreview,
     /// The workflow editor.
     WorkflowsPreview,
-    /// Planning from a made-up plan, with no Claude or GitHub calls.
-    PlanningPreview,
 }
 
 impl Nav {
@@ -157,7 +155,6 @@ impl Nav {
             Nav::ReviewPreview => "Review Preview",
             Nav::SchedulePreview => "Schedule",
             Nav::WorkflowsPreview => "Workflows",
-            Nav::PlanningPreview => "Planning Preview",
         }
     }
 }
@@ -431,7 +428,6 @@ enum Page {
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
-    PlanningPreview(Entity<crate::planning_panel::PlanningPanel>),
     Planning(Entity<crate::planning_page::PlanningPage>),
     AgentMetrics(Entity<crate::agent_metrics::AgentMetricsPage>),
     Releases(Entity<crate::releases::ReleasesPage>),
@@ -1138,7 +1134,6 @@ impl Workspace {
                 let server = self.folder.as_ref().and_then(|f| f.location.server.clone());
                 Page::Planning(cx.new(|cx| crate::planning_page::PlanningPage::new(org.clone(), server, cx)))
             }
-            Nav::PlanningPreview => Page::PlanningPreview(cx.new(|cx| crate::planning_panel::PlanningPanel::preview(window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             Nav::AgentMetrics => Page::AgentMetrics(cx.new(|cx| crate::agent_metrics::AgentMetricsPage::new(org.clone(), cx))),
             Nav::Releases => Page::Releases(cx.new(|cx| crate::releases::ReleasesPage::new(org.clone(), window, cx))),
@@ -1239,7 +1234,6 @@ impl Workspace {
             Page::Planning(page) => vec![cx.subscribe_in(page, window, |this, _, event: &crate::planning_page::PlanningAction, window, cx| match event {
                 crate::planning_page::PlanningAction::Open(launch) => this.resume_launch(launch.clone(), window, cx),
                 crate::planning_page::PlanningAction::New => this.open_form(crate::launch::Flow::Plan, None, window, cx),
-                crate::planning_page::PlanningAction::Preview => this.navigate(Nav::PlanningPreview, true, window, cx),
             })],
             Page::Harness(page) => vec![cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
                 this.drawers.clear();
@@ -6473,7 +6467,6 @@ impl Workspace {
                 Page::ReviewPreview(page) => page.into_any_element(),
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
-                Page::PlanningPreview(page) => page.into_any_element(),
                 Page::Planning(page) => page.into_any_element(),
                 Page::AgentMetrics(page) => page.into_any_element(),
                 Page::Releases(page) => page.into_any_element(),
@@ -7623,7 +7616,6 @@ fn nav_icon(nav: Nav) -> &'static str {
         Nav::ReviewPreview => "icons/eye.svg",
         Nav::SchedulePreview => "icons/clock.svg",
         Nav::WorkflowsPreview => "icons/git_graph.svg",
-        Nav::PlanningPreview => "icons/eye.svg",
         Nav::Planning => "icons/list_todo.svg",
         Nav::Settings => "icons/settings.svg",
         Nav::AgentMetrics => "icons/sparkle.svg",

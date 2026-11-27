@@ -29,10 +29,6 @@ pub struct AgreeView {
     launch: Launch,
     /// Where the session keeps what Agree has done.
     dir: PathBuf,
-    /// Writes nothing: shows what it would have (`planning_preview`).
-    preview: bool,
-    /// In the preview, what GitHub would have been asked, as Markdown.
-    written: Option<String>,
     state: State,
     approvals: Approvals,
     drafts: Vec<Draft>,
@@ -62,7 +58,7 @@ const ORG_MEMBERS: &str = "query($login: String!, $cursor: String) { organizatio
 const ORG_TYPES: &str = "query($login: String!) { organization(login: $login) { issueTypes(first: 25) { nodes { id name isEnabled } } } }";
 
 impl AgreeView {
-    pub fn new(launch: Launch, dir: PathBuf, preview: bool, state: State, approvals: Approvals, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(launch: Launch, dir: PathBuf, state: State, approvals: Approvals, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let drafts = planning::drafts(&state);
         let titles = drafts
             .iter()
@@ -90,9 +86,6 @@ impl AgreeView {
             let members = cx
                 .background_executor()
                 .spawn(async move {
-                    if preview {
-                        return [("aw", "Andrew Waters"), ("sam", "Sam Okafor"), ("priya", "Priya Shah"), ("jo", "Jo Lindqvist")].iter().map(|(l, n)| (l.to_string(), n.to_string())).collect();
-                    }
                     let Some(token) = crate::auth::token() else { return Vec::new() };
                     let mut members: Vec<(String, String)> = Vec::new();
                     let mut cursor: Option<String> = None;
@@ -134,9 +127,6 @@ impl AgreeView {
             let types = cx
                 .background_executor()
                 .spawn(async move {
-                    if preview {
-                        return Some(crate::planning_preview::types());
-                    }
                     let token = crate::auth::token()?;
                     let data = github::graphql(&token, ORG_TYPES, json!({ "login": org })).ok()?;
                     Some(
@@ -167,8 +157,6 @@ impl AgreeView {
         Self {
             launch,
             dir,
-            preview,
-            written: None,
             state,
             approvals,
             drafts,
@@ -410,7 +398,7 @@ impl AgreeView {
         repos.sort();
         repos.dedup();
         let architecture: Vec<String> = self.state.architecture.iter().filter(|a| a.valid()).map(|a| a.path.trim().to_string()).collect();
-        if !self.preview {
+        {
             let folder = self.launch.local_folder();
             if let Some(missing) = architecture.iter().find(|p| !folder.join(p).is_file()) {
                 self.error = Some(format!("{missing} isn't in the session's folder yet. Ask Claude to write it there, or to drop it from the design."));
@@ -449,9 +437,6 @@ impl AgreeView {
         if !self.agreed.made.is_empty() || self.agreed.parent.is_some() {
             detail.push("What was filed last time is kept, not filed again.".into());
         }
-        if self.preview {
-            detail.push("This is the preview: nothing is filed or committed. You'll see what would have been.".into());
-        }
         let answer = window.prompt(gpui::PromptLevel::Info, "Agree and write it all?", Some(&detail.join("\n\n")), &["Agree and Write", "Cancel"], cx);
         let job = Job {
             harness: self.launch.harness_repo.clone(),
@@ -467,10 +452,8 @@ impl AgreeView {
             by,
             owner: crate::auth::saved_viewer().map(|v| v.login).unwrap_or_default(),
             shared,
-            folder: if self.preview { self.dir.clone() } else { self.launch.local_folder() },
-            stub_missing: self.preview,
+            folder: self.launch.local_folder(),
         };
-        let rehearse = self.preview;
         cx.spawn_in(window, async move |this, cx| {
             if answer.await != Ok(0) {
                 return;
@@ -483,17 +466,13 @@ impl AgreeView {
             {
                 return;
             }
-            let result = cx.background_executor().spawn(async move { job.run(rehearse) }).await;
+            let result = cx.background_executor().spawn(async move { job.run() }).await;
             this.update(cx, |this, cx| {
                 this.running = false;
                 match result {
-                    Ok((agreed, written)) => {
+                    Ok(agreed) => {
                         this.agreed = agreed.clone();
-                        // The preview stays open on what it would have written.
-                        match written {
-                            Some(written) => this.written = Some(written),
-                            None => cx.emit(AgreeEvent::Agreed(agreed)),
-                        }
+                        cx.emit(AgreeEvent::Agreed(agreed));
                     }
                     Err((agreed, error)) => {
                         this.agreed = agreed;
@@ -533,9 +512,6 @@ struct Job {
     /// The session's folder in the harness, where claude leaves the
     /// architecture documents the design changes.
     folder: PathBuf,
-    /// The preview: an architecture document not in the folder is stood
-    /// in for, where a real Agree stops.
-    stub_missing: bool,
 }
 
 const REPO: &str = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id labels(first: 100) { nodes { id name } } } }";
@@ -554,7 +530,7 @@ struct Existing {
 }
 
 /// Agree's writes, so the same steps run against GitHub or, in the
-/// preview and the tests, against a stand-in that only records them.
+/// tests, against a stand-in that only records them.
 trait Writer {
     /// Files an issue; its node ID, number and URL.
     fn create(&mut self, repo: &str, title: &str, body: &str, labels: &[String], type_id: Option<&String>) -> Result<(String, i64, String), String>;
@@ -635,14 +611,16 @@ impl Writer for GitHub {
     }
 }
 
-/// The preview's stand-in: numbers issues from 101 and keeps a record of
-/// what GitHub would have been asked, as Markdown to show.
+/// The tests' stand-in: numbers issues from 101 and keeps a record of
+/// what GitHub would have been asked.
+#[cfg(test)]
 #[derive(Default)]
 pub struct Rehearsal {
     next: i64,
     pub record: Vec<String>,
 }
 
+#[cfg(test)]
 impl Writer for Rehearsal {
     fn create(&mut self, repo: &str, title: &str, body: &str, labels: &[String], type_id: Option<&String>) -> Result<(String, i64, String), String> {
         self.next = self.next.max(100) + 1;
@@ -673,7 +651,7 @@ impl Writer for Rehearsal {
             let shown = if path.ends_with(".md") { format!("```markdown\n{text}\n```") } else { text };
             self.record.push(format!("### Commits {path} to {harness}, \"{message}\"\n\n{shown}"));
         }
-        Ok("preview".into())
+        Ok("recorded".into())
     }
 
     fn comment(&mut self, _: &str, reference: &str, body: &str) -> Result<(), String> {
@@ -683,20 +661,13 @@ impl Writer for Rehearsal {
 }
 
 impl Job {
-    /// Writes it all; `rehearse` writes nothing, and says what it would have.
-    fn run(self, rehearse: bool) -> Result<(Agreed, Option<String>), (Agreed, String)> {
+    /// Writes it all.
+    fn run(self) -> Result<Agreed, (Agreed, String)> {
         let mut agreed = Agreed::load(&self.dir);
-        if rehearse {
-            let mut writer = Rehearsal::default();
-            return match self.steps(&mut agreed, &mut writer) {
-                Ok(()) => Ok((agreed, Some(writer.record.join("\n\n")))),
-                Err(e) => Err((agreed, e)),
-            };
-        }
         let Some(token) = crate::auth::token() else { return Err((agreed, "Not signed in to GitHub.".into())) };
         let mut writer = GitHub { token, repos: HashMap::new() };
         match self.steps(&mut agreed, &mut writer) {
-            Ok(()) => Ok((agreed, None)),
+            Ok(()) => Ok(agreed),
             Err(e) => Err((agreed, e)),
         }
     }
@@ -831,7 +802,6 @@ impl Job {
                 let (Some(from), Some(to)) = (screen.image_path(), docs::screen_path(&self.slug, screen)) else { continue };
                 let bytes = match std::fs::read(self.folder.join(from)) {
                     Ok(bytes) => bytes,
-                    Err(_) if self.stub_missing => format!("(the preview's {from})").into_bytes(),
                     Err(e) => return Err(format!("Couldn't read the screen {from} from the session's folder: {e}")),
                 };
                 files.push((to, bytes));
@@ -842,7 +812,6 @@ impl Job {
                 let path = change.path.trim();
                 let text = match std::fs::read_to_string(self.folder.join(path)) {
                     Ok(text) => text,
-                    Err(_) if self.stub_missing => docs::architecture_stub(change),
                     Err(e) => return Err(format!("Couldn't read {path} from the session's folder: {e}")),
                 };
                 files.push((path.to_string(), docs::mark_planned(&text, &agreed.plan_path).into_bytes()));
@@ -1039,23 +1008,6 @@ impl Render for AgreeView {
                         button("agree-write", label, true, &theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.agree(window, cx))).into_any_element()
                     }),
             );
-        if let Some(written) = &self.written {
-            let agreed = self.agreed.clone();
-            return div()
-                .id("agree")
-                .size_full()
-                .text_color(theme.fg)
-                .overflow_y_scroll()
-                .p_4()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("What Agree would have written"))
-                .child(quiet("Nothing was filed or committed. This is what GitHub and the harness would have been sent, in order.".into()))
-                .child(div().flex().flex_row().child(button("agree-preview-done", "Done", true, &theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(AgreeEvent::Agreed(agreed.clone()))))))
-                .child(crate::markdown::markdown("agree-written", written, &theme))
-                .into_any_element();
-        }
         // The choices on the left; what gets filed, the long part, on the right.
         let tickets = div()
             .id("agree-tickets")
@@ -1087,7 +1039,7 @@ mod tests {
     use crate::planning::Stage;
 
     fn job(dir: PathBuf) -> Job {
-        let state = crate::planning_preview::state(Stage::Agree, true);
+        let state = crate::planning_fixtures::state(Stage::Agree, true);
         Job {
             harness: "acme/harness".into(),
             branch: "plan-x".into(),
@@ -1097,14 +1049,26 @@ mod tests {
             state,
             subject: None,
             new_parent: Some(NewParent { title: "Failed job alerts".into(), repo: "acme/notify".into(), type_id: Some("IT_initiative".into()), type_name: Some("Initiative".into()) }),
-            types: crate::planning_preview::types(),
+            types: crate::planning_fixtures::types(),
             write_requirement: true,
             by: vec!["aw".into()],
             owner: "aw".into(),
             shared: Vec::new(),
-            folder: std::env::temp_dir().join("gannin-agree-test-no-folder"),
-            stub_missing: true,
+            folder: folder(),
         }
+    }
+
+    /// The session's folder as claude would leave it: the screens and the
+    /// architecture document the design changes.
+    fn folder() -> PathBuf {
+        let folder = std::env::temp_dir().join(format!("gannin-agree-test-folder-{}", std::process::id()));
+        std::fs::create_dir_all(folder.join("shape")).unwrap();
+        std::fs::create_dir_all(folder.join("architecture")).unwrap();
+        for s in ["S1", "S2", "S3"] {
+            std::fs::write(folder.join(format!("shape/{s}.svg")), "<svg/>").unwrap();
+        }
+        std::fs::write(folder.join("architecture/job-runs.md"), "---\ntype: architecture\nsummary: Job runs\n---\n\n# Job runs\n").unwrap();
+        folder
     }
 
     #[test]

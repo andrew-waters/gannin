@@ -1,7 +1,7 @@
 //! Work › Planning: the org's planning sessions on this Mac (or this
 //! window's server), newest first, each with the stage it's on and whether
 //! the room has agreed it. A row opens its session (claude resuming); New
-//! starts one; Try the Preview opens the made-up plan, which calls nothing.
+//! starts one.
 //! Read from the sessions kept on disk, again every few seconds.
 
 use crate::charts::Theme;
@@ -14,7 +14,6 @@ use std::time::Duration;
 pub enum PlanningAction {
     Open(Launch),
     New,
-    Preview,
 }
 
 impl EventEmitter<PlanningAction> for PlanningPage {}
@@ -98,7 +97,6 @@ impl Render for PlanningPage {
                     .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Planning"))
                     .child(div().text_xs().text_color(theme.secondary).child("Where new initiatives, epics and issues start: the outcome, the requirement, the shape, the design and its security review, then the breakdown the room agrees.")),
             )
-            .child(button("planning-preview", "Try the Preview", false, &theme).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(PlanningAction::Preview))))
             .child(button("planning-new", "New Initiative, Epic or Issue", true, &theme).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(PlanningAction::New))));
         let list = div().id("planning-sessions").flex_1().min_w_0().min_h_0().overflow_y_scroll().flex().flex_col().children(self.rows.iter().enumerate().map(|(i, row)| {
             let launch = row.launch.clone();

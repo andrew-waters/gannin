@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn planning_delivery_waves_follow_dependencies() {
-        let s = crate::planning_preview::state(Stage::Agree, true);
+        let s = crate::planning_fixtures::state(Stage::Agree, true);
         let waves: Vec<Vec<&str>> = s.waves().iter().map(|w| w.iter().map(|t| t.title.as_str()).collect()).collect();
         assert_eq!(waves, vec![vec!["Post a failed run to Slack, grouped by job", "Mark a job quiet"], vec!["Rerun a job from its alert"]]);
         let chain: Vec<&str> = s.longest_chain().iter().map(|t| t.title.as_str()).collect();

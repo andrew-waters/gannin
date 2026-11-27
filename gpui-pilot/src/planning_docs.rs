@@ -461,14 +461,6 @@ pub fn mark_planned(text: &str, plan_path: &str) -> String {
     format!("---\n{}{body}", lines.join("\n"))
 }
 
-/// A stand-in for an architecture document claude didn't leave in the
-/// folder, for the preview's rehearsal only: a real Agree never writes
-/// over a document it hasn't read.
-pub fn architecture_stub(change: &crate::planning::ArchChange) -> String {
-    let name = change.path.trim().trim_start_matches("architecture/").trim_end_matches(".md").replace('-', " ");
-    format!("---\ntype: architecture\nstatus: current\nsummary: {}\n---\n\n# {name}\n\n```mermaid\n{}\n```\n", yaml(&change.note), change.diagram.trim())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
