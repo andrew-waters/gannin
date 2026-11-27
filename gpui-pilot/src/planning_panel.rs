@@ -76,6 +76,10 @@ pub struct PlanningPanel {
 struct Enlarged {
     title: String,
     path: std::path::PathBuf,
+    /// Its natural size, in points.
+    size: (f32, f32),
+    /// Fitted to the space; else at its natural size, scrolling.
+    fit: bool,
 }
 
 impl PlanningPanel {
@@ -928,22 +932,44 @@ impl Render for PlanningPanel {
                         .border_b_1()
                         .border_color(theme.border)
                         .child(div().flex_1().min_w_0().font_weight(FontWeight::MEDIUM).truncate().child(big.title.clone()))
+                        .child(button("plan-diagram-size", if big.fit { "Full Size" } else { "Fit" }, false, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            if let Some(big) = this.enlarged.as_mut() {
+                                big.fit = !big.fit;
+                            }
+                            cx.notify();
+                        })))
                         .child(button("plan-diagram-preview", "Open in Preview", false, &theme).on_click(move |_, _, cx| cx.open_url(&url)))
                         .child(button("plan-diagram-close", "Close", true, &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.enlarged = None;
                             cx.notify();
                         }))),
                 )
-                .child(
+                // Pinned inside the card, so it's fitted to the space rather
+                // than drawn at its own size.
+                .child(if big.fit {
                     div()
                         .flex_1()
                         .min_h_0()
                         .m_3()
-                        .p_3()
+                        .relative()
+                        .overflow_hidden()
                         .rounded_md()
                         .bg(if theme.dark { theme.tile } else { gpui::white() })
-                        .child(gpui::img(big.path).size_full().object_fit(gpui::ObjectFit::Contain)),
-                )
+                        .child(gpui::img(big.path.clone()).absolute().top_3().left_3().right_3().bottom_3().object_fit(gpui::ObjectFit::Contain))
+                        .into_any_element()
+                } else {
+                    // At its own size, scrolling both ways.
+                    div()
+                        .id("plan-diagram-scroll")
+                        .flex_1()
+                        .min_h_0()
+                        .m_3()
+                        .overflow_scroll()
+                        .rounded_md()
+                        .bg(if theme.dark { theme.tile } else { gpui::white() })
+                        .child(div().p_3().w(px(big.size.0 + 24.)).h(px(big.size.1 + 24.)).child(gpui::img(big.path.clone()).w(px(big.size.0)).h(px(big.size.1))))
+                        .into_any_element()
+                })
                 .into_any_element()
         } else { match &self.state {
             // Before claude's written the plan: its first question still shows.
@@ -1190,7 +1216,7 @@ fn diagram(id: &str, title: &str, source: &str, theme: &Theme, panel: &gpui::Wea
     let code = |key: &str| markdown(&format!("{id}-{key}"), &format!("```mermaid\n{}\n```", source.trim()), theme);
     match crate::mermaid::diagram(source, theme.dark) {
         crate::mermaid::Diagram::Drawn(path, w, h) => {
-            let (panel, open) = (panel.clone(), Enlarged { title: title.to_string(), path: path.clone() });
+            let (panel, open) = (panel.clone(), Enlarged { title: title.to_string(), path: path.clone(), size: (w, h), fit: true });
             div()
                 .id(SharedString::from(format!("{id}-drawn")))
                 .flex()
