@@ -1500,7 +1500,8 @@ impl Render for PlanningPanel {
                 )
         }));
 
-        if let Some(at) = self.recap.filter(|_| self.state.is_some() && self.agree.is_none()) {
+        // A diagram opened from the recap shows large over it; Close goes back.
+        if let Some(at) = self.recap.filter(|_| self.state.is_some() && self.agree.is_none() && self.enlarged.is_none()) {
             return self.recap_view(at, &theme, window, cx);
         }
         if let Some((view, _)) = &self.agree {
