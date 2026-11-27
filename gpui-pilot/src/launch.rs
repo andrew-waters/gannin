@@ -127,6 +127,16 @@ impl Launch {
         self.harness_path.join(".worktrees").join(&self.branch)
     }
 
+    /// The session's folder as this Mac can read it: the folder itself, or
+    /// for a session on a server, the copy the mirror keeps of its plan,
+    /// screens and architecture (`servers::watch`).
+    pub fn local_folder(&self) -> PathBuf {
+        match self.server {
+            Some(_) => self.dir().join("folder"),
+            None => self.folder(),
+        }
+    }
+
     /// The state the hooks last wrote: starting, working, needs-you, idle
     /// or exited.
     pub fn state(&self) -> Option<String> {

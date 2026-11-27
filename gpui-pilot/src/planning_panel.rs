@@ -59,7 +59,7 @@ pub struct PlanningPanel {
 
 impl PlanningPanel {
     pub fn new(launch: Launch, terminal: Entity<Terminal>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let path = launch.folder().join("planning.json");
+        let path = launch.local_folder().join("planning.json");
         let dir = launch.dir();
         // Re-read every few seconds, off the main thread, with the question
         // claude's waiting on.
@@ -107,7 +107,7 @@ impl PlanningPanel {
             editor
         });
         let dir = launch.dir();
-        let folder = launch.folder();
+        let folder = launch.local_folder();
         Self {
             approvals: Approvals::load(&dir),
             agreed: Agreed::load(&dir),

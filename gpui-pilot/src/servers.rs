@@ -434,8 +434,11 @@ fn pull(job: &Watched) -> Result<(), String> {
 for f in state tool.json pr changed started gate/request; do [ -f "$f" ] && printf '%s %s\n' "$f" "$(base64 < "$f" | tr -d '\n')"; done
 t=$(ls "$HOME"/.claude/projects/*/{id}.jsonl 2>/dev/null | head -1)
 if [ -n "$t" ]; then printf 'size %s\n' "$(wc -c < "$t" | tr -d ' ')"; printf 'transcript %s\n' "$(tail -c +{from} "$t" | base64 | tr -d '\n')"; fi
+w={work}
+if [ -d "$w" ]; then for f in "$w"/planning.json "$w"/shape/* "$w"/architecture/*; do [ -f "$f" ] && printf 'sum %s %s\n' "$(cksum < "$f" | cut -d' ' -f1-2 | tr ' ' '-')" "$(printf %s "${{f#$w/}}" | base64 | tr -d '\n')"; done; fi
 "#,
         remote = crate::launch::quote_path(&job.local),
+        work = crate::launch::quote_path(&job.folder),
         id = job.claude_id,
         from = have + 1,
     );
@@ -444,9 +447,24 @@ if [ -n "$t" ]; then printf 'size %s\n' "$(wc -c < "$t" | tr -d ' ')"; printf 't
     let output = String::from_utf8_lossy(&output);
     let decode = |text: &str| base64::engine::general_purpose::STANDARD.decode(text.trim()).ok();
     let mut shrank = false;
+    let mut changed: Vec<(String, String)> = Vec::new();
     for line in output.lines() {
         let (name, value) = line.split_once(' ').unwrap_or((line, ""));
         match name {
+            // A file of the session's own in the harness (a plan, its
+            // screens and architecture), by checksum: fetched when it changes.
+            "sum" => {
+                let Some((sum, rel)) = value.split_once(' ') else { continue };
+                let Some(rel) = decode(rel).and_then(|b| String::from_utf8(b).ok()) else { continue };
+                if rel.starts_with('/') || rel.split('/').any(|p| p == "..") {
+                    continue;
+                }
+                let key = format!("{}\n{rel}", job.local.display());
+                let seen = sums().lock().ok().and_then(|m| m.get(&key).cloned());
+                if seen.as_deref() != Some(sum) || !job.local.join("folder").join(&rel).exists() {
+                    changed.push((rel, sum.to_string()));
+                }
+            }
             "size" => shrank = value.trim().parse::<u64>().is_ok_and(|size| size < have),
             "transcript" if shrank => {
                 // Rewritten there: start the copy again next round.
@@ -472,7 +490,36 @@ if [ -n "$t" ]; then printf 'size %s\n' "$(wc -c < "$t" | tr -d ' ')"; printf 't
             _ => {}
         }
     }
+    if !changed.is_empty() {
+        let mut fetch = format!("cd {} 2>/dev/null || exit 0\n", crate::launch::quote_path(&job.folder));
+        for (rel, _) in &changed {
+            fetch.push_str(&format!("[ -f {q} ] && printf 'got %s %s\\n' {b} \"$(base64 < {q} | tr -d '\\n')\"\n", q = crate::launch::quote(rel), b = crate::launch::quote(&base64::engine::general_purpose::STANDARD.encode(rel))));
+        }
+        let got = command_within(&job.server, "bash -s", Some(fetch.as_bytes()), Some(READ_TIMEOUT))?;
+        for line in String::from_utf8_lossy(&got).lines() {
+            let mut parts = line.splitn(3, ' ');
+            let (Some("got"), Some(rel), Some(body)) = (parts.next(), parts.next(), parts.next()) else { continue };
+            let (Some(rel), Some(bytes)) = (decode(rel).and_then(|b| String::from_utf8(b).ok()), decode(body)) else { continue };
+            let Some((_, sum)) = changed.iter().find(|(r, _)| *r == rel) else { continue };
+            let path = job.local.join("folder").join(&rel);
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if std::fs::write(&path, bytes).is_ok() {
+                if let Ok(mut m) = sums().lock() {
+                    m.insert(format!("{}\n{rel}", job.local.display()), sum.clone());
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+/// The checksum of each session file the mirror last copied, by session
+/// folder and path.
+fn sums() -> &'static Mutex<HashMap<String, String>> {
+    static SUMS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    SUMS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[cfg(test)]

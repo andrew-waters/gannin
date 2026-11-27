@@ -42,7 +42,7 @@ fn rows(org: Option<&str>, server: Option<&crate::servers::Server>) -> Vec<Row> 
         .into_iter()
         .filter(|l| l.flow == Flow::Plan && org.is_none_or(|o| l.org.eq_ignore_ascii_case(o)) && l.server.as_ref() == server)
         .map(|launch| {
-            let state = State::read(&launch.folder().join("planning.json"));
+            let state = State::read(&launch.local_folder().join("planning.json"));
             let agreed = Agreed::load(&launch.dir());
             Row {
                 title: state.as_ref().map(|s| s.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| launch.title.trim_start_matches("Plan: ").to_string()),

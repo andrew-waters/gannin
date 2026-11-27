@@ -205,7 +205,7 @@ impl AgreeView {
         repos.dedup();
         let architecture: Vec<String> = self.state.architecture.iter().filter(|a| a.valid()).map(|a| a.path.trim().to_string()).collect();
         if !self.preview {
-            let folder = self.launch.folder();
+            let folder = self.launch.local_folder();
             if let Some(missing) = architecture.iter().find(|p| !folder.join(p).is_file()) {
                 self.error = Some(format!("{missing} isn't in the session's folder yet. Ask Claude to write it there, or to drop it from the design."));
                 return cx.notify();
@@ -261,7 +261,7 @@ impl AgreeView {
             by,
             owner: crate::auth::saved_viewer().map(|v| v.login).unwrap_or_default(),
             shared,
-            folder: if self.preview { self.dir.clone() } else { self.launch.folder() },
+            folder: if self.preview { self.dir.clone() } else { self.launch.local_folder() },
             stub_missing: self.preview,
         };
         let rehearse = self.preview;
