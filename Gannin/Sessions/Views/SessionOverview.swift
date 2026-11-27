@@ -174,7 +174,7 @@ private struct SessionCard: View {
     }
 }
 
-/// In the Issue panel: once every PR is merged, or when the session's gone
+/// In the Issue panel: once every PR is merged or closed, or when the session's gone
 /// quiet, finishing it removes its worktrees, ends it and marks it done in
 /// the harness.
 struct SessionFinishSection: View {
@@ -191,7 +191,7 @@ struct SessionFinishSection: View {
         if !session.isHelper, !session.isAsk, finished || stale {
             Section {
                 Text(finished
-                     ? "Every pull request from this session is merged, so its worktrees can go."
+                     ? "Every pull request from this session is merged or closed, so its worktrees can go."
                      : "Nothing's happened in this session for over three days. Finish it to remove its worktrees, or leave it be.")
                     .font(.callout)
                 HStack {

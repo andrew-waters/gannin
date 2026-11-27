@@ -441,7 +441,7 @@ struct WrapUpSessionSheet: View {
                     .help("Keep the tab open")
                 if finished {
                     Button("Finish and Clean Up…") { confirmingFinish = true }
-                        .help("Every pull request is merged: end claude, remove its worktrees and mark it finished in the harness")
+                        .help("Every pull request is merged or closed: end claude, remove its worktrees and mark it finished in the harness")
                 }
                 Button("Stop Claude") {
                     sessions.wrappingUp = nil
@@ -463,7 +463,7 @@ struct WrapUpSessionSheet: View {
         var text = "Keep Running closes the tab and leaves claude working; find it again under Agents. "
             + "Stop Claude ends it and its helpers but keeps the worktrees, so opening it again carries on the conversation."
         if finished {
-            text += " Every pull request is merged, so Finish and Clean Up removes the worktrees and marks it done."
+            text += " Every pull request is merged or closed, so Finish and Clean Up removes the worktrees and marks it done."
         }
         return text
     }

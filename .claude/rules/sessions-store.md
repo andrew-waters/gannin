@@ -28,7 +28,7 @@ paths:
 - Measure unpushed commits against the upstream, else `origin/<branch>`: a sandbox records no upstream. Read it with its own `SessionChanges`, whatever mode the pane is in (`WorktreeChanges.notPushed`).
 - Ask only for an issue's own session or a quick change's, and only while `isClaudeRunning` (claude or a helper, not its leftover shell). Never ask on Close Other Tabs.
 - Tick `- [ ]` items only in plans and requirements about the issue (not mere mentions), matched by their words, outside front matter and code. Commit one commit per file at the head; the button naming the harness is the confirmation.
-- Keep Running stays the default. Finish and Clean Up is offered only once every PR is merged, and is confirmed.
+- Keep Running stays the default. Finish and Clean Up is offered only once every PR is merged or closed (a closed one never merges, so waiting on it would block Finish for good), and is confirmed.
 
 ## Feedback sent to claude
 - New PR feedback is pasted now if claude awaits a prompt, else queued in `pendingFeedback` until its turn ends. Mark it sent only once pasted, and drop it if claude exits first; never mark it sent early.
