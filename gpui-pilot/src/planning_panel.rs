@@ -677,7 +677,7 @@ impl PlanningPanel {
     }
 
     /// What Claude last said, when it's the room's turn.
-    fn said(&self, theme: &Theme) -> Option<gpui::AnyElement> {
+    fn said(&self, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> Option<gpui::AnyElement> {
         if self.preview || !matches!(self.claude.as_deref(), Some("idle")) {
             return None;
         }
@@ -693,7 +693,7 @@ impl PlanningPanel {
                 .border_color(theme.selected.opacity(0.5))
                 .bg(theme.selected.opacity(0.06))
                 .child(div().text_xs().text_color(theme.secondary).child("Claude says"))
-                .child(markdown("plan-last-said", &text, theme))
+                .child(rich("plan-last-said", &text, theme, panel))
                 .child(div().text_xs().text_color(theme.tertiary).child("Answer below, or use the buttons."))
                 .into_any_element(),
         )
@@ -1365,7 +1365,7 @@ impl Render for PlanningPanel {
                     } else if let Some(asked) = self.back_request(state, &theme, cx) {
                         Some(asked)
                     } else if self.questions.is_empty() {
-                        self.said(&theme).or_else(|| now_box(state, self.preview, &theme))
+                        self.said(&theme, &cx.entity().downgrade()).or_else(|| now_box(state, self.preview, &theme))
                     } else {
                         Some(self.question_box(&theme, cx))
                     }
@@ -1615,6 +1615,55 @@ fn watch_diagrams(cx: &mut Context<PlanningPanel>) -> Task<()> {
     })
 }
 
+/// Markdown with any ```mermaid blocks in it drawn as diagrams, the rest
+/// as Markdown.
+fn rich(id: &str, text: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
+    let mut parts: Vec<(bool, String)> = Vec::new();
+    let (mut prose, mut chart, mut in_chart) = (String::new(), String::new(), false);
+    for line in text.lines() {
+        let fence = line.trim();
+        if !in_chart && fence.eq_ignore_ascii_case("```mermaid") {
+            if !prose.trim().is_empty() {
+                parts.push((false, std::mem::take(&mut prose)));
+            }
+            prose.clear();
+            in_chart = true;
+        } else if in_chart && fence.starts_with("```") {
+            parts.push((true, std::mem::take(&mut chart)));
+            in_chart = false;
+        } else if in_chart {
+            chart.push_str(line);
+            chart.push('\n');
+        } else {
+            prose.push_str(line);
+            prose.push('\n');
+        }
+    }
+    // An unclosed block stays as it was written.
+    if in_chart {
+        prose.push_str("```mermaid\n");
+        prose.push_str(&chart);
+    }
+    if !prose.trim().is_empty() {
+        parts.push((false, prose));
+    }
+    if parts.len() == 1 && !parts[0].0 {
+        return markdown(id, text, theme).into_any_element();
+    }
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .children(parts.into_iter().enumerate().map(|(i, (is_chart, body))| {
+            if is_chart {
+                diagram(&format!("{id}-chart-{i}"), "Diagram", &body, theme, panel)
+            } else {
+                markdown(&format!("{id}-text-{i}"), &body, theme).into_any_element()
+            }
+        }))
+        .into_any_element()
+}
+
 /// A Mermaid diagram, drawn (click to open it large in the panel), being
 /// drawn, or its source with why it couldn't be.
 fn diagram(id: &str, title: &str, source: &str, theme: &Theme, panel: &gpui::WeakEntity<PlanningPanel>) -> gpui::AnyElement {
@@ -1755,7 +1804,7 @@ fn stage_view(stage: Stage, state: &State, _approvals: &Approvals, theme: &Theme
             .when(r.problem.is_empty() && r.acceptance.is_empty(), |d| d.child(nothing("the requirement")))
             .into_any_element(),
         Stage::Design => col
-            .when(!state.approach.is_empty(), |d| d.child(markdown("plan-design", &state.approach, theme)))
+            .when(!state.approach.is_empty(), |d| d.child(rich("plan-design", &state.approach, theme, panel)))
             .when(!state.scouting.is_empty(), |d| d.child(heading("In the code", theme)).children(state.scouting.iter().enumerate().map(|(i, f)| finding(i, f, theme))))
             .when(!state.architecture.is_empty(), |d| d.child(heading("Architecture it changes", theme)).children(state.architecture.iter().enumerate().map(|(i, a)| architecture(i, a, theme, panel))))
             .when(state.approach.is_empty() && state.scouting.is_empty(), |d| d.child(nothing("the design")))
