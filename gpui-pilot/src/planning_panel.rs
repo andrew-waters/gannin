@@ -41,7 +41,9 @@ pub struct PlanningPanel {
     /// An earlier stage the room is looking back at, on the left.
     viewing: Option<Stage>,
     /// The question waiting for the room, when claude's asked one.
-    question: Option<crate::work_panel::Question>,
+    questions: Vec<crate::work_panel::Question>,
+    /// The options the room has picked, for each question.
+    picked: Vec<Vec<usize>>,
     /// Where claude leaves the shape's images: the session's folder in the
     /// harness (the preview's own folder in the preview).
     folder: std::path::PathBuf,
@@ -72,8 +74,8 @@ impl PlanningPanel {
                     let claude = std::fs::read_to_string(session.join("state")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
                     let waiting = claude.as_deref() == Some("needs-you");
                     let question = match waiting.then(|| crate::work_live::ask(&session, "")) {
-                        Some(crate::work_panel::Ask::Questions(qs)) => qs.into_iter().next(),
-                        _ => None,
+                        Some(crate::work_panel::Ask::Questions(qs)) => qs,
+                        _ => Vec::new(),
                     };
                     (State::read(&file), question, claude)
                 })
@@ -84,9 +86,10 @@ impl PlanningPanel {
                         this.claude = claude;
                         cx.notify();
                     }
-                    let changed_question = this.question.as_ref().map(|q| &q.question) != question.as_ref().map(|q| &q.question);
+                    let changed_question = this.questions.iter().map(|q| &q.question).ne(question.iter().map(|q| &q.question));
                     if changed_question {
-                        this.question = question;
+                        this.picked = vec![Vec::new(); question.len()];
+                        this.questions = question;
                     }
                     if state.is_some() && this.state != state {
                         this.state = state;
@@ -122,7 +125,8 @@ impl PlanningPanel {
             notice: None,
             agree: None,
             viewing: None,
-            question: None,
+            questions: Vec::new(),
+            picked: Vec::new(),
             folder,
             screen: None,
             reviewing: false,
@@ -157,7 +161,8 @@ impl PlanningPanel {
             notice: None,
             agree: None,
             viewing: None,
-            question: crate::planning_preview::question(Stage::Outcome),
+            questions: crate::planning_preview::question(Stage::Outcome).into_iter().collect(),
+            picked: vec![Vec::new()],
             folder,
             screen: None,
             review: None,
@@ -179,7 +184,8 @@ impl PlanningPanel {
             state.security = crate::planning_preview::security_answers();
         }
         self.state = Some(state);
-        self.question = None;
+        self.questions.clear();
+        self.picked.clear();
         self.sent = Some(format!("(Claude asks the room about {} and fills it in.)", stage.title().to_lowercase()));
         cx.notify();
     }
@@ -326,7 +332,8 @@ impl PlanningPanel {
             let mut moved = crate::planning_preview::state(next, next == Stage::Agree);
             moved.security = state.security.clone();
             self.state = Some(moved);
-            self.question = crate::planning_preview::question(next);
+            self.questions = crate::planning_preview::question(next).into_iter().collect();
+            self.picked = vec![Vec::new(); self.questions.len()];
         }
         cx.notify();
     }
@@ -379,6 +386,119 @@ impl PlanningPanel {
 }
 
 impl PlanningPanel {
+    /// The room picks an option. One question with one answer goes to
+    /// claude straight away; otherwise picks are kept until Send Answers.
+    fn pick(&mut self, question: usize, option: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(q) = self.questions.get(question) else { return };
+        if self.picked.len() < self.questions.len() {
+            self.picked.resize(self.questions.len(), Vec::new());
+        }
+        let picks = &mut self.picked[question];
+        if q.multi {
+            match picks.iter().position(|&p| p == option) {
+                Some(at) => {
+                    picks.remove(at);
+                }
+                None => picks.push(option),
+            }
+        } else {
+            *picks = vec![option];
+        }
+        if self.questions.len() == 1 && !self.questions[0].multi {
+            return self.send_answers(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The room's answers as one message, after Esc closes claude's own
+    /// picker, as the Work panel answers.
+    fn send_answers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let lines: Vec<String> = self
+            .questions
+            .iter()
+            .enumerate()
+            .map(|(i, q)| {
+                let picked: Vec<String> = self.picked.get(i).into_iter().flatten().filter_map(|&o| q.options.get(o).map(|(l, _, _)| l.clone())).collect();
+                format!("- {}: {}", q.question, if picked.is_empty() { "your call".to_string() } else { picked.join(", ") })
+            })
+            .collect();
+        let message = format!("The room's answers:\n{}", lines.join("\n"));
+        self.questions.clear();
+        self.picked.clear();
+        if self.preview {
+            self.send(message, window, cx);
+            return self.answer(cx);
+        }
+        self.send(message, window, cx);
+        cx.notify();
+    }
+
+    /// Claude's questions to the room, each option a button.
+    fn question_box(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let single = self.questions.len() == 1 && !self.questions[0].multi;
+        let blocks = self.questions.iter().enumerate().map(|(qi, q)| {
+            let picks = self.picked.get(qi).cloned().unwrap_or_default();
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_xs().text_color(theme.secondary).child(if q.header.is_empty() { "Claude asks the room".to_string() } else { format!("Claude asks the room · {}", q.header) }))
+                .child(div().text_base().font_weight(FontWeight::MEDIUM).child(q.question.clone()))
+                .when(q.multi, |d| d.child(div().text_xs().text_color(theme.tertiary).child("Pick any that apply.")))
+                .children(q.options.iter().enumerate().map(|(oi, (label, description, recommended))| {
+                    let on = picks.contains(&oi);
+                    div()
+                        .id(SharedString::from(format!("plan-option-{qi}-{oi}")))
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .px_2()
+                        .py_1p5()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(if on { theme.selected } else { theme.border })
+                        .bg(if on { theme.selected.opacity(0.12) } else { gpui::transparent_black() })
+                        .cursor_pointer()
+                        .hover(|d| d.bg(theme.selected.opacity(0.08)))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.pick(qi, oi, window, cx)))
+                        .child(div().w(px(18.)).flex_none().text_color(theme.selected).child(if q.multi { (if on { "☑" } else { "☐" }).to_string() } else { format!("{}", oi + 1) }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(div().child(format!("{label}{}", if *recommended { " (Recommended)" } else { "" })))
+                                .when(!description.is_empty(), |d| d.child(div().text_xs().text_color(theme.secondary).child(description.clone()))),
+                        )
+                }))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.selected.opacity(0.5))
+            .bg(theme.selected.opacity(0.06))
+            .children(blocks)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().text_xs().text_color(theme.tertiary).child(if single {
+                        "Pick one to answer, or say something else from the room below."
+                    } else {
+                        "Pick your answers, then send them. Or say something else from the room below."
+                    }))
+                    .when(!single, |d| d.child(button("plan-send-answers", "Send Answers", true, theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_answers(window, cx))))),
+            )
+            .into_any_element()
+    }
+
     /// What's happening now, beside the stages: a spinner while claude (or
     /// the security review) is at work, else whose turn it is.
     fn activity(&self, theme: &Theme) -> Option<gpui::AnyElement> {
@@ -715,7 +835,7 @@ impl Render for PlanningPanel {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .children(now_box(self.question.as_ref(), &empty, self.preview, &theme))
+                .children(if self.questions.is_empty() { None } else { Some(self.question_box(&theme, cx)) })
                 .child(quiet("The plan shows here as Claude writes it, from the room's answers.".into()))
                 .into_any_element(),
             Some(state) => {
@@ -738,7 +858,11 @@ impl Render for PlanningPanel {
                             .into_any_element(),
                     )
                 } else {
-                    now_box(self.question.as_ref(), state, self.preview, &theme)
+                    if self.questions.is_empty() {
+                        now_box(state, self.preview, &theme)
+                    } else {
+                        Some(self.question_box(&theme, cx))
+                    }
                 };
                 let left = div()
                     .id("plan-stage")
@@ -936,32 +1060,8 @@ fn ided(id: &str, text: &str, tint: gpui::Hsla) -> gpui::Div {
 
 /// What's happening now: the question waiting for the room, what claude's
 /// reading, or that it's the room's turn to say whether the stage is right.
-fn now_box(question: Option<&crate::work_panel::Question>, state: &State, preview: bool, theme: &Theme) -> Option<gpui::AnyElement> {
+fn now_box(state: &State, preview: bool, theme: &Theme) -> Option<gpui::AnyElement> {
     let boxed = || div().flex().flex_col().gap_1().p_3().rounded_md().border_1().border_color(theme.selected.opacity(0.5)).bg(theme.selected.opacity(0.06));
-    if let Some(q) = question {
-        return Some(
-            boxed()
-                .child(div().text_xs().text_color(theme.secondary).child(if q.header.is_empty() { "Claude asks the room".to_string() } else { format!("Claude asks the room · {}", q.header) }))
-                .child(div().text_base().font_weight(FontWeight::MEDIUM).child(q.question.clone()))
-                .children(q.options.iter().enumerate().map(|(i, (label, description, recommended))| {
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .child(div().w(px(18.)).flex_none().text_color(theme.selected).child(format!("{}", i + 1)))
-                        .child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .flex_col()
-                                .child(div().child(format!("{label}{}", if *recommended { " (Recommended)" } else { "" })))
-                                .when(!description.is_empty(), |d| d.child(div().text_xs().text_color(theme.secondary).child(description.clone()))),
-                        )
-                }))
-                .child(div().text_xs().text_color(theme.tertiary).child("Answer in the terminal, or say something from the room below."))
-                .into_any_element(),
-        );
-    }
     if let Some(s) = &state.scouting_now {
         return Some(boxed().child(div().text_xs().text_color(theme.secondary).child("Claude is reading the code")).child(s.why.clone()).into_any_element());
     }
