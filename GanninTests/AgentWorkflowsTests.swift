@@ -74,6 +74,31 @@ struct AgentWorkflowsTests {
         #expect(TeamCoding.decode(AgentWorkflows.self, written) == workflows)
     }
 
+    @Test func stageTimingAndCommandStepsRoundTripAndAreNotRunAsAgents() throws {
+        let text = """
+            {"work": {"workflows": [{"id": "w", "name": "W", "stages": [
+              {"id": "p", "when": "prepare", "steps": [{"id": "scout", "specialist": "scout"}]},
+              {"id": "s", "when": "session", "steps": [{"id": "me", "interactive": true}]},
+              {"id": "l", "when": "local", "steps": [{"id": "t", "command": "npm test"}, {"id": "r", "specialist": "sec", "holds": "all"}]},
+              {"id": "e", "when": "pr", "steps": [{"id": "t2", "command": "swift build"}]}
+            ]}]}}
+            """
+        let workflows = try #require(TeamCoding.decode(AgentWorkflows.self, text))
+        let workflow = try #require(workflows[.work].workflows.first)
+        #expect(workflow.stages.map(\.when) == ["prepare", "session", "local", "pr"])
+        #expect(workflow.stages[2].steps[0].command == "npm test")
+        #expect(workflow.stages[2].steps[1].holds == "all")
+        let written = try #require(TeamCoding.encode(workflows))
+        #expect(TeamCoding.decode(AgentWorkflows.self, written) == workflows)
+        #expect(workflow.duplicated(name: "Copy").stages.map(\.when) == ["prepare", "session", "local", "pr"])
+        // Nothing here runs a command, so the agent runs leave it out.
+        #expect(workflow.stepsBefore.map(\.id) == ["scout"])
+        #expect(workflow.stepsAfter.map(\.id) == ["r"])
+        // A file without the new keys writes none.
+        let plain = try #require(TeamCoding.encode(AgentWorkflows(activities: ["review": ActivityWorkflows(workflows: [review])])))
+        #expect(!plain.contains("\"when\"") && !plain.contains("\"command\"") && !plain.contains("\"holds\""))
+    }
+
     @Test func editsMergeByActivityAndID() throws {
         var base = AgentWorkflows()
         base[.review] = ActivityWorkflows(workflows: [review])
