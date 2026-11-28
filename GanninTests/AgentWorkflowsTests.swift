@@ -99,6 +99,27 @@ struct AgentWorkflowsTests {
         #expect(!plain.contains("\"when\"") && !plain.contains("\"command\"") && !plain.contains("\"holds\""))
     }
 
+    @Test func aLoneCommandStepIsNotPlain() {
+        #expect(AgentWorkflow(name: "Plain", stages: [AgentStage(steps: [AgentStep()])]).isPlain)
+        #expect(!AgentWorkflow(name: "Command", stages: [AgentStage(steps: [AgentStep(command: "npm test")])]).isPlain)
+    }
+
+    @Test func passCountsLeaveCommandStepsOut() {
+        // A command in the first stage leaves it with no Claude Code step, so
+        // Gannin's own reviewer is added there, as `reviewRun(for:)` does.
+        let commandFirst = AgentWorkflow(name: "C", stages: [
+            AgentStage(steps: [AgentStep(id: "t", command: "npm test")]),
+            AgentStage(steps: [AgentStep(id: "r", specialist: "sec")]),
+        ])
+        let counts = PassCount.of(commandFirst, specialists: [:], defaultModel: nil, activity: .review)
+        #expect(counts == [PassCount(label: ProviderID.claudeCode.title, passes: 2)])
+        // Beside an agent step in the first stage, it adds nothing.
+        let beside = AgentWorkflow(name: "B", stages: [
+            AgentStage(steps: [AgentStep(id: "t", command: "npm test"), AgentStep(id: "r", specialist: "sec", rounds: 2)]),
+        ])
+        #expect(PassCount.of(beside, specialists: [:], defaultModel: nil, activity: .review) == [PassCount(label: ProviderID.claudeCode.title, passes: 2)])
+    }
+
     @Test func editsMergeByActivityAndID() throws {
         var base = AgentWorkflows()
         base[.review] = ActivityWorkflows(workflows: [review])

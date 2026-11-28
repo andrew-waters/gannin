@@ -303,7 +303,7 @@ nonisolated struct PassCount: Hashable, Sendable {
         var counts: [String: Int] = [:]
         var order: [String] = []
         var steps = workflow.steps.filter { !$0.isCommand }
-        if activity == .review, !workflow.isPlain, let first = workflow.stages.first, !first.steps.contains(where: { step in
+        if activity == .review, !workflow.isPlain, let first = workflow.stages.first, !first.steps.filter({ !$0.isCommand }).contains(where: { step in
             let specialist = step.specialist.flatMap { specialists[$0.lowercased()] }
             return ProviderID(name: step.provider ?? specialist?.provider)?.isInteractive ?? (step.provider ?? specialist?.provider == nil)
         }) {

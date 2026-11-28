@@ -34,6 +34,19 @@ struct ReviewRunStoreTests {
         return step
     }
 
+    @Test func aReviewRunLeavesCommandStepsOutAndAddsGanninsOwnWhenTheFirstStageHasNoAgent() throws {
+        defer { clean() }
+        let workflow = AgentWorkflow(id: "w", name: "W", stages: [
+            AgentStage(steps: [AgentStep(id: "t", command: "npm test")]),
+            AgentStage(steps: [AgentStep(id: "r", specialist: "sec")]),
+        ])
+        let run = try #require(store().reviewRun(for: workflow, org: "acme", setup: HarnessConfig(repo: "acme/harness")))
+        #expect(run.steps.map(\.id) == [AgentWorkflow.builtInID, "r"])
+        #expect(run.steps.map(\.stage) == [0, 1])
+        // The run makes the passes the editor counts.
+        #expect(run.steps.reduce(0) { $0 + $1.rounds } == PassCount.of(workflow, specialists: [:], defaultModel: nil, activity: .review).reduce(0) { $0 + $1.passes })
+    }
+
     @Test func aOneShotStepStartsRatherThanBeingSkipped() throws {
         defer { clean() }
         let sessions = store()

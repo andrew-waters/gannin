@@ -45,7 +45,7 @@ extension SessionStore {
     /// of Gannin's one plain step, built in or not, changes nothing.
     func applyWorkflow(_ activity: WorkflowActivity, to session: inout CodeSession, org: String, setup: HarnessConfig, subject: WorkflowSubject?, workflow picked: AgentWorkflow? = nil) {
         let workflow = picked ?? routedWorkflow(org: org, setup: setup, activity: activity, subject: subject)
-        guard !workflow.isPlain, let step = workflow.interactiveStep ?? workflow.steps.first else { return }
+        guard !workflow.isPlain, let step = workflow.interactiveStep ?? workflow.steps.first(where: { !$0.isCommand }) else { return }
         let specialists = specialists(org: org, setup: setup)
         var notes: [String] = []
         let specialist = step.specialist.flatMap { name in
