@@ -1,0 +1,74 @@
+[package]
+name = "gannin-gpui-pilot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Pilot: Gannin's Actions page rebuilt on Zed's GPUI, reading the Swift app's cache"
+
+[dependencies]
+# Zed's own crates from its repo, pinned to one commit. terminal, editor and
+# the diff crates are GPL-3.0, so a Gannin built on them is GPL-3.0 too.
+# runtime_shaders compiles the Metal shaders at launch, so the build doesn't
+# need Xcode's separately downloaded Metal toolchain.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f", features = ["runtime_shaders", "font-kit"] }
+terminal = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+editor = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+buffer_diff = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+multi_buffer = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+language = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+settings = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+theme = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+theme_settings = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+terminal_view = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+workspace = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+project = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+# The ssh command parser behind Zed's Connect New Server. Already built for
+# project, with no features, so it adds nothing to compile.
+remote = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+release_channel = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+util = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+rpc = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+text = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+assets = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+# Markdown highlighting in note editors (markdown_lang.rs): Zed's embedded
+# highlight queries, without its other grammars, and the markdown grammar at
+# the fork Zed pins.
+grammars = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "b596e737286780d7bfa9fcddceaeeb754574b352" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Already in the tree through Zed's crates: New Issue's images.
+image = "0.25"
+base64 = "0.22"
+# Marra's phone API keeps only its devices' token hashes (marra_api.rs).
+sha2 = "0.10"
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+# Markdown for descriptions and comments (GPUI has no renderer of its own).
+pulldown-cmark = { version = "0.12", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# As Zed has them: the screenshot thumbnail's file promises (promise_drop.rs).
+objc2 = "0.6"
+# The floating Marra window stays up when Gannin is in the background (marra_view.rs).
+raw-window-handle = "0.6"
+block2 = "0.6"
+
+# GPUI on Linux draws through Wayland or X11, whichever the session has.
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f", features = ["runtime_shaders", "font-kit", "wayland", "x11"] }
+
+[profile.dev]
+# Parsing a 12 MB cache unoptimised takes seconds; optimise dependencies only.
+[profile.dev.package."*"]
+opt-level = 2
+
+# Zed's workspace patches, which a git dependency doesn't inherit.
+[patch.crates-io]
+tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "803c6ebaac27d69e1808b45058482e868d073ceb" }
+async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
+async-task = { git = "https://github.com/smol-rs/async-task", rev = "41fd3359c75e221bd8b187a8ee361aa309c1714c" }
+notify = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
+notify-types = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
