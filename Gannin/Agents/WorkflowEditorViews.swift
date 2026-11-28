@@ -278,7 +278,7 @@ struct AgentWorkflowsPage: View {
     private func passes(_ workflow: AgentWorkflow, specialists: [String: HarnessSpecialist]) -> some View {
         let counts = PassCount.of(workflow, specialists: specialists, defaultModel: SessionStore.model, activity: activity)
         let total = counts.reduce(0) { $0 + $1.passes }
-        let leadAdded = counts.reduce(0) { $0 + $1.passes } > workflow.steps.reduce(0) { $0 + ($1.isInteractive ? 1 : $1.roundCount) }
+        let leadAdded = counts.reduce(0) { $0 + $1.passes } > workflow.steps.filter({ !$0.isCommand }).reduce(0) { $0 + ($1.isInteractive ? 1 : $1.roundCount) }
         return HStack {
             Text("At most \(total) pass\(total == 1 ? "" : "es"): " + counts.map { "\($0.label) \u{00D7}\($0.passes)" }.joined(separator: ", ")
                  + (leadAdded ? ". The first stage has no Claude Code step, so Gannin's own reviewer runs there too, to hold the review." : ""))

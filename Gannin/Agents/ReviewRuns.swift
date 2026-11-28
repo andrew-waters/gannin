@@ -192,7 +192,7 @@ extension SessionStore {
         let specialists = specialists(org: org, setup: setup)
         var steps: [ReviewStepRun] = []
         for (stage, workflowStage) in workflow.stages.enumerated() {
-            for step in workflowStage.steps {
+            for step in workflowStage.steps where !step.isCommand {
                 let specialist = step.specialist.flatMap { specialists[$0.lowercased()] }
                 var run = ReviewStepRun(
                     id: step.id, stage: stage, title: specialist?.title ?? step.specialist ?? "Gannin's review", specialist: step.specialist,

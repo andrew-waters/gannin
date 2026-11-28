@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Agent workflows keep the `when` on a stage and the `command` and `holds` on a step that another build of Gannin wrote into `.gannin/agent-workflows.json`, and skip command steps when starting sessions and reviews, instead of running them as empty steps. Gannin doesn't run them yet, and a Mac on an older build drops these keys when it saves the file
 - A view with two or more filters can match Any filter instead of All, so it can say "assigned to me or labelled urgent"
 - PR reviews rate their merge risk (Low, Medium or High), shown on the Overview beside Effort and kept in the review record
 - ⇧⌘F finishes a PR review, asking first as the Finish button does

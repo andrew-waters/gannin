@@ -55,8 +55,15 @@ nonisolated struct AgentStep: Codable, Hashable, Identifiable, Sendable {
     /// The session the user types in, in an interactive activity's
     /// workflow. Exactly one step there has it.
     var interactive: Bool?
+    /// A shell command to run in the worktree, which must pass. Nothing in
+    /// this build runs it; it's kept so a file written by a build that does
+    /// round-trips.
+    var command: String?
+    /// For a local reviewer, what holds the push: `blocker-major` or `all`.
+    /// Kept as written, like `provider`.
+    var holds: String?
 
-    init(id: String = UUID().uuidString.lowercased(), specialist: String? = nil, provider: String? = nil, model: String? = nil, focus: String? = nil, rounds: Int? = nil, interactive: Bool? = nil) {
+    init(id: String = UUID().uuidString.lowercased(), specialist: String? = nil, provider: String? = nil, model: String? = nil, focus: String? = nil, rounds: Int? = nil, interactive: Bool? = nil, command: String? = nil, holds: String? = nil) {
         self.id = id
         self.specialist = specialist
         self.provider = provider
@@ -64,9 +71,15 @@ nonisolated struct AgentStep: Codable, Hashable, Identifiable, Sendable {
         self.focus = focus
         self.rounds = rounds
         self.interactive = interactive
+        self.command = command
+        self.holds = holds
     }
 
     var isInteractive: Bool { interactive == true }
+
+    /// A command step. Runs that start agents skip it, since it isn't an
+    /// agent and would otherwise run as an empty step on Gannin's own prompt.
+    var isCommand: Bool { !(command ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     /// At least one, at most `maxRounds`.
     var roundCount: Int { min(max(rounds ?? 1, 1), Self.maxRounds) }
@@ -78,10 +91,15 @@ nonisolated struct AgentStep: Codable, Hashable, Identifiable, Sendable {
 /// the findings of earlier stages, not of the steps beside it.
 nonisolated struct AgentStage: Codable, Hashable, Identifiable, Sendable {
     var id: String
+    /// When the stage runs: `prepare`, `session`, `local` or `pr`. Kept as
+    /// written; nothing in this build reads it, and a stage without one is
+    /// placed by where it sits around the interactive step.
+    var when: String?
     var steps: [AgentStep]
 
-    init(id: String = UUID().uuidString.lowercased(), steps: [AgentStep]) {
+    init(id: String = UUID().uuidString.lowercased(), when: String? = nil, steps: [AgentStep]) {
         self.id = id
+        self.when = when
         self.steps = steps
     }
 }
@@ -106,12 +124,12 @@ nonisolated struct AgentWorkflow: Codable, Hashable, Identifiable, Sendable {
     /// One-shot steps before and after the interactive one.
     var stepsBefore: [AgentStep] {
         guard let index = stages.firstIndex(where: { $0.steps.contains(where: \.isInteractive) }) else { return [] }
-        return stages[..<index].flatMap(\.steps)
+        return stages[..<index].flatMap(\.steps).filter { !$0.isCommand }
     }
 
     var stepsAfter: [AgentStep] {
         guard let index = stages.firstIndex(where: { $0.steps.contains(where: \.isInteractive) }) else { return [] }
-        return stages[(index + 1)...].flatMap(\.steps)
+        return stages[(index + 1)...].flatMap(\.steps).filter { !$0.isCommand }
     }
 
     /// The id the built-in workflows share; never written to the harness.
@@ -133,7 +151,7 @@ nonisolated struct AgentWorkflow: Codable, Hashable, Identifiable, Sendable {
     /// round. A run of it is today's, exactly.
     var isPlain: Bool {
         guard stages.count == 1, let step = stages.first?.steps.first, stages[0].steps.count == 1 else { return false }
-        return step.specialist == nil && step.provider == nil && step.model == nil && (step.focus ?? "").isEmpty && step.roundCount == 1
+        return !step.isCommand && step.specialist == nil && step.provider == nil && step.model == nil && (step.focus ?? "").isEmpty && step.roundCount == 1
     }
 }
 
@@ -284,8 +302,8 @@ nonisolated struct PassCount: Hashable, Sendable {
     static func of(_ workflow: AgentWorkflow, specialists: [String: HarnessSpecialist], defaultModel: String?, activity: WorkflowActivity? = nil) -> [PassCount] {
         var counts: [String: Int] = [:]
         var order: [String] = []
-        var steps = workflow.steps
-        if activity == .review, !workflow.isPlain, let first = workflow.stages.first, !first.steps.contains(where: { step in
+        var steps = workflow.steps.filter { !$0.isCommand }
+        if activity == .review, !workflow.isPlain, let first = workflow.stages.first, !first.steps.filter({ !$0.isCommand }).contains(where: { step in
             let specialist = step.specialist.flatMap { specialists[$0.lowercased()] }
             return ProviderID(name: step.provider ?? specialist?.provider)?.isInteractive ?? (step.provider ?? specialist?.provider == nil)
         }) {

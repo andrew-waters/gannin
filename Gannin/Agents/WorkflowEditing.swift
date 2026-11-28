@@ -14,7 +14,7 @@ extension AgentWorkflow {
     /// A copy with new ids, so the merge never takes it for the original.
     func duplicated(name: String) -> AgentWorkflow {
         AgentWorkflow(name: name, stages: stages.map { stage in
-            AgentStage(steps: stage.steps.map { step in
+            AgentStage(when: stage.when, steps: stage.steps.map { step in
                 var copy = step
                 copy.id = UUID().uuidString.lowercased()
                 return copy
