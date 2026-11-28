@@ -11,6 +11,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Added
 - Agent workflows keep the `when` on a stage and the `command` and `holds` on a step that another build of Gannin wrote into `.gannin/agent-workflows.json`, and skip command steps when starting sessions and reviews, instead of running them as empty steps. Gannin doesn't run them yet, and a Mac on an older build drops these keys when it saves the file
+- A workflow stage's `when` decides how Work on This uses it: `prepare` stages prepare the session's brief and `pr` stages review the pull requests it opens, wherever they sit around the session. A `local` stage is left out until Gannin can run it. A stage with no `when` is placed by where it sits, as before
 - A view with two or more filters can match Any filter instead of All, so it can say "assigned to me or labelled urgent"
 - PR reviews rate their merge risk (Low, Medium or High), shown on the Overview beside Effort and kept in the review record
 - ⇧⌘F finishes a PR review, asking first as the Finish button does
