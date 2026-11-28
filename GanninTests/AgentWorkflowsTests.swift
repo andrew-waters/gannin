@@ -91,12 +91,79 @@ struct AgentWorkflowsTests {
         let written = try #require(TeamCoding.encode(workflows))
         #expect(TeamCoding.decode(AgentWorkflows.self, written) == workflows)
         #expect(workflow.duplicated(name: "Copy").stages.map(\.when) == ["prepare", "session", "local", "pr"])
-        // Nothing here runs a command, so the agent runs leave it out.
+        // Nothing here runs a command, so the agent runs leave it out; the
+        // local stage runs nowhere yet, and the PR stage has only a command.
         #expect(workflow.stepsBefore.map(\.id) == ["scout"])
-        #expect(workflow.stepsAfter.map(\.id) == ["r"])
+        #expect(workflow.stepsAfter.isEmpty)
         // A file without the new keys writes none.
         let plain = try #require(TeamCoding.encode(AgentWorkflows(activities: ["review": ActivityWorkflows(workflows: [review])])))
         #expect(!plain.contains("\"when\"") && !plain.contains("\"command\"") && !plain.contains("\"holds\""))
+    }
+
+    private func stage(_ id: String, when: String? = nil, interactive: Bool = false) -> AgentStage {
+        AgentStage(id: id, when: when, steps: [AgentStep(id: id, specialist: interactive ? nil : id, interactive: interactive ? true : nil)])
+    }
+
+    @Test func aStageWithoutWhenRunsWhereItSits() {
+        let workflow = AgentWorkflow(name: "W", stages: [stage("a"), stage("me", interactive: true), stage("b")])
+        #expect(workflow.timing(ofStageAt: 0) == .prepare)
+        #expect(workflow.timing(ofStageAt: 1) == .session)
+        #expect(workflow.timing(ofStageAt: 2) == .pr)
+        #expect(workflow.stepsBefore.map(\.id) == ["a"])
+        #expect(workflow.stepsAfter.map(\.id) == ["b"])
+        #expect(workflow.stages(running: .pr).map(\.id) == ["b"])
+    }
+
+    @Test func aStagesWhenOverridesWhereItSits() {
+        // `pr` before the session and `prepare` after it swap sides.
+        let workflow = AgentWorkflow(name: "W", stages: [stage("a", when: "pr"), stage("me", interactive: true), stage("b", when: "prepare")])
+        #expect(workflow.stepsBefore.map(\.id) == ["b"])
+        #expect(workflow.stepsAfter.map(\.id) == ["a"])
+    }
+
+    @Test func aLocalStageRunsInNeitherPlaceYet() {
+        let workflow = AgentWorkflow(name: "W", stages: [stage("a", when: "local"), stage("me", interactive: true), stage("b", when: "local")])
+        #expect(workflow.timing(ofStageAt: 0) == .local)
+        #expect(workflow.stepsBefore.isEmpty)
+        #expect(workflow.stepsAfter.isEmpty)
+    }
+
+    @Test func anUnknownWhenFallsBackToWhereTheStageSits() {
+        let workflow = AgentWorkflow(name: "W", stages: [stage("a", when: "later"), stage("me", interactive: true), stage("b", when: "")])
+        #expect(workflow.timing(ofStageAt: 0) == .prepare)
+        #expect(workflow.timing(ofStageAt: 2) == .pr)
+    }
+
+    @Test func sessionOnAnotherStageIsPlacedByWhereItSits() {
+        let workflow = AgentWorkflow(name: "W", stages: [stage("a", when: "session"), stage("me", interactive: true), stage("b", when: "session")])
+        #expect(workflow.timing(ofStageAt: 0) == .prepare)
+        #expect(workflow.timing(ofStageAt: 2) == .pr)
+    }
+
+    @Test func passCountsLeaveOutLocalStagesWhenThereIsASession() {
+        let workflow = AgentWorkflow(name: "W", stages: [
+            stage("a", when: "prepare"), stage("me", interactive: true), stage("l", when: "local"), stage("p", when: "pr"),
+        ])
+        // The preparing, session and PR steps: the local one runs nowhere yet.
+        #expect(PassCount.of(workflow, specialists: [:], defaultModel: nil, activity: .work) == [PassCount(label: ProviderID.claudeCode.title, passes: 3)])
+        // Without a session (a review) every stage counts.
+        let review = AgentWorkflow(name: "R", stages: [stage("a"), stage("l", when: "local")])
+        #expect(PassCount.of(review, specialists: [:], defaultModel: nil, activity: .review) == [PassCount(label: ProviderID.claudeCode.title, passes: 2)])
+    }
+
+    @Test func theSessionStageStaysTheSessionWhateverItsWhen() {
+        let workflow = AgentWorkflow(name: "W", stages: [stage("me", when: "prepare", interactive: true), stage("b")])
+        #expect(workflow.timing(ofStageAt: 0) == .session)
+        #expect(workflow.stepsBefore.isEmpty)
+        #expect(workflow.stepsAfter.map(\.id) == ["b"])
+    }
+
+    @Test func aWorkflowWithNoSessionStepHasNoTiming() {
+        let workflow = AgentWorkflow(name: "Review", stages: [stage("a", when: "prepare"), stage("b", when: "pr")])
+        #expect(workflow.timing(ofStageAt: 0) == nil)
+        #expect(workflow.timing(ofStageAt: 5) == nil)
+        #expect(workflow.stepsBefore.isEmpty)
+        #expect(workflow.stepsAfter.isEmpty)
     }
 
     @Test func aLoneCommandStepIsNotPlain() {

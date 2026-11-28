@@ -91,9 +91,10 @@ nonisolated struct AgentStep: Codable, Hashable, Identifiable, Sendable {
 /// the findings of earlier stages, not of the steps beside it.
 nonisolated struct AgentStage: Codable, Hashable, Identifiable, Sendable {
     var id: String
-    /// When the stage runs: `prepare`, `session`, `local` or `pr`. Kept as
-    /// written; nothing in this build reads it, and a stage without one is
-    /// placed by where it sits around the interactive step.
+    /// When the stage runs: `prepare`, `session`, `local` or `pr`
+    /// (`AgentWorkflow.StageTiming`). Kept as written, so a value a newer
+    /// build knows survives; a stage without one, or with one this build
+    /// doesn't know, is placed by where it sits around the interactive step.
     var when: String?
     var steps: [AgentStep]
 
@@ -121,15 +122,46 @@ nonisolated struct AgentWorkflow: Codable, Hashable, Identifiable, Sendable {
     /// The step an interactive activity's session is.
     var interactiveStep: AgentStep? { steps.first(where: \.isInteractive) }
 
+    /// When a stage runs, as the `when` on it says.
+    nonisolated enum StageTiming: String, Sendable {
+        /// One-shot steps before the session, whose notes join its brief.
+        case prepare
+        /// The session itself.
+        case session
+        /// Checks on the work before it leaves this Mac. Nothing in this
+        /// build runs them, so they are left out of `stagesBefore` and
+        /// `stagesAfter`.
+        case local
+        /// One-shot steps on each pull request the session opens.
+        case pr
+    }
+
+    /// When the stage at `index` runs. The stage holding the session step
+    /// is the session, whatever its `when`. Another says so in its `when`
+    /// (`prepare`, `local` or `pr`); one that doesn't, or whose `when` this
+    /// build doesn't know (including `session` on a stage that isn't the
+    /// session's), runs where it sits: before the session it prepares, after
+    /// it is on the PR. Nil when the workflow has no session step.
+    func timing(ofStageAt index: Int) -> StageTiming? {
+        guard stages.indices.contains(index),
+              let session = stages.firstIndex(where: { $0.steps.contains(where: \.isInteractive) }) else { return nil }
+        if index == session { return .session }
+        if let named = stages[index].when.flatMap(StageTiming.init(rawValue:)), named != .session { return named }
+        return index < session ? .prepare : .pr
+    }
+
+    /// The stages that run at `timing`, in order.
+    func stages(running timing: StageTiming) -> [AgentStage] {
+        stages.indices.filter { self.timing(ofStageAt: $0) == timing }.map { stages[$0] }
+    }
+
     /// One-shot steps before and after the interactive one.
     var stepsBefore: [AgentStep] {
-        guard let index = stages.firstIndex(where: { $0.steps.contains(where: \.isInteractive) }) else { return [] }
-        return stages[..<index].flatMap(\.steps).filter { !$0.isCommand }
+        stages(running: .prepare).flatMap(\.steps).filter { !$0.isCommand }
     }
 
     var stepsAfter: [AgentStep] {
-        guard let index = stages.firstIndex(where: { $0.steps.contains(where: \.isInteractive) }) else { return [] }
-        return stages[(index + 1)...].flatMap(\.steps).filter { !$0.isCommand }
+        stages(running: .pr).flatMap(\.steps).filter { !$0.isCommand }
     }
 
     /// The id the built-in workflows share; never written to the harness.
@@ -298,11 +330,16 @@ nonisolated struct PassCount: Hashable, Sendable {
     let passes: Int
 
     /// A review whose first stage has no Claude Code step gets Gannin's own
-    /// step there too (its lead runs one), so that pass is counted.
+    /// step there too (its lead runs one), so that pass is counted. In a
+    /// workflow with a session, steps in a `local` stage aren't counted:
+    /// nothing runs them yet (`AgentWorkflow.StageTiming.local`).
     static func of(_ workflow: AgentWorkflow, specialists: [String: HarnessSpecialist], defaultModel: String?, activity: WorkflowActivity? = nil) -> [PassCount] {
         var counts: [String: Int] = [:]
         var order: [String] = []
-        var steps = workflow.steps.filter { !$0.isCommand }
+        let run = workflow.interactiveStep == nil
+            ? workflow.stages
+            : workflow.stages.indices.filter { workflow.timing(ofStageAt: $0) != .local }.map { workflow.stages[$0] }
+        var steps = run.flatMap(\.steps).filter { !$0.isCommand }
         if activity == .review, !workflow.isPlain, let first = workflow.stages.first, !first.steps.filter({ !$0.isCommand }).contains(where: { step in
             let specialist = step.specialist.flatMap { specialists[$0.lowercased()] }
             return ProviderID(name: step.provider ?? specialist?.provider)?.isInteractive ?? (step.provider ?? specialist?.provider == nil)

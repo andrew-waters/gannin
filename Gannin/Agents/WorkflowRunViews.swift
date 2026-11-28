@@ -125,7 +125,8 @@ struct SessionWorkflowSection: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let after = workflow.after {
-                Text("Reviews each pull request it opens with \(after.steps.count) step\(after.steps.count == 1 ? "" : "s") after it.")
+                let count = after.steps.filter { !$0.isCommand }.count
+                Text("Reviews each pull request it opens with \(count) step\(count == 1 ? "" : "s") after it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             ForEach(workflow.notes ?? [], id: \.self) { note in

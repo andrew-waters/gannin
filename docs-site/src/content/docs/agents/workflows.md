@@ -39,6 +39,8 @@ Every review step is read-only: it can't edit code, push or approve. A round is 
 
 A workflow for Work on This, Quick Change, Ask, Planning, Design and Refine or Routines has exactly one step that is the session you type in, marked **Session**. Make This the Session (right-click) moves it to another step. Its specialist's soul and focus, provider and model are the session's. Steps before it run once, before the session first starts, and add what they write to its brief. Steps after it review each pull request the session opens, in the background, and the session's side panel says when one has started. Only Claude Code runs sessions for now.
 
+A stage can say when it runs with `when` in `.gannin/agent-workflows.json` (the editor has no control for it yet): `prepare` stages prepare the session's brief and `pr` stages review the pull requests it opens, wherever they sit around the session. A `local` stage is left out until Gannin can run it, and its steps aren't counted in the passes beneath the workflow. A stage with no `when`, or one Gannin doesn't know, runs where it sits, as above. The stage holding the session is always the session. Gannin keeps a stage's `when` when it saves the file, but a Mac on an older version drops it.
+
 ## Routing
 
 Reviews and Work on This can send work to a workflow by rules, listed beneath the nodes. **Mine** shows your rules, kept on this Mac, which can send work to any workflow; **The team's** shows the shared ones, which can only send to team workflows. Each rule names a workflow and what it matches, as comma-separated lists where any entry matches:

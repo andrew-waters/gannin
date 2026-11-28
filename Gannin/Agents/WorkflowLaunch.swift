@@ -79,7 +79,7 @@ extension SessionStore {
         }
         let after = workflow.stepsAfter.isEmpty ? nil : AgentWorkflow(
             id: workflow.id, name: workflow.name,
-            stages: Array(workflow.stages.drop { !$0.steps.contains(where: \.isInteractive) }.dropFirst())
+            stages: workflow.stages(running: .pr)
         )
         session.workflow = SessionWorkflow(
             activity: activity.rawValue, id: workflow.id, name: workflow.name,
