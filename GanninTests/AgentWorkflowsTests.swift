@@ -134,6 +134,23 @@ struct AgentWorkflowsTests {
         #expect(workflow.timing(ofStageAt: 2) == .pr)
     }
 
+    @Test func sessionOnAnotherStageIsPlacedByWhereItSits() {
+        let workflow = AgentWorkflow(name: "W", stages: [stage("a", when: "session"), stage("me", interactive: true), stage("b", when: "session")])
+        #expect(workflow.timing(ofStageAt: 0) == .prepare)
+        #expect(workflow.timing(ofStageAt: 2) == .pr)
+    }
+
+    @Test func passCountsLeaveOutLocalStagesWhenThereIsASession() {
+        let workflow = AgentWorkflow(name: "W", stages: [
+            stage("a", when: "prepare"), stage("me", interactive: true), stage("l", when: "local"), stage("p", when: "pr"),
+        ])
+        // The preparing, session and PR steps: the local one runs nowhere yet.
+        #expect(PassCount.of(workflow, specialists: [:], defaultModel: nil, activity: .work) == [PassCount(label: ProviderID.claudeCode.title, passes: 3)])
+        // Without a session (a review) every stage counts.
+        let review = AgentWorkflow(name: "R", stages: [stage("a"), stage("l", when: "local")])
+        #expect(PassCount.of(review, specialists: [:], defaultModel: nil, activity: .review) == [PassCount(label: ProviderID.claudeCode.title, passes: 2)])
+    }
+
     @Test func theSessionStageStaysTheSessionWhateverItsWhen() {
         let workflow = AgentWorkflow(name: "W", stages: [stage("me", when: "prepare", interactive: true), stage("b")])
         #expect(workflow.timing(ofStageAt: 0) == .session)
